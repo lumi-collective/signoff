@@ -37,7 +37,7 @@ script could still send data out over WebRTC, so the skill tells the agent to pu
 At the prompt of a Claude Code session in a terminal:
 
 ```
-/plugin install signoff --marketplace trustmeimlumi/signoff
+/plugin install signoff --marketplace lumi-collective/signoff
 ```
 
-Full documentation, the file format and source: https://github.com/trustmeimlumi/signoff
+Full documentation, the file format and source: https://github.com/lumi-collective/signoff

@@ -5,7 +5,7 @@
 **Your coding agent puts its open decisions on one local page: mockups with the spot boxed in orange, the cost
 of each option, its recommendation preselected. You answer, accept, press Done, and the agent carries on.**
 
-[![test](https://github.com/trustmeimlumi/signoff/actions/workflows/test.yml/badge.svg)](https://github.com/trustmeimlumi/signoff/actions/workflows/test.yml)
+[![test](https://github.com/lumi-collective/signoff/actions/workflows/test.yml/badge.svg)](https://github.com/lumi-collective/signoff/actions/workflows/test.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 ![Two rounds of questions as tabs: a box ticked, a mark drawn on a mockup with a comment, the first round accepted, the second accepted with Ctrl+Enter, the Summary tab, then Done](media/demo-page.gif)
@@ -58,7 +58,8 @@ has none. It sends the same requests the page does.
 | | Status |
 |---|---|
 | Terminal (`claude`) on macOS | Tested. |
-| Linux, Windows | The test suite runs in CI on both, with Python 3.9 and 3.13. A browser check runs there too: the server and the page in headless Chrome, with real mouse clicks, from the start link to Done (see [Development and tests](#development-and-tests)). Not tried in a real Claude Code session yet. |
+| Windows | Tried in a real Claude Code session: the page opened in Chrome and the answer reached the session. The test suite and the browser check also run in CI. |
+| Linux | The test suite runs in CI, with Python 3.9 and 3.13. A browser check runs there too: the server and the page in headless Chrome, with real mouse clicks, from the start link to Done (see [Development and tests](#development-and-tests)). Not tried in a real Claude Code session yet. |
 | Desktop app, VS Code extension | Untested. |
 | claude.ai (web, mobile) and Cowork | Not supported: the plugin does not install there. |
 | Chrome | Tested, headless, driven over the DevTools protocol. |
@@ -70,16 +71,16 @@ has none. It sends the same requests the page does.
 At the prompt of a terminal session:
 
 ```
-/plugin install signoff --marketplace trustmeimlumi/signoff
+/plugin install signoff --marketplace lumi-collective/signoff
 ```
 
 From a shell:
 
 ```
-claude plugin install signoff --marketplace trustmeimlumi/signoff
+claude plugin install signoff --marketplace lumi-collective/signoff
 ```
 
-In the desktop app: + next to the prompt box → Plugins → Add marketplace `trustmeimlumi/signoff` → Add plugin.
+In the desktop app: + next to the prompt box → Plugins → Add marketplace `lumi-collective/signoff` → Add plugin.
 
 Update: `claude plugin update signoff@signoff`, then `/reload-plugins`.
 Uninstall: `claude plugin uninstall signoff@signoff`. Decision folders and answers files in your projects stay

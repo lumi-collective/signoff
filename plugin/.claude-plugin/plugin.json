@@ -4,8 +4,8 @@
   "version": "0.1.0",
   "description": "A local decision page for coding agents: the agent lists its open decisions with mockups, highlight boxes, costs and a preselected recommendation; you answer in the browser and press Done.",
   "author": { "name": "trustmeimlumi", "url": "https://github.com/trustmeimlumi" },
-  "homepage": "https://github.com/trustmeimlumi/signoff",
-  "repository": "https://github.com/trustmeimlumi/signoff",
+  "homepage": "https://github.com/lumi-collective/signoff",
+  "repository": "https://github.com/lumi-collective/signoff",
   "license": "MIT",
   "keywords": ["decisions", "review", "human-in-the-loop", "mockups", "skill"],
   "userConfig": {
