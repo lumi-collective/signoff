@@ -16,6 +16,13 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
         python: ["3.9", "3.13"]
+        # ubuntu-latest (Ubuntu 26.04) has no Python 3.9 build; 3.9 runs on the previous LTS.
+        exclude:
+          - os: ubuntu-latest
+            python: "3.9"
+        include:
+          - os: ubuntu-24.04
+            python: "3.9"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
