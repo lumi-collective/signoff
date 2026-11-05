@@ -224,10 +224,18 @@ button.accept-round{background:var(--sel)}
 .summary-round h2{display:flex;align-items:center;gap:10px;font-size:14px;font-weight:650}
 .summary-round h2::after{content:"";flex:1;height:1px;background:var(--line)}
 .summary-list{gap:0;background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;box-shadow:var(--shadow)}
-.summary-list li{border:0;border-radius:0;border-top:1px solid var(--line);padding:10px 14px}
-.summary-list li:first-child{border-top:0}
+.summary-list li{border:0;border-radius:0;padding:10px 14px}
+.summary-list li:not([hidden])~li{border-top:1px solid var(--line)}
+.summary-filter{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;margin:16px 0 0}
+.summary-filter .seg{max-width:100%}
+.summary-filter .seg button{flex:0 1 auto;overflow-wrap:normal}
+.summary-note{margin:6px 0 2px;padding:1px 0 1px 10px;border-left:2px solid var(--accent);color:var(--text);font-size:13.5px;
+  white-space:pre-line;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden}
+.summary-note.open{display:block;overflow:visible}
+.note-more{display:block;font-size:13px}
+.summary-block{margin:28px 0 0}
 .summary-list li.flag{border-left:0;box-shadow:inset 3px 0 0 var(--box)}
-.summary-list .link{font-weight:600}
+.summary-list .link{font-weight:600;text-align:left}
 .badge{border:0;background:var(--seg);color:var(--soft);font-size:11.5px;padding:2px 8px}
 dialog{border-radius:12px;box-shadow:0 12px 40px rgba(0,0,0,.25)}
 kbd{border-radius:4px}
@@ -307,6 +315,8 @@ kbd{border-radius:4px}
       summaryIntro: 'Every answer in one list. Accept each round, then press Done.',
       differs: 'not the recommendation', otherBadge: 'Other', skipped: 'Skipped', marksBadge: '{n} marks', markBadge: '1 mark',
       commentBadge: 'comment', nothing: 'nothing chosen', notAccepted: 'not accepted yet',
+      show: 'Show', show_all: 'All', show_comment: 'With comment', show_differs: 'Not the recommendation',
+      noneShown: 'Nothing to show.', more: 'Full text', less: 'Show less',
       kAccept: 'accept the open round (Cmd+Enter on a Mac); with a single round, Done',
       light: 'Light', dark: 'Dark', theme: 'Theme', width: 'Width', board: 'Live mockup',
       missing: 'Picture not shown: {r}', full: 'Open full size', addMark: 'Add a mark to picture {n}',
@@ -339,6 +349,8 @@ kbd{border-radius:4px}
       summaryIntro: 'Minden válasz egy helyen. Fogadj el minden kört, aztán nyomd meg a Kész gombot.',
       differs: 'eltér a javaslattól', otherBadge: 'Egyéb', skipped: 'Kihagyva', marksBadge: '{n} jelölés', markBadge: '1 jelölés',
       commentBadge: 'megjegyzés', nothing: 'nincs választás', notAccepted: 'még nincs elfogadva',
+      show: 'Mutasd', show_all: 'Mind', show_comment: 'Megjegyzéssel', show_differs: 'Eltér a javaslattól',
+      noneShown: 'Nincs mit mutatni.', more: 'Teljes szöveg', less: 'Kevesebb',
       kAccept: 'a nyitott kör elfogadása (Macen Cmd+Enter); egyetlen körnél: Kész',
       light: 'Világos', dark: 'Sötét', theme: 'Téma', width: 'Szélesség', board: 'Élő makett',
       missing: 'A kép nem látható: {r}', full: 'Megnyitás teljes méretben', addMark: 'Jelölés hozzáadása a(z) {n}. képhez',
@@ -754,6 +766,8 @@ kbd{border-radius:4px}
 
   var panels = byId('panels'), tabs = byId('tabs');
   var sources = rounds.map(function () { return {}; });
+  var show = 'all';  // the summary's filter; kept here because the summary is rebuilt on most changes
+  var blockSeen = null;  // the answers the single round's summary block was last built from
   function setChoice(ri, item, values) {
     inputs(ri, item).forEach(function (i) { i.checked = values.indexOf(i.value) >= 0; });
   }
@@ -811,6 +825,19 @@ kbd{border-radius:4px}
       row.append(state, accept);
       panel.append(row);
     }
+    if (!historyMode && !wizard && !r.readonly) {
+      // One round: the summary sits above a second Done, so the last look and the click are together.
+      var block = el('section', 'summary-block');
+      block.id = 'summary-block';
+      var rows = el('div');
+      rows.id = 'summary-rows';
+      var end = el('div', 'summary-done');
+      var done2 = doneCopy();
+      done2.id = 'done-block';
+      end.append(done2);
+      block.append(el('h2', 'group', L.summary), rows, end);
+      panel.append(block);
+    }
 
     // Restore the saved answers; an item without one starts at the recommendation.
     var saved = r.answers;
@@ -830,6 +857,7 @@ kbd{border-radius:4px}
       }
     });
     if (saved) byId('r' + ri + '-free').value = saved.free_text;
+    drawBlock();
     if (r.readonly) {
       Array.prototype.forEach.call(panel.querySelectorAll('input, textarea'), function (i) { i.disabled = true; });
     } else if (saved) {
@@ -917,6 +945,7 @@ kbd{border-radius:4px}
   }
   function later(ri, ms) {
     if (finished || historyMode) return;
+    drawBlock();
     if (accepted[ri] && !rounds[ri].readonly) {  // any change, a comment too, undoes the acceptance
       accepted[ri] = false;
       changed[ri] = true;
@@ -1051,10 +1080,11 @@ kbd{border-radius:4px}
     showHeader(d);
     acceptButton.hidden = rounds[ri].readonly || !d.items.some(hasRec);
     label(!!undo[ri]);
+    fitNotes();  // the single round's summary block was skipped while its panel was hidden
   }
   function tabName(ri) { return rounds[ri].decisions.tab || rounds[ri].decisions.title; }
   function missingRounds() { return editable.filter(function (ri) { return !accepted[ri] && !closed[ri]; }); }
-  var doneButtons = [doneButton];
+  var doneButtons = byId('done-block') ? [doneButton, byId('done-block')] : [doneButton];
   // Done waits for every round to be accepted. It stays focusable and says why, instead of a silent grey button.
   function refresh() {
     tabButtons.forEach(function (tab, ri) {
@@ -1124,14 +1154,20 @@ kbd{border-radius:4px}
       return labelOf(item, v);
     }).join(', ') || L.nothing};
   }
-  function renderSummary() {
-    var panel = byId('panel-' + SUMMARY);
-    panel.replaceChildren();
-    rounds.forEach(function (r, ri) {
+  // Every item of the given rounds with its choice, its flags and its comment, under a filter that only hides rows.
+  function summaryRows(holder, list, heads) {
+    var counts = {all: 0, comment: 0, differs: 0}, boxes = [];
+    var bar = el('div', 'summary-filter'), seg = el('div', 'seg');
+    seg.setAttribute('role', 'group');
+    seg.setAttribute('aria-label', L.show);
+    bar.append(el('span', 'board-label', L.show), seg);
+    holder.append(bar);
+    list.forEach(function (ri) {
+      var r = rounds[ri];
       var box = el('section', 'summary-round');
-      var h = el('h2', '', tabName(ri) + ' · ' + (r.readonly ? L.doneTab.replace(/[()]/g, '').trim()
-        : accepted[ri] ? L.accepted : changed[ri] ? L.changedTab.replace(/[()]/g, '').trim() : L.notAccepted));
-      var list = el('ul', 'summary-list');
+      if (heads) box.append(el('h2', '', tabName(ri) + ' · ' + (r.readonly ? L.doneTab.replace(/[()]/g, '').trim()
+        : accepted[ri] ? L.accepted : changed[ri] ? L.changedTab.replace(/[()]/g, '').trim() : L.notAccepted)));
+      var ul = el('ul', 'summary-list');
       r.decisions.items.forEach(function (item, n) {
         var c = choiceText(ri, item), li = el('li');
         var go = el('button', 'link', (n + 1) + '. ' + item.title);
@@ -1149,24 +1185,93 @@ kbd{border-radius:4px}
         if (c.picked.indexOf(SKIP) >= 0) flags.push(L.skipped);
         var count = item.marks ? marksOf(ri, item).length : 0;
         if (count) flags.push(count === 1 ? L.markBadge : fmt(L.marksBadge, {n: count}));
-        var ta = byId(key(ri, item) + '-c');
-        if (ta && ta.value.trim()) flags.push(L.commentBadge);
+        var ta = byId(key(ri, item) + '-c'), note = ta ? ta.value.trim() : '';
+        if (note) {
+          flags.push(L.commentBadge);
+          li.append(el('blockquote', 'summary-note', note));
+        }
         flags.forEach(function (f) { li.append(el('span', 'badge', f)); });
         if (flags.length) li.classList.add('flag');
-        list.append(li);
+        li.dataset.show = ['all'].concat(note ? ['comment'] : [], rec.length && !same ? ['differs'] : []).join(' ');
+        li.dataset.show.split(' ').forEach(function (k) { counts[k]++; });
+        ul.append(li);
       });
-      box.append(h, list);
-      panel.append(box);
+      box.append(ul);
+      holder.append(box);
+      boxes.push(box);
     });
+    var none = el('p', 'hint', L.noneShown);
+    holder.append(none);
+    Array.prototype.forEach.call(holder.querySelectorAll('.summary-note'), function (q) {
+      var more = el('button', 'link note-more', L.more);
+      more.type = 'button';
+      more.setAttribute('aria-expanded', 'false');
+      more.addEventListener('click', function () {
+        var open = q.classList.toggle('open');
+        more.textContent = open ? L.less : L.more;
+        more.setAttribute('aria-expanded', String(open));
+      });
+      q.after(more);
+    });
+    function apply() {
+      var any = false;
+      Array.prototype.forEach.call(seg.children, function (b) { b.setAttribute('aria-pressed', String(b.dataset.show === show)); });
+      boxes.forEach(function (box) {
+        var shown = 0;
+        Array.prototype.forEach.call(box.querySelectorAll('li'), function (li) {
+          li.hidden = li.dataset.show.split(' ').indexOf(show) < 0;
+          if (!li.hidden) shown++;
+        });
+        box.hidden = !shown;
+        any = any || shown > 0;
+      });
+      none.hidden = any;
+      fitNotes();  // rows shown again were skipped while hidden, maybe at another width
+    }
+    ['all', 'comment', 'differs'].forEach(function (k) {
+      var b = el('button', '', L['show_' + k] + '\xa0' + counts[k]);  // a narrow screen wraps the label, never the count
+      b.type = 'button';
+      b.dataset.show = k;
+      b.addEventListener('click', function () { show = k; apply(); });
+      seg.append(b);
+    });
+    apply();
+  }
+  // CSS cuts a quote at 3 lines; the toggle after it shows only where it does, so measure again when the width changes.
+  function fitNotes() {
+    Array.prototype.forEach.call(document.querySelectorAll('.summary-note'), function (q) {
+      if (q.offsetParent) q.nextSibling.hidden = !q.classList.contains('open') && q.scrollHeight <= q.clientHeight + 1;
+    });
+  }
+  window.addEventListener('resize', fitNotes);
+  function drawBlock() {
+    var rows = byId('summary-rows');
+    if (!rows) return;
+    // Rebuild only when an answer changed: a text field's change event on blur would swap the buttons under a click.
+    var seen = JSON.stringify(collect(editable[0], false).answers);
+    if (seen === blockSeen) return;
+    blockSeen = seen;
+    rows.replaceChildren();
+    summaryRows(rows, editable, false);
+  }
+  // A second Done below a summary, for the last look before the click.
+  function doneCopy() {
+    var b = el('button', 'primary', doneButton.textContent);
+    b.type = 'button';
+    b.addEventListener('click', finish);
+    return b;
+  }
+  function renderSummary() {
+    var panel = byId('panel-' + SUMMARY);
+    panel.replaceChildren();
+    summaryRows(panel, rounds.map(function (r, ri) { return ri; }), true);
     var end = el('div', 'summary-done');
     var why = el('button', 'link reason');
     why.type = 'button';
     why.id = 'summary-reason';
     why.addEventListener('click', goToMissing);
-    var done2 = el('button', 'primary', doneButton.textContent);
-    done2.type = 'button';
+    var done2 = doneCopy();
     done2.setAttribute('aria-describedby', 'summary-reason');
-    done2.addEventListener('click', finish);
     doneButtons = [doneButton, done2];
     end.append(why, done2);
     panel.append(end);

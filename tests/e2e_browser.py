@@ -3,9 +3,11 @@
 
     python3 tests/e2e_browser.py            (from anywhere; CHROME=<path> if Chrome is not found)
 
-It copies two rounds of examples/demo into a temporary folder, starts `signoff.py --no-open` on it, opens the
-single-use start link in headless Chrome over the DevTools protocol, picks a non-recommended option, accepts
-both rounds with real mouse clicks, presses Done, and checks the exit code, stdout and both answers files.
+It copies rounds of examples/demo into a temporary folder, starts `signoff.py --no-open` on it, opens the
+single-use start link in headless Chrome over the DevTools protocol, and drives the page with real mouse clicks.
+First one round: a non-recommended pick and a comment, the summary block above Done quotes the comment and its
+filter works, one click on Done. Then two rounds: a non-recommended pick, both rounds accepted, the Summary's
+filter counts, Done. Each run checks the exit code, stdout and the answers files.
 
 Not named test_*.py, so `unittest discover -s tests` does not run it: it needs a browser. It proves the server
 and the page together in a browser; it is not a Claude Code session. Standard library only, Python 3.9+.
@@ -29,7 +31,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DEMO = ROOT / "examples" / "demo"
-TOTAL_TIMEOUT = 150  # seconds for the whole run; a hang fails the job instead of eating minutes
+TOTAL_TIMEOUT = 240  # seconds for the whole run; a hang fails the job instead of eating minutes
 WINDOWS = sys.platform == "win32"
 PROCS = []  # everything to kill in every exit path
 WORK = []  # the temporary folder
@@ -209,9 +211,125 @@ class Browser:
         time.sleep(0.3)
 
 
+def serve(target, profile):
+    """Start `signoff.py --no-open` on target and open its start link in a new Chrome; return the pieces."""
+    server = spawn([sys.executable, "-I", "-B", str(ROOT / "plugin" / "signoff" / "signoff.py"), "--no-open", "--timeout", "3",
+                    str(target)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True,
+                   encoding="utf-8", errors="replace")
+    out, err = [], []
+    for stream, sink in ((server.stdout, out), (server.stderr, err)):
+        threading.Thread(target=pump, args=(stream, sink), daemon=True).start()
+
+    def start_link():
+        check(server.poll() is None, "Signoff exited early: %s" % "".join(err))
+        return next((m.group(0) for m in (re.search(r"http://\S+", l) for l in err) if m), None)
+    try:
+        link = wait_for("the start link on stderr", start_link)
+        browser = Browser(profile)
+        browser.call("Emulation.setDeviceMetricsOverride", width=1280, height=900, deviceScaleFactor=1, mobile=False)
+        browser.call("Page.enable")
+        browser.call("Page.navigate", url=link)
+    except E2EError:
+        sys.stderr.write("--- Signoff stderr ---\n" + "".join(err))
+        raise
+    return server, out, err, browser
+
+
+def finished(server, out, err, expected):
+    """Signoff exited 0 and printed exactly the expected answers paths; return each file's answers."""
+    try:
+        code = server.wait(timeout=60)
+    except subprocess.TimeoutExpired:
+        raise E2EError("Signoff did not exit after Done; stderr: %s" % "".join(err))
+    time.sleep(0.5)  # let the pump threads drain
+    check(code == 0, "Signoff exited %s, expected 0; stderr: %s" % (code, "".join(err)))
+    listed = [l.strip() for l in out if l.strip()]
+    check(len(listed) == len(expected), "stdout should list %d answers paths and nothing else, got %r" % (len(expected), out))
+    for line, want in zip(listed, expected):
+        check(os.path.basename(line) == want.name and os.path.exists(line) and os.path.samefile(line, str(want)),
+              "stdout line %r is not %s" % (line, want.name))
+    return [json.loads(want.read_text(encoding="utf-8")) for want in expected]
+
+
+def filter_labels(browser, holder):
+    labels = browser.js("Array.prototype.map.call(document.querySelectorAll(%s), function (b) { return b.textContent; })"
+                        % json.dumps(holder + " .summary-filter button"))
+    return [l.replace(" ", " ") for l in labels]
+
+
+def shown_rows(browser, holder):
+    return browser.js("Array.prototype.filter.call(document.querySelectorAll(%s), function (li) { return !li.hidden; })"
+                      ".map(function (li) { var q = li.querySelector('.summary-note'); return q ? q.textContent : ''; })"
+                      % json.dumps(holder + " .summary-list li"))
+
+
+def run_single(work):
+    """One round: the summary block above Done quotes the comment, its filter works, and Done is one click."""
+    topic = work / "2026-01-06-wording"
+    topic.mkdir()
+    target = topic / "decisions.json"
+    shutil.copyfile(str(DEMO / "round-04.json"), str(target))
+    items = json.loads(target.read_text(encoding="utf-8"))["items"]
+    option = next(k for k, o in enumerate(items[0]["options"]) if o["id"] != items[0]["recommended"])
+    # About two lines at 1280 px, five or more at 390 px: the quote is cut only on the narrow screen.
+    comment = ("Keep it short; the label sits in a narrow column, and a long one wraps under the switch. "
+               "Two words would do, as long as they still say what gets synced.\n"
+               "The second line of the comment, which a narrow screen wraps once more.")
+    note = "#summary-block .summary-note"
+
+    def toggle():
+        return browser.js("(function () { var q = document.querySelector(%s), b = q.nextSibling; "
+                          "return {hidden: b.hidden, open: q.classList.contains('open'), "
+                          "expanded: b.getAttribute('aria-expanded'), cut: q.scrollHeight > q.clientHeight + 1, "
+                          "lines: Math.round(q.scrollHeight / parseFloat(getComputedStyle(q).lineHeight))}; })()"
+                          % json.dumps(note))
+
+    server, out, err, browser = serve(target, str(work / "profile-single"))
+    try:
+        wait_for("the page", lambda: browser.js("!!document.getElementById('r0-i1-c')"))
+        check(browser.js("document.getElementById('tabs').hidden"), "a single round should show no tabs")
+        browser.click("#r0-i0-o%d" % option)
+        browser.click("#r0-i1-c")
+        browser.call("Input.insertText", text=comment)
+        wait_for("the comment quoted in the summary block", lambda: comment in shown_rows(browser, "#summary-block"))
+        labels = filter_labels(browser, "#summary-block")
+        check(labels == ["All 2", "With comment 1", "Not the recommendation 1"], "summary filter shows %r" % labels)
+        state = toggle()
+        check(not state["cut"] and state["hidden"], "at 1280 px the quote fits, with no toggle: %r" % state)
+        browser.click("#summary-block .summary-filter button:nth-of-type(2)")
+        rows = shown_rows(browser, "#summary-block")
+        check(rows == [comment], "With comment should show only the commented item, shows %r" % rows)
+        browser.click("#summary-block .summary-filter button:nth-of-type(3)")
+        rows = shown_rows(browser, "#summary-block")
+        check(rows == [""], "Not the recommendation should show only the changed item, shows %r" % rows)
+
+        # Narrow the screen while the quote is filtered out, then show it again: it is cut, and the toggle shows.
+        browser.call("Emulation.setDeviceMetricsOverride", width=390, height=900, deviceScaleFactor=1, mobile=False)
+        time.sleep(0.5)
+        browser.click("#summary-block .summary-filter button:nth-of-type(2)")
+        state = toggle()
+        check(state["cut"] and state["lines"] >= 4, "at 390 px the quote should be cut from 4 or more lines: %r" % state)
+        check(not state["hidden"] and state["expanded"] == "false", "the full-text toggle should show: %r" % state)
+        browser.click(note + " + .note-more")
+        state = toggle()
+        check(state["open"] and state["expanded"] == "true" and not state["cut"],
+              "after the toggle the quote should show in full: %r" % state)
+        browser.click("#done-block")  # one click, no acceptance step
+
+        answers = finished(server, out, err, [topic / "decisions.answers.json"])[0]
+        check(answers.get("done") is True, "decisions.answers.json: done is %r" % answers.get("done"))
+        got = answers["answers"]
+        check(got[items[0]["id"]]["choice"] == items[0]["options"][option]["id"], "the pick was not stored: %r" % got)
+        check(got[items[1]["id"]]["comment"] == comment, "the comment was not stored: %r" % got)
+    except E2EError:
+        sys.stderr.write("--- Signoff stderr ---\n" + "".join(err))
+        raise
+
+
 def run():
     work = Path(tempfile.mkdtemp(prefix="signoff-e2e-"))
     WORK.append(work)
+    run_single(work)
     topic = work / "2026-01-05-settings"
     topic.mkdir()
     shutil.copytree(str(DEMO / "mockups"), str(topic / "mockups"))
@@ -226,22 +344,8 @@ def run():
     option = next(k for k, o in enumerate(items[index]["options"]) if o["id"] != recommended)
     pick_id, pick_item = items[index]["options"][option]["id"], items[index]["id"]
 
-    server = spawn([sys.executable, "-I", "-B", str(ROOT / "plugin" / "signoff" / "signoff.py"), "--no-open", "--timeout", "3",
-                    str(topic)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True,
-                   encoding="utf-8", errors="replace")
-    out, err = [], []
-    for stream, sink in ((server.stdout, out), (server.stderr, err)):
-        threading.Thread(target=pump, args=(stream, sink), daemon=True).start()
+    server, out, err, browser = serve(topic, str(work / "profile"))
     try:
-        def start_link():
-            check(server.poll() is None, "Signoff exited early: %s" % "".join(err))
-            return next((m.group(0) for m in (re.search(r"http://\S+", l) for l in err) if m), None)
-        link = wait_for("the start link on stderr", start_link)
-        browser = Browser(str(work / "profile"))
-        browser.call("Emulation.setDeviceMetricsOverride", width=1280, height=900, deviceScaleFactor=1, mobile=False)
-        browser.call("Page.enable")
-        browser.call("Page.navigate", url=link)
-
         # The page rendered: a tab per round plus the Summary.
         tabs = wait_for("the tabs", lambda: browser.js("document.querySelectorAll('#tabs [role=tab]').length") or None)
         check(tabs == 3, "expected 3 tabs (2 rounds and the Summary), found %s" % tabs)
@@ -251,27 +355,24 @@ def run():
         browser.click("#r0-i%d-o%d" % (index, option))
         check(browser.js("document.getElementById('r0-i%d-o%d').checked" % (index, option)),
               "the picked option %s is not checked after the click" % pick_id)
+        comment = "Date and tag are enough for now."
+        browser.click("#r0-i0-c")
+        browser.call("Input.insertText", text=comment)
         browser.click("#accept-0")
         wait_for("round 2 to open", lambda: browser.js("!document.getElementById('panel-1').hidden"))
         browser.click("#accept-1")
         wait_for("Done to be ready", lambda: browser.js("!document.getElementById('done').disabled"))
+        # Both accepted: the Summary is open, its filter counts every item and the one changed pick.
+        total = len(rounds[0]["items"]) + len(rounds[1]["items"])
+        labels = wait_for("the Summary's filter", lambda: filter_labels(browser, "#panel-2") or None)
+        check(labels == ["All %d" % total, "With comment 1", "Not the recommendation 1"], "summary filter shows %r" % labels)
+        quotes = browser.js("Array.prototype.map.call(document.querySelectorAll('#panel-2 .summary-note'), "
+                            "function (q) { return q.textContent; })")
+        check(quotes == [comment], "the Summary should quote the comment, quotes %r" % quotes)
         browser.click("#done")
 
-        try:
-            code = server.wait(timeout=60)
-        except subprocess.TimeoutExpired:
-            raise E2EError("Signoff did not exit after Done; stderr: %s" % "".join(err))
-        time.sleep(0.5)  # let the pump threads drain
-        check(code == 0, "Signoff exited %s, expected 0; stderr: %s" % (code, "".join(err)))
-
-        listed = [l.strip() for l in out if l.strip()]
         expected = [topic / "round-01.answers.json", topic / "round-02.answers.json"]
-        check(len(listed) == len(expected), "stdout should list %d answers paths and nothing else, got %r" % (len(expected), out))
-        for line, want in zip(listed, expected):
-            check(os.path.basename(line) == want.name and os.path.exists(line) and os.path.samefile(line, str(want)),
-                  "stdout line %r is not %s" % (line, want.name))
-        for n, want in enumerate(expected):
-            answers = json.loads(want.read_text(encoding="utf-8"))
+        for n, (want, answers) in enumerate(zip(expected, finished(server, out, err, expected))):
             check(answers.get("done") is True, "%s: done is %r" % (want.name, answers.get("done")))
             check(answers.get("accepted") is True, "%s: accepted is %r" % (want.name, answers.get("accepted")))
             if n == 0:
@@ -295,7 +396,8 @@ def main():
     finally:
         timer.cancel()
         cleanup()
-    print("PASS: 2 rounds, a non-recommended pick, both accepted, Done, exit 0, 2 answers paths on stdout")
+    print("PASS: 1 round, comment quoted above Done, filter, one-click Done, exit 0; "
+          "2 rounds, a non-recommended pick, both accepted, Summary filter, Done, exit 0, 2 answers paths on stdout")
     return 0
 
 
