@@ -538,7 +538,31 @@ _MD_INLINE = re.compile(r"([\\`*_\[\]<>|])")
 _MD_LINE_START = re.compile(r"^(#|[-+](?=\s)|[-=~](?=[-=~]{2})|\d+(?=[.)]))")
 
 
-def md_text(text):
+MD_LABELS = {
+    "en": {"choice": "Choice", "source": "Source", "comment": "Comment", "mark": "Mark %d, picture %d at %s "
+           "(x, y, w, h in %%): %s", "attachment": "Attachment", "saved": "Saved", "accepted": "Accepted",
+           "done": "Done", "yes": "yes", "no": "no", "skipped": "Skipped", "other": "Other", "rec": "recommended",
+           "not_rec": "not recommended", "nothing": "nothing chosen", "none": "(none)", "private": "(private)",
+           "anything": "Anything else", "recommended": "recommendation, not changed", "accept_all": "Accept all",
+           "user": "the user", "unknown": "unknown", "yes_at": "yes, %s", "changed": "no, changed after it was accepted"},
+    "hu": {"choice": "Választás", "source": "Forrás", "comment": "Megjegyzés", "mark": "Jelölés %d, %d. kép, %s "
+           "(x, y, sz, m, %%-ban): %s", "attachment": "Melléklet", "saved": "Mentve", "accepted": "Elfogadva",
+           "done": "Kész", "yes": "igen", "no": "nem", "skipped": "Kihagyva", "other": "Egyéb", "rec": "javasolt",
+           "not_rec": "nem javasolt", "nothing": "nincs választás", "none": "(nincs)", "private": "(privát)",
+           "anything": "Bármi más", "recommended": "a javaslat, változatlanul", "accept_all": "Javaslatok elfogadása",
+           "user": "a felhasználó", "unknown": "ismeretlen", "yes_at": "igen, %s",
+           "changed": "nem, elfogadás után módosítva"},
+}
+
+
+def md_labels(decisions):
+    """The Markdown copy's labels in the round's language (the page's rule: the part before "-" or "_"; a language
+    without labels gets English)."""
+    code = re.split(r"[-_]", decisions.get("lang", "en").strip().lower())[0]
+    return MD_LABELS.get(code, MD_LABELS["en"])
+
+
+def md_text(text, none="(none)"):
     """Plain text for Markdown. Inline markup characters and HTML brackets are backslash-escaped everywhere;
     block markers only at the start of a line. Leading spaces are dropped (no code blocks), and line breaks
     become hard breaks inside the same block."""
@@ -552,11 +576,13 @@ def md_text(text):
             line = line[:cut] + "\\" + line[cut:]
         if line:
             out.append(line)
-    return "  \n  ".join(out) or "(none)"
+    return "  \n  ".join(out) or none
 
 
 def answers_markdown(decisions, record):
-    """The answers as a Markdown page for people; the JSON stays the source of truth."""
+    """The answers as a Markdown page for people, its labels in the round's language; the JSON stays the source of
+    truth. Agent text is never translated."""
+    lb = md_labels(decisions)
     out = ["# " + md_text(decisions["title"].replace("\n", " ")), ""]
     group = None
     for n, item in enumerate(decisions["items"], 1):
@@ -572,39 +598,39 @@ def answers_markdown(decisions, record):
         private = ans.get("private") is True
 
         def text(value):
-            return "(private)" if private and value.strip() else md_text(value)
+            return lb["private"] if private and value.strip() else md_text(value, lb["none"])
         labels = {o["id"]: md_text(o["label"]) for o in item["options"]}
-        labels[SKIP] = "Skipped"
-        labels[OTHER] = "Other: " + text(ans.get("other", ""))
+        labels[SKIP] = lb["skipped"]
+        labels[OTHER] = lb["other"] + ": " + text(ans.get("other", ""))
         # Whether a choice was the recommendation only means something when there was one.
-        shown = ", ".join(labels[c] + ("" if not rec else " (recommended)" if c in rec else " (not recommended)")
-                          for c in picked) or "nothing chosen"
+        shown = ", ".join(labels[c] + ("" if not rec else " (%s)" % (lb["rec"] if c in rec else lb["not_rec"]))
+                          for c in picked) or lb["nothing"]
         out += ["### %d. %s" % (n, md_text(item["title"].replace("\n", " "))), "",
-                "- Choice: " + shown,
-                "- Source: " + {"recommended": "recommendation, not changed", "accept_all": "Accept all",
-                                "user": "the user"}.get(ans.get("source"), "unknown"),
-                "- Comment: " + text(ans.get("comment", ""))]
+                "- %s: %s" % (lb["choice"], shown),
+                "- %s: %s" % (lb["source"], lb[ans["source"]] if ans.get("source") in SOURCE_VALUES else lb["unknown"])]
+        if ans.get("comment", "").strip():  # no empty line for a comment nobody wrote
+            out.append("- %s: %s" % (lb["comment"], text(ans["comment"])))
         for k, mark in enumerate(ans.get("marks", []), 1):
-            out.append("- Mark %d, picture %d at %s (x, y, w, h in %%): %s" % (
-                k, mark["image"] + 1, ", ".join("%g" % v for v in mark["box"]), text(mark["comment"])))
+            out.append("- " + lb["mark"] % (k, mark["image"] + 1, ", ".join("%g" % v for v in mark["box"]),
+                                            text(mark["comment"])))
         for att in item.get("attachments", []):  # its name only: the text is the agent's, and stays in its file
             name = md_text(att["src"].replace("\n", " "))
             caption = att.get("caption", "").replace("\n", " ")
-            out.append("- Attachment: " + ("%s (%s)" % (md_text(caption), name) if caption.strip() else name))
+            out.append("- %s: %s" % (lb["attachment"], "%s (%s)" % (md_text(caption), name) if caption.strip() else name))
         out.append("")
-    title = decisions["free_text"].get("title") or "Anything else"
-    out += ["## " + md_text(title.replace("\n", " ")), "", md_text(record["free_text"]), "",
-            "Saved: %s  " % record["saved"], "Accepted: %s  " % _accepted_text(record),
-            "Done: %s" % ("yes" if record["done"] else "no"), ""]
+    title = decisions["free_text"].get("title") or lb["anything"]
+    out += ["## " + md_text(title.replace("\n", " ")), "", md_text(record["free_text"], lb["none"]), "",
+            "%s: %s  " % (lb["saved"], record["saved"]), "%s: %s  " % (lb["accepted"], _accepted_text(record, lb)),
+            "%s: %s" % (lb["done"], lb["yes"] if record["done"] else lb["no"]), ""]
     return "\n".join(out)
 
 
-def _accepted_text(record):
+def _accepted_text(record, lb):
     if record.get("accepted"):
-        return "yes, %s" % record["accepted_at"]
+        return lb["yes_at"] % record["accepted_at"]
     if record.get("changed_after_accept"):
-        return "no, changed after it was accepted"
-    return "no"
+        return lb["changed"]
+    return lb["no"]
 
 
 def _script_json(obj):
@@ -893,6 +919,20 @@ class _Server(http.server.ThreadingHTTPServer):
         timer.start()
 
 
+def project_name(path):
+    """The folder name of the project a decisions file or folder belongs to, or None. Only the name: the page never
+    gets a path. The server knows no project root, so it looks up from the decisions folder: the nearest folder that
+    has a .git (a folder or a file) or holds a .signoff folder. The home folder never gives a name (a dotfiles repo
+    there would show the login name). A decisions folder with neither marker has no name."""
+    path = Path(path).resolve()
+    home = Path.home().resolve()
+    for up in [path] + list(path.parents):
+        root = up if (up / ".git").exists() else up.parent if up.name == DEFAULT_FOLDER else None
+        if root is not None and root != home and root.name:
+            return root.name
+    return None
+
+
 def _media_view(items, media, picture, board):
     """The items as the page gets them: each picture or board path swapped for a route by number, or for a note
     when it is missing. picture(path) and board(path) return the route, or a reason it is not shown."""
@@ -922,6 +962,7 @@ class SignoffServer(_Server):
             raise DecisionsError("nothing to answer: %s already done (Done is final). Put new questions in a new "
                                  "round-NN.json or decisions file" % ", ".join(str(r.answers_path) for r in self.rounds))
         self.folder = self.rounds[0].path.parent
+        self.project = project_name(self.folder)
         # Pictures and boards are read once, here, and served from memory.
         self.image_data, self.board_data = [], []
         for r in self.rounds:
@@ -968,7 +1009,7 @@ class SignoffServer(_Server):
                 rounds.append({"decisions": dict(r.decisions, items=items), "answers": r.saved, "saved": r.saved_at,
                                "readonly": closed, "accepted": bool(r.meta.get("accepted")) or closed,
                                "changed": bool(r.meta.get("changed_after_accept")), "rev": r.rev})
-        return {"mode": "rounds", "rounds": rounds}
+        return {"mode": "rounds", "project": self.project, "rounds": rounds}
 
     def store(self, index, state, rev=None):
         """Write one round's answers. Returns the round's new save count, or (status, message) when the save is

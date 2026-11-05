@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/trustmeimlumi/signoff/blob/main/plugin/signoff/schema.json",
+  "$id": "https://github.com/lumi-collective/signoff/blob/main/plugin/signoff/schema.json",
   "title": "Signoff decisions file",
   "description": "A list of decisions for a person to make on a local page. All text is plain text; line breaks are kept, nothing is rendered as HTML or Markdown.",
   "type": "object",

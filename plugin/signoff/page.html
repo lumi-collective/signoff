@@ -183,6 +183,7 @@ h1::before{content:"";flex:0 0 22px;height:22px;border-radius:6px;
   box-shadow:0 0 0 1px var(--tilering)}
 .intro{font-size:13.5px}
 .head-intro{padding-left:32px}
+.project{margin:0 0 2px;padding-left:32px;font-size:12.5px;font-weight:650;line-height:1.3;color:var(--accent)}
 button{border-radius:7px;padding:7px 14px;border-color:var(--line2);box-shadow:var(--shadow)}
 button.primary{background:var(--btn);border-color:var(--btn);color:var(--btntext);font-weight:600}
 button.primary[aria-disabled=true]{opacity:1;background:var(--btnoff);border-color:var(--btnoff);color:var(--btnofftext);box-shadow:none}
@@ -311,7 +312,7 @@ kbd{border-radius:4px}
 </head>
 <body>
 <header>
-  <div class="head-text"><h1 id="title"></h1><p class="intro head-intro" id="intro"></p></div>
+  <div class="head-text"><p class="project" id="project" hidden></p><h1 id="title"></h1><p class="intro head-intro" id="intro"></p></div>
   <div class="actions"><span id="status" role="status" aria-live="polite">Not saved yet</span>
     <button type="button" id="accept-all"><span class="accept"><span id="accept-short">Accept all</span><span class="wide" id="accept-rest"> recommendations</span></span><span class="undo" hidden>Undo accept all</span></button>
     <span class="progress" id="progress" hidden></span>
@@ -386,7 +387,7 @@ kbd{border-radius:4px}
       marks: 'Your marks', markHint: 'Draw a rectangle on a picture to point at something, or use the Add a mark button.',
       mark: 'Mark {n}', markOn: 'on picture {p}', markHandle: 'Mark {n} on picture {p}. Arrow keys move it, Shift and arrow keys resize it.',
       markComment: 'Comment on mark {n}', remove: 'Remove', noMarks: 'No marks.',
-      historyTitle: 'Past decisions: {root}', historyIntro: 'Every round under this project, newest first. Pick one to see it as it was answered.',
+      historyTitle: 'Past decisions', historyIntro: 'Every round under this project, newest first. Pick one to see it as it was answered.',
       historyNotice: 'Read only. Close it with Ctrl+C in the terminal; it also stops after {m} idle minutes.',
       historyNoticeNever: 'Read only. Close it with Ctrl+C in the terminal.',
       search: 'Search', from: 'From', fromHint: 'YYYY-MM-DD', count: '{n} of {t} rounds', none: 'No round matches.',
@@ -428,7 +429,7 @@ kbd{border-radius:4px}
       marks: 'A jelöléseid', markHint: 'Rajzolj téglalapot a képre, hogy megmutass valamit, vagy használd a Jelölés hozzáadása gombot.',
       mark: '{n}. jelölés', markOn: 'a(z) {p}. képen', markHandle: '{n}. jelölés a(z) {p}. képen. A nyilak mozgatják, a Shift és a nyilak átméretezik.',
       markComment: 'Megjegyzés a(z) {n}. jelöléshez', remove: 'Törlés', noMarks: 'Nincs jelölés.',
-      historyTitle: 'Korábbi döntések: {root}', historyIntro: 'A projekt minden köre, a legújabb elöl. Válassz egyet: úgy jelenik meg, ahogy megválaszolták.',
+      historyTitle: 'Korábbi döntések', historyIntro: 'A projekt minden köre, a legújabb elöl. Válassz egyet: úgy jelenik meg, ahogy megválaszolták.',
       historyNotice: 'Csak olvasható. A terminálban Ctrl+C zárja be; {m} perc tétlenség után magától is leáll.',
       historyNoticeNever: 'Csak olvasható. A terminálban Ctrl+C zárja be.',
       search: 'Keresés', from: 'Ettől', fromHint: 'ÉÉÉÉ-HH-NN', count: '{n} / {t} kör', none: 'Egy kör sem felel meg.',
@@ -1215,9 +1216,12 @@ kbd{border-radius:4px}
     acceptButton.querySelector('.accept').hidden = undoing;
     acceptButton.querySelector('.undo').hidden = !undoing;
   }
+  var project = String((historyMode ? data.root : data.project) || '');  // a folder name from the server, never a path
+  byId('project').textContent = project;
+  byId('project').hidden = !project;
   function showHeader(d) {
     byId('title').textContent = d.title;
-    document.title = d.title;
+    document.title = project ? project + ' · ' + d.title : d.title;
     byId('intro').textContent = d.intro || '';
     byId('intro-phone').textContent = d.intro || '';  // phones show it below the sticky header
     var notice = byId('notice');
@@ -1229,7 +1233,7 @@ kbd{border-radius:4px}
     // ---- The page of past decisions: a filterable list, and the chosen round read only ----
     [status, acceptButton, doneButton].forEach(function (b) { b.hidden = true; });
     var minutes = data.timeout;
-    showHeader({title: fmt(L.historyTitle, {root: data.root}), intro: L.historyIntro,
+    showHeader({title: L.historyTitle, intro: L.historyIntro,
       notice: minutes ? fmt(L.historyNotice, {m: minutes}) : L.historyNoticeNever});
     byId('layout').classList.add('split');
     byId('history').hidden = false;
@@ -1237,6 +1241,22 @@ kbd{border-radius:4px}
     byId('h-from-label').textContent = L.from;
     byId('h-from').placeholder = L.fromHint;
     var list = byId('h-list'), items = [];
+    // What the search may match in the answers: the chosen options, the Other text, comments and marks, the free
+    // text. The text of a private answer is left out, or a hit would give it away.
+    function answerWords(r) {
+      if (!r.answers) return [];
+      var words = [r.answers.free_text];
+      (r.decisions ? r.decisions.items : []).forEach(function (it) {
+        var a = r.answers.answers[it.id];
+        if (!a) return;
+        var picked = Array.isArray(a.choice) ? a.choice : [a.choice];
+        it.options.forEach(function (o) { if (picked.indexOf(o.id) >= 0) words.push(o.label); });
+        if (a.private === true) return;
+        words.push(a.other, a.comment);
+        (a.marks || []).forEach(function (m) { words.push(m.comment); });
+      });
+      return words.filter(Boolean);
+    }
     var choose = function (ri) {
       Array.prototype.forEach.call(panels.children, function (p) { p.hidden = true; });
       renderPanel(ri);
@@ -1262,7 +1282,8 @@ kbd{border-radius:4px}
       list.append(li);
       items.push(b);
       r.search = [r.title, r.tab, r.topic, r.file, r.outcome && r.outcome.line, r.error].concat(
-        (r.decisions ? r.decisions.items : []).map(function (it) { return it.title; })).join(' ').toLowerCase();
+        (r.decisions ? r.decisions.items : []).map(function (it) { return it.title; }), answerWords(r))
+        .join(' ').toLowerCase();
     });
     var filter = function () {
       // From is ISO text like the dates in the list (2026, 2026-01 or 2026-01-31), not the viewer's regional format.

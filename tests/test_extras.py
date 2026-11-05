@@ -395,5 +395,84 @@ class History(unittest.TestCase):
         self.assertNotIn("2026-03-01-linked/round-01.json", self.entries())
 
 
+class ProjectName(unittest.TestCase):
+    """The page shows the project folder's name, never a path: the git root above the decisions folder, else the
+    folder above a .signoff folder, else nothing."""
+
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.base = Path(self._tmp.name).resolve()
+
+    def topic(self, *parts):
+        path = self.base.joinpath(*parts)
+        path.mkdir(parents=True)
+        return path
+
+    def write_decisions(self, topic):
+        data = sample_decisions()
+        data["items"][0]["images"] = []
+        (topic / "decisions.json").write_text(json.dumps(data), encoding="utf-8")
+
+    def test_git_root(self):
+        self.topic("shop", ".git")
+        topic = self.topic("shop", "docs", "decisions", "2026-01-01-a")
+        self.assertEqual(signoff.project_name(topic), "shop")
+
+    def test_git_file_of_a_worktree_or_submodule(self):
+        topic = self.topic("wt", ".signoff", "2026-01-01-a")
+        (self.base / "wt" / ".git").write_text("gitdir: elsewhere\n", encoding="utf-8")
+        self.assertEqual(signoff.project_name(topic), "wt")
+
+    def test_the_nearest_git_root_wins(self):
+        self.topic("outer", ".git")
+        self.topic("outer", "inner", ".git")
+        self.assertEqual(signoff.project_name(self.topic("outer", "inner", ".signoff", "t")), "inner")
+
+    def test_a_nearer_signoff_folder_beats_a_farther_git_root(self):
+        self.topic("mono", ".git")
+        self.assertEqual(signoff.project_name(self.topic("mono", "apps", "foo", ".signoff", "t")), "foo")
+
+    def test_a_dotfiles_repo_at_home_gives_no_name(self):
+        from unittest import mock
+        self.topic(".git")  # the base is the home folder, and a git repo
+        with mock.patch.object(signoff.Path, "home", return_value=self.base):
+            self.assertEqual(signoff.project_name(self.topic("projects", "foo", ".signoff", "t")), "foo")
+            self.assertIsNone(signoff.project_name(self.topic("projects", "bar", "docs", "t")))
+            self.assertIsNone(signoff.project_name(self.topic(".signoff", "t")))  # home's own .signoff folder
+
+    def test_signoff_folder_without_git(self):
+        self.assertEqual(signoff.project_name(self.topic("plain", ".signoff", "2026-01-01-a")), "plain")
+
+    def test_nothing_to_go_on_is_none(self):
+        self.assertIsNone(signoff.project_name(self.topic("loose", "a", "b")))
+
+    def test_the_page_gets_the_name_and_no_path(self):
+        self.topic("shop", ".git")
+        topic = self.topic("shop", ".signoff", "2026-01-01-a")
+        self.write_decisions(topic)
+        server = signoff.make_server(topic / "decisions.json")
+        self.addCleanup(server.server_close)
+        view = server.view()
+        self.assertEqual(view["project"], "shop")
+        self.assertNotIn(str(self.base), json.dumps(view))
+
+    def test_no_name_no_key_value(self):
+        topic = self.topic("loose", "a")
+        self.write_decisions(topic)
+        server = signoff.make_server(topic / "decisions.json")
+        self.addCleanup(server.server_close)
+        self.assertIsNone(server.view()["project"])
+
+    def test_history_names_its_root(self):
+        root = HistoryRoot()
+        self.addCleanup(root.cleanup)
+        server = signoff.make_history_server(root.path)
+        self.addCleanup(server.server_close)
+        self.assertEqual(server.view()["root"], root.path.name)
+
+
 if __name__ == "__main__":
     unittest.main()

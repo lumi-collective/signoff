@@ -11,7 +11,8 @@ summary and the Markdown copy, unticking the agent's mark survives a reload, one
 earlier shows Private without the untick hint. An item with criteria shows its facts as chips; the Cards / Table
 toggle shows the table, a pick there (by click and by number key) is saved and shows on the cards, and at 390 px
 the table scrolls in its own box. An attachment starts closed, opens on a click and shows the file's text
-exactly, with nothing rendered. Then two rounds: a non-recommended pick, both rounds accepted, the Summary's
+exactly, with nothing rendered. The header names the project folder and the tab title starts with it; on the
+--history page the search finds an answer's comment and free text but not a private comment. Then two rounds: a non-recommended pick, both rounds accepted, the Summary's
 filter counts, Done. Each run checks the exit code, stdout and the answers files.
 
 Not named test_*.py, so `unittest discover -s tests` does not run it: it needs a browser. It proves the server
@@ -217,11 +218,12 @@ class Browser:
         time.sleep(0.3)
 
 
-def serve(target, profile):
-    """Start `signoff.py --no-open` on target and open its start link in a new Chrome; return the pieces."""
-    server = spawn([sys.executable, "-I", "-B", str(ROOT / "plugin" / "signoff" / "signoff.py"), "--no-open", "--timeout", "3",
-                    str(target)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True,
-                   encoding="utf-8", errors="replace")
+def serve(target, profile, history=False):
+    """Start `signoff.py --no-open` on target (or --history target) and open its start link in a new Chrome; return
+    the pieces."""
+    server = spawn([sys.executable, "-I", "-B", str(ROOT / "plugin" / "signoff" / "signoff.py"), "--no-open", "--timeout", "3"]
+                   + (["--history"] if history else []) + [str(target)], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                   universal_newlines=True, encoding="utf-8", errors="replace")
     out, err = [], []
     for stream, sink in ((server.stdout, out), (server.stderr, err)):
         threading.Thread(target=pump, args=(stream, sink), daemon=True).start()
@@ -296,6 +298,11 @@ def run_single(work):
     try:
         wait_for("the page", lambda: browser.js("!!document.getElementById('r0-i1-c')"))
         check(browser.js("document.getElementById('tabs').hidden"), "a single round should show no tabs")
+        check(browser.js("document.getElementById('project').textContent") == work.name
+              and browser.js("document.getElementById('project').checkVisibility()"),
+              "the header should name the project folder %r" % work.name)
+        check(browser.js("document.title") == work.name + " · " + data["title"], "the tab title should start with the "
+              "project name: %r" % browser.js("document.title"))
         browser.click("#r0-i0-o%d" % option)
         browser.click("#r0-i1-c")
         browser.call("Input.insertText", text=comment)
@@ -407,6 +414,65 @@ def run_readonly(work):
         state = browser.js("[document.querySelectorAll('#panel-0 .sens').length, document.getElementById('r0-i0-p').checked, "
                            "document.getElementById('r0-i0-p').disabled, document.querySelectorAll('#panel-1 .sens').length]")
         check(state == [0, True, True, 1], "a done round should show Private without the hint: %r" % state)
+    except E2EError:
+        sys.stderr.write("--- Signoff stderr ---\n" + "".join(err))
+        raise
+    finally:
+        kill(server)
+        kill(browser.proc)
+
+
+def run_history(work):
+    """--history: the header names the project, and the search finds an answer's comment but not a private one."""
+    root = work / "hist-proj"
+    old = root / ".signoff" / "2026-01-08-search"
+    old.mkdir(parents=True)
+    (root / ".signoff" / "2026-01-09-quiet").mkdir()
+    data = json.loads((DEMO / "round-04.json").read_text(encoding="utf-8"))
+    first, second = data["items"][0], data["items"][1]
+    picture = [{"src": "mockups/list-filters.png"}]
+    first.update(select="many", recommended=[first["recommended"]], marks=True, images=picture)  # a pick with Other
+    second.update(other=True, marks=True, images=picture)
+    for target in (old / "round-01.json", root / ".signoff" / "2026-01-09-quiet" / "round-01.json"):
+        target.write_text(json.dumps(dict(data, title="Wording for %s" % target.parent.name)), encoding="utf-8")
+    shutil.copytree(str(DEMO / "mockups"), str(old / "mockups"))
+    box = [10, 10, 20, 20]
+    (old / "round-01.answers.json").write_text(json.dumps({
+        "version": 1, "done": True, "saved": "2026-01-08T10:00:00Z", "free_text": "a giraffe remark",
+        "answers": {first["id"]: {"choice": ["cellular", "_other"], "other": "a pelican answer", "private": True,
+                                  "comment": "walrus secret", "marks": [{"image": 0, "box": box, "comment": "otter mark"}]},
+                    second["id"]: {"choice": "_other", "other": "a heron answer", "comment": "A zebra comment.",
+                                   "marks": [{"image": 0, "box": box, "comment": "ibis mark"}]}}}), encoding="utf-8")
+    server, out, err, browser = serve(root, str(work / "profile-history"), history=True)
+
+    def rows():
+        return browser.js("Array.prototype.filter.call(document.querySelectorAll('#h-list li'), "
+                          "function (li) { return !li.hidden; }).length")
+
+    def search(text):
+        browser.js("(function () { var i = document.getElementById('h-text'); i.value = %s; "
+                   "i.dispatchEvent(new Event('input')); })()" % json.dumps(text))
+        return rows()
+    try:
+        wait_for("the list", lambda: rows() or None)
+        check(browser.js("document.getElementById('project').textContent") == root.name
+              and browser.js("document.getElementById('project').checkVisibility()"),
+              "the header should name the project %r" % root.name)
+        check(browser.js("document.title").startswith(root.name + " · "), "the tab title should start with the project name: %r"
+              % browser.js("document.title"))
+        check(rows() == 2, "both rounds should be listed first")
+        browser.click("#h-text")
+        browser.call("Input.insertText", text="ZEBRA")
+        check(rows() == 1, "typing a comment's word, in any case, should leave the one round with it: %r" % rows())
+        check(search("giraffe") == 1, "the search should find the free text")
+        check(search("walrus") == 0 and browser.js("document.getElementById('h-count').textContent") == "No round matches.",
+              "a private comment must not be searchable")
+        check(search("pelican") == 0, "a private Other text must not be searchable")
+        check(search("otter") == 0, "a private mark's comment must not be searchable")
+        check(search("heron") == 1, "the Other text of an answer that is not private should be found")
+        check(search("ibis") == 1, "the mark comment of an answer that is not private should be found")
+        check(search("cellular") == 1, "the chosen option of a private answer is not private text")
+        check(search("") == 2, "an empty search lists every round again")
     except E2EError:
         sys.stderr.write("--- Signoff stderr ---\n" + "".join(err))
         raise
@@ -572,7 +638,9 @@ def run_attachment(work):
 def run():
     work = Path(tempfile.mkdtemp(prefix="signoff-e2e-"))
     WORK.append(work)
+    (work / ".git").mkdir()  # the project root, so the header can name it
     run_single(work)
+    run_history(work)
     run_readonly(work)
     run_table(work)
     run_attachment(work)
@@ -643,6 +711,7 @@ def main():
         timer.cancel()
         cleanup()
     print("PASS: 1 round, comment quoted above Done, filter, Private hides it, one-click Done, exit 0; "
+          "project name in the header and the tab title; --history search finds answers and comments, never a private one; "
           "table view: chips, toggle, a pick in the table saved and shown on the cards, exit 0; "
           "an attachment starts closed, opens, shows the file's text unrendered, exit 0; "
           "2 rounds, a non-recommended pick, both accepted, Summary filter, Done, exit 0, 2 answers paths on stdout")

@@ -560,10 +560,10 @@ class Private(unittest.TestCase):
         self.assertIn("- Comment: (private)", md)
         self.assertIn("- Mark 1, picture 1 at 10, 20, 30, 40 (x, y, w, h in %): (private)", md)
 
-    def test_markdown_private_without_text_says_none(self):
+    def test_markdown_private_without_text_has_no_comment_line(self):
         md = signoff.answers_markdown(self.decisions, self.record({"choice": "one", "comment": "", "private": True}))
         self.assertIn("- Choice: Keep one (not recommended)\n", md)
-        self.assertIn("- Comment: (none)", md)
+        self.assertNotIn("Comment", md)
 
     def test_markdown_shows_text_when_not_private(self):
         # sensitive is only the agent's suggestion: what counts is the user's answer.
@@ -572,12 +572,101 @@ class Private(unittest.TestCase):
             self.assertIn("- Comment: plain \\*note\\*", signoff.answers_markdown(self.decisions, self.record(answer)))
 
 
+class MarkdownLanguage(unittest.TestCase):
+    """The Markdown copy has no empty comment line, and its labels follow the round's lang (en, hu; else English)."""
+
+    def setUp(self):
+        folder = Folder()
+        data = sample_decisions()
+        data["items"][0].update(other=True, marks=True)
+        folder.write(data)
+        self.decisions, _ = signoff.load_decisions(folder.decisions)
+        folder.cleanup()
+        self.attached = [{"src": "notes/cut.md", "caption": "Cut list", "text": "x"}]
+
+    def md(self, comment="", lang=None, **answer):
+        decisions = dict(self.decisions) if lang is None else dict(self.decisions, lang=lang)
+        record = {"answers": {"layout": dict({"choice": "one", "comment": comment, "source": "user"}, **answer),
+                              "filters": {"choice": ["date"], "comment": "", "source": "recommended"}},
+                  "free_text": "", "done": True, "accepted": True, "accepted_at": "2026-01-01T12:00:00Z",
+                  "saved": "2026-01-01T12:00:00Z"}
+        return signoff.answers_markdown(decisions, record)
+
+    def test_empty_comment_leaves_no_line(self):
+        for comment in ("", "  \n "):
+            md = self.md(comment)
+            self.assertNotIn("Comment", md)
+            self.assertNotIn("(none)\n- ", md)
+            self.assertIn("- Source: the user\n\n", md)
+        self.assertIn("- Comment: a note\n", self.md("a note"))
+
+    def test_english_labels(self):
+        md = self.md("a note", lang="en-GB")
+        for text in ("- Choice: Keep one (not recommended)", "- Source: the user", "- Comment: a note",
+                     "- Source: recommendation, not changed", "## Anything else", "Saved: 2026-01-01T12:00:00Z",
+                     "Accepted: yes, 2026-01-01T12:00:00Z", "Done: yes"):
+            self.assertIn(text, md)
+
+    def test_hungarian_labels(self):
+        for lang in ("hu", "HU", "hu-HU", "hu_HU"):
+            md = self.md("egy jegyzet", lang=lang)
+            for text in ("- Választás: Keep one (nem javasolt)", "- Forrás: a felhasználó", "- Megjegyzés: egy jegyzet",
+                         "- Forrás: a javaslat, változatlanul", "- Választás: Date (javasolt)",
+                         "Mentve: 2026-01-01T12:00:00Z", "Elfogadva: igen, 2026-01-01T12:00:00Z", "Kész: igen"):
+                self.assertIn(text, md, lang)
+            for text in ("Choice", "Comment", "Source", "Saved", "Done"):
+                self.assertNotIn(text, md, lang)
+
+    def test_other_languages_get_english(self):
+        for lang in ("de", "fr-CA", "", "hux"):
+            self.assertIn("- Choice: Keep one (not recommended)", self.md("x", lang=lang), lang)
+
+    def test_default_free_text_title(self):
+        record = {"answers": {}, "free_text": "", "done": False, "saved": "2026-01-01T12:00:00Z"}
+        for lang, title in (("en", "## Anything else"), ("hu", "## Bármi más")):
+            decisions = dict(self.decisions, lang=lang, free_text={})
+            self.assertIn(title, signoff.answers_markdown(decisions, record))
+
+    def test_hungarian_empty_comment_leaves_no_line(self):
+        self.assertNotIn("Megjegyzés", self.md("", lang="hu"))
+
+    def test_hungarian_other_skip_marks_attachment_and_states(self):
+        self.decisions["items"][0]["attachments"] = self.attached
+        md = self.md("", lang="hu", choice="_other", other="három oszlop",
+                     marks=[{"image": 0, "box": [10, 20, 30, 40], "comment": "itt"}])
+        self.assertIn("- Választás: Egyéb: három oszlop (nem javasolt)", md)
+        self.assertIn("- Jelölés 1, 1. kép, 10, 20, 30, 40 (x, y, sz, m, %-ban): itt", md)
+        self.assertIn("- Melléklet: Cut list (notes/cut.md)", md)
+        self.assertIn("Kihagyva", self.md("", lang="hu", choice="_skip").replace("(nem javasolt)", ""))
+        self.assertIn("nincs választás", self.md("", lang="hu", choice=[]))
+        record = {"answers": {}, "free_text": "", "done": False, "saved": "2026-01-01T12:00:00Z"}
+        decisions = dict(self.decisions, lang="hu")
+        self.assertIn("Elfogadva: nem  \n", signoff.answers_markdown(decisions, record))
+        self.assertIn("Kész: nem", signoff.answers_markdown(decisions, record))
+        self.assertIn("nem, elfogadás után módosítva", signoff.answers_markdown(
+            decisions, dict(record, changed_after_accept=True)))
+        self.assertIn("\n(nincs)\n", signoff.answers_markdown(decisions, record))  # an empty free text
+
+    def test_private_stays_hidden_in_every_language(self):
+        self.decisions["items"][0]["attachments"] = self.attached
+        for lang, hidden in (("en", "(private)"), ("hu", "(privát)")):
+            md = self.md("my health", lang=lang, choice="_other", other="my home", private=True,
+                         marks=[{"image": 0, "box": [10, 20, 30, 40], "comment": "my desk"}])
+            for text in ("health", "home", "desk"):
+                self.assertNotIn(text, md)
+            self.assertEqual(md.count(hidden), 3, lang)
+            self.assertIn("notes/cut.md", md)
+
+
 class SchemaFile(unittest.TestCase):
     """schema.json documents the format; this keeps it in step with the checks in signoff.py."""
 
     def setUp(self):
         self.schema = json.loads((ROOT / "plugin" / "signoff" / "schema.json").read_text(encoding="utf-8"))
         self.defs = self.schema["$defs"]
+
+    def test_id_is_the_repository_address(self):
+        self.assertTrue(self.schema["$id"].startswith("https://github.com/lumi-collective/signoff/"), self.schema["$id"])
 
     def test_top_level(self):
         self.assertEqual(set(self.schema["properties"]), set(signoff.TOP_KEYS))
