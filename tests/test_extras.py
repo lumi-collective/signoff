@@ -354,6 +354,19 @@ class History(unittest.TestCase):
         self.assertEqual((old["status"], old["error"]), ("done", None))
         self.assertNotIn("private", old["answers"]["answers"]["layout"])
 
+    def test_rounds_with_criteria_show_beside_old_ones(self):
+        topic = self.root.path / ".signoff" / "2026-03-03-storage"
+        data = sample_decisions()
+        data["items"][1]["criteria"] = [{"id": "effort", "label": "Effort"}]
+        data["items"][1]["options"][0]["facts"] = {"effort": {"text": "S", "tone": "good"}}
+        write(topic / "round-01.json", data)
+        e = self.entries()
+        new = e["2026-03-03-storage/round-01.json"]
+        self.assertEqual((new["status"], new["error"]), ("new", None))
+        self.assertEqual(new["decisions"]["items"][1]["criteria"], [{"id": "effort", "label": "Effort"}])
+        self.assertEqual(new["decisions"]["items"][1]["options"][0]["facts"], {"effort": {"text": "S", "tone": "good"}})
+        self.assertNotIn("criteria", e["2026-01-05-settings/round-01.json"]["decisions"]["items"][1])
+
     def test_root_must_be_a_folder(self):
         with self.assertRaises(signoff.DecisionsError):
             signoff.make_history_server(self.root.path / "nope")

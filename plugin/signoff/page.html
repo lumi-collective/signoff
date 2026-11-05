@@ -253,6 +253,39 @@ textarea.private{border-style:dashed}
 .lock-note{font-size:12px;color:var(--quiet);margin:4px 0 0}
 .summary-private{margin:6px 0 2px;padding:1px 0 1px 10px;border-left:2px solid var(--line2);color:var(--quiet);font-style:italic;
   font-size:13.5px}
+/* ---- criteria: facts as chips on the cards, and the table view (rows = criteria, columns = options) ---- */
+/* #15703A: AA 4.5:1 on --oksoft and --sel (5.5 and 5.35); the board's #15803D gives 4.49 there */
+:root{--ok:#15703A;--oksoft:#E7F6EC}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--ok:#4ADE80;--oksoft:#16261C}}
+:root[data-theme=dark]{--ok:#4ADE80;--oksoft:#16261C}
+.view-bar{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;margin:0 0 10px}
+.facts{display:flex;flex-wrap:wrap;gap:4px 6px;margin:6px 0 0;font-weight:400}
+.fact{font-size:12px;font-weight:500;border-radius:6px;padding:1px 7px;background:var(--seg);color:var(--soft)}
+.fact b{font-weight:700;color:var(--quiet);margin-right:4px;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase}
+.fact.good{background:var(--oksoft);color:var(--ok)}
+.fact.bad{background:var(--boxsoft);color:var(--boxtext)}
+.glyph{font-size:10px;font-weight:700;margin-right:4px}
+.cmp-wrap{position:relative;overflow-x:auto;border:1px solid var(--line2);border-radius:8px;background:var(--panel)}
+table.cmp{border-collapse:collapse;width:100%;font-size:13.5px}
+.cmp th,.cmp td{text-align:left;vertical-align:top;padding:8px 12px;border-top:1px solid var(--line)}
+.cmp thead th{border-top:0;background:var(--field);min-width:170px}
+.cmp th[scope=row],.cmp thead th:first-child{position:sticky;left:0;min-width:120px;background:var(--field)}
+.cmp th[scope=row]{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--quiet)}
+.cmp .picked{background:var(--sel)}
+.cmp thead th.picked{box-shadow:inset 0 3px 0 var(--accent)}
+.cmp td{cursor:pointer}
+.cmp .pick{display:flex;gap:10px;align-items:flex-start;font-weight:600;cursor:pointer}
+.cmp .pick input{margin:3px 0 0;width:16px;height:16px;accent-color:var(--accent);flex:0 0 auto}
+.cmp .sub{display:block;font-weight:400;color:var(--quiet);font-size:12.5px}
+.cmp .tone.good{color:var(--ok)}
+.cmp .tone.bad{color:var(--boxtext)}
+.scroll-hint{font-size:12.5px;color:var(--quiet);margin:6px 0 0}
+.legend-line{font-size:12.5px;color:var(--quiet);margin:8px 0 0}
+@media (max-width:600px){
+  table.cmp{width:max-content}
+  .cmp thead th,.cmp td{width:160px;min-width:160px;max-width:160px;padding:8px 10px}
+  .cmp th[scope=row],.cmp thead th:first-child{width:108px;min-width:108px;max-width:108px;padding:8px;font-size:12px;
+    letter-spacing:0;text-transform:none;overflow-wrap:normal}}
 dialog{border-radius:12px;box-shadow:0 12px 40px rgba(0,0,0,.25)}
 kbd{border-radius:4px}
 @media (prefers-reduced-motion:no-preference){
@@ -337,6 +370,9 @@ kbd{border-radius:4px}
       sens: ' The agent marked this item Private. Untick it if your text can be shared.',
       lockNote: 'Private: your text still goes to the agent in the answers file, and the agent is asked not to repeat it in commits, memory, the cloud or a decision log. The Markdown copy and the Summary hide it. This is a request to the agent, not encryption.',
       privateBadge: 'private', privateNote: 'Private comment, hidden here.',
+      view: 'View', cards: 'Cards', table: 'Table', criterion: 'Criterion',
+      scrollHint: 'Scroll the table sideways. The criteria stay in place.',
+      legend: '▲ better · ● middling · ▼ worse', tone_good: 'better', tone_mid: 'middling', tone_bad: 'worse',
       kAccept: 'accept the open round (Cmd+Enter on a Mac); with a single round, Done',
       light: 'Light', dark: 'Dark', theme: 'Theme', width: 'Width', board: 'Live mockup',
       missing: 'Picture not shown: {r}', full: 'Open full size', addMark: 'Add a mark to picture {n}',
@@ -375,6 +411,9 @@ kbd{border-radius:4px}
       sens: ' Az ágens Privátnak jelölte ezt a tételt. Vedd ki a pipát, ha a szöveged megosztható.',
       lockNote: 'Privát: a szöveged a válaszfájlban így is eljut az ágenshez, de az ágenst arra kérjük, hogy ne vigye tovább commitba, memóriába, felhőbe vagy döntésnaplóba. A Markdown-másolat és az Összegzés elrejti. Ez kérés az ágensnek, nem titkosítás.',
       privateBadge: 'privát', privateNote: 'Privát megjegyzés, itt rejtve.',
+      view: 'Nézet', cards: 'Kártyák', table: 'Táblázat', criterion: 'Szempont',
+      scrollHint: 'Húzd oldalra a táblázatot. A szempontok oszlopa helyben marad.',
+      legend: '▲ jobb · ● közepes · ▼ rosszabb', tone_good: 'jobb', tone_mid: 'közepes', tone_bad: 'rosszabb',
       kAccept: 'a nyitott kör elfogadása (Macen Cmd+Enter); egyetlen körnél: Kész',
       light: 'Világos', dark: 'Sötét', theme: 'Téma', width: 'Szélesség', board: 'Élő makett',
       missing: 'A kép nem látható: {r}', full: 'Megnyitás teljes méretben', addMark: 'Jelölés hozzáadása a(z) {n}. képhez',
@@ -718,6 +757,91 @@ kbd{border-radius:4px}
     return row;
   }
 
+  // A fact: the tone's sign, the text, and the tone's word for screen readers; colour is never the only signal.
+  var GLYPHS = {good: '▲', mid: '●', bad: '▼'};
+  function fact(f, holder) {
+    var tone = Object.prototype.hasOwnProperty.call(GLYPHS, f.tone) ? f.tone : null;
+    if (tone) {
+      holder.classList.add(tone);
+      var g = el('span', 'glyph', GLYPHS[tone]);
+      g.setAttribute('aria-hidden', 'true');
+      holder.append(g);
+    }
+    holder.append(document.createTextNode(f.text));
+    if (tone) holder.append(el('span', 'visually-hidden', ' (' + L['tone_' + tone] + ')'));
+    return holder;
+  }
+  function factOf(opt, c) {
+    return opt.facts && Object.prototype.hasOwnProperty.call(opt.facts, c.id) ? opt.facts[c.id] : null;
+  }
+  function chips(item, opt) {
+    if (!opt.facts || !Object.keys(opt.facts).length) return '';
+    var box = el('span', 'facts');
+    item.criteria.forEach(function (c) {
+      var f = factOf(opt, c);
+      if (!f) return;
+      var chip = el('span', 'fact');
+      chip.append(el('b', '', c.label));
+      box.append(fact(f, chip));
+    });
+    return box;
+  }
+  // The table view: its inputs only stand in for the cards' inputs, which stay the one place a choice lives
+  // (a different name, so collect() never sees them; the shortcuts pick on the cards and only move focus here).
+  // mirrors[name] copies the cards' state in.
+  var mirrors = {};
+  function table(ri, item, rec) {
+    var k = key(ri, item), wrap = el('div', 'cmp-wrap'), t = el('table', 'cmp');
+    var head = el('tr'), body = el('tbody'), proxies = [];
+    var corner = el('th');
+    corner.scope = 'col';
+    corner.append(el('span', 'visually-hidden', L.criterion));
+    head.append(corner);
+    item.options.forEach(function (opt, n) {
+      var th = el('th'), label = el('label', 'pick'), input = el('input'), text = el('span', '', opt.label);
+      th.scope = 'col';
+      th.dataset.col = n;
+      input.type = item.select === 'many' ? 'checkbox' : 'radio';
+      input.name = k + '-x';
+      input.id = k + '-x' + n;
+      input.addEventListener('change', function () { byId(k + '-o' + n).click(); });
+      if (rec.indexOf(opt.id) >= 0) text.append(el('span', 'tag', L.recommended));
+      if (opt.detail) text.append(el('span', 'sub', opt.detail));
+      label.append(input, text);
+      th.append(label);
+      head.append(th);
+      proxies.push(input);
+    });
+    item.criteria.forEach(function (c) {
+      var tr = el('tr'), th = el('th', '', c.label);
+      th.scope = 'row';
+      tr.append(th);
+      item.options.forEach(function (opt, n) {
+        var f = factOf(opt, c), td = el('td');
+        td.dataset.col = n;
+        td.append(f ? fact(f, el('span', 'tone')) : '–');
+        tr.append(td);
+      });
+      body.append(tr);
+    });
+    var thead = el('thead');
+    thead.append(head);
+    t.append(thead, body);
+    // A click anywhere in an option's column picks it, as a click anywhere on its card does.
+    t.addEventListener('click', function (e) {
+      var td = e.target.closest('td');
+      if (td) proxies[Number(td.dataset.col)].click();
+    });
+    mirrors[k] = function () {
+      proxies.forEach(function (p, n) {
+        p.checked = byId(k + '-o' + n).checked;
+        Array.prototype.forEach.call(t.querySelectorAll('[data-col="' + n + '"]'), function (c) { c.classList.toggle('picked', p.checked); });
+      });
+    };
+    wrap.append(t);
+    return wrap;
+  }
+
   function renderItem(ri, item, n) {
     var card = el('section', 'item');
     card.tabIndex = -1;  // j and k can land on a read-only item too
@@ -744,9 +868,40 @@ kbd{border-radius:4px}
     var rec = recList(item);
     if (rec.length) fs.append(el('p', 'rec', L.recommendedList + rec.map(function (r) { return labelOf(item, r); }).join(', ')));
     if (item.select === 'many') fs.append(el('p', 'hint-many', L.many));
+    var compare = !!item.criteria, rows = [];
+    if (compare) {
+      // Cards or Table: a view, not an answer, so it is not saved. Other and Skip stay below in both.
+      var bar = el('div', 'view-bar'), seg = el('div', 'seg'), view = el('div');
+      seg.setAttribute('role', 'group');
+      seg.setAttribute('aria-label', L.view);
+      view.hidden = true;
+      var wrap = table(ri, item, rec), hint = el('p', 'scroll-hint', L.scrollHint);
+      // The hint shows only while the table is wider than its box: measured again on every resize and view switch.
+      var fitHint = function () { hint.hidden = wrap.scrollWidth <= wrap.clientWidth; };
+      if (window.ResizeObserver) new ResizeObserver(fitHint).observe(wrap); else window.addEventListener('resize', fitHint);
+      [['cards', L.cards], ['table', L.table]].forEach(function (v) {
+        var b = el('button', '', v[1]);
+        b.type = 'button';
+        b.dataset.view = v[0];
+        b.setAttribute('aria-pressed', String(v[0] === 'cards'));
+        b.addEventListener('click', function () {
+          view.hidden = v[0] !== 'table';
+          rows.forEach(function (r) { r.hidden = !view.hidden; });
+          Array.prototype.forEach.call(seg.children, function (x) { x.setAttribute('aria-pressed', String(x === b)); });
+          fitHint();
+        });
+        seg.append(b);
+      });
+      bar.append(el('span', 'board-label', L.view), seg);
+      view.append(wrap, hint);
+      fs.append(bar, view);
+    }
     var choices = el('div', 'choices');
     item.options.forEach(function (opt, k) {
-      choices.append(choiceRow(ri, item, '-o' + k, opt.id, opt.label, opt.detail, rec.indexOf(opt.id) >= 0));
+      var row = choiceRow(ri, item, '-o' + k, opt.id, opt.label, opt.detail, rec.indexOf(opt.id) >= 0);
+      if (compare) row.lastChild.append(chips(item, opt));
+      rows.push(row);
+      choices.append(row);
     });
     if (item.other) {
       var row = choiceRow(ri, item, '-other', OTHER, L.other);
@@ -763,6 +918,9 @@ kbd{border-radius:4px}
     }
     if (item.skippable) choices.append(choiceRow(ri, item, '-skip', SKIP, L.skip));
     fs.append(choices);
+    if (compare && item.options.some(function (o) { return o.facts && Object.keys(o.facts).some(function (c) { return o.facts[c].tone; }); })) {
+      fs.append(el('p', 'legend-line', L.legend));
+    }
     if (item.marks) {
       var marks = el('div', 'mark-list');
       marks.append(el('p', 'clabel', L.marks));
@@ -832,6 +990,7 @@ kbd{border-radius:4px}
   var blockSeen = null;  // the answers the single round's summary block was last built from
   function setChoice(ri, item, values) {
     inputs(ri, item).forEach(function (i) { i.checked = values.indexOf(i.value) >= 0; });
+    if (mirrors[key(ri, item)]) mirrors[key(ri, item)]();
   }
 
   function renderPanel(ri) {
@@ -1403,6 +1562,7 @@ kbd{border-radius:4px}
           if (i !== t && (t.value === SKIP || i.value === SKIP)) i.checked = false;
         });
       }
+      if (mirrors[t.name]) mirrors[t.name]();
       sources[ri][t.dataset.item] = 'user';
       if (undo[ri]) {
         undo[ri] = null;
@@ -1479,8 +1639,11 @@ kbd{border-radius:4px}
     return !!t && (t.isContentEditable || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT'
       || (t.tagName === 'INPUT' && t.type !== 'radio' && t.type !== 'checkbox'));
   }
+  function shown(list) {  // the first enabled input on screen: in the table view the cards' inputs are hidden
+    return Array.prototype.filter.call(list, function (i) { return !i.disabled && i.offsetParent !== null; })[0];
+  }
   function focusItem(card) {
-    var target = card.querySelector('.choices input:checked:not(:disabled)') || card.querySelector('input:not(:disabled)') || card;
+    var target = shown(card.querySelectorAll('.choices input:checked, .cmp input:checked')) || shown(card.querySelectorAll('input')) || card;
     target.focus();
     card.scrollIntoView({block: 'nearest'});
   }
@@ -1516,7 +1679,7 @@ kbd{border-radius:4px}
       if (!input || input.disabled) return;
       e.preventDefault();
       input.checked = input.type === 'radio' ? true : !input.checked;
-      input.focus();
+      (input.offsetParent === null && byId(input.id.replace(/-o(\d+)$/, '-x$1')) || input).focus();
       input.dispatchEvent(new Event('change', {bubbles: true}));
     }
   });

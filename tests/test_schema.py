@@ -2,6 +2,7 @@
 import copy
 import json
 import os
+import time
 import unittest
 
 from support import ROOT, Folder, sample_decisions, signoff
@@ -51,6 +52,71 @@ class DecisionsFile(unittest.TestCase):
         self.assertTrue(signoff.load_decisions(self.folder.decisions)[0]["items"][1]["sensitive"])
         self.assertIn("sensitive", self.broken(lambda d: d["items"][0].update(sensitive="yes")))
         self.assertIn("sensitive", self.broken(lambda d: d["items"][0].update(sensitive=1)))
+
+    def with_criteria(self, data):
+        item = data["items"][1]
+        item["criteria"] = [{"id": "effort", "label": "Effort"}, {"id": "risk", "label": "Risk"}]
+        item["options"][0]["facts"] = {"effort": {"text": "S", "tone": "good"}, "risk": {"text": "Medium · conflicts"}}
+        item["options"][1]["facts"] = {"risk": {"text": "High", "tone": "bad"}}
+        return item
+
+    def test_criteria_and_facts_load(self):
+        data = sample_decisions()
+        self.with_criteria(data)
+        self.folder.write(data)
+        item = signoff.load_decisions(self.folder.decisions)[0]["items"][1]
+        self.assertEqual([c["id"] for c in item["criteria"]], ["effort", "risk"])
+        self.assertEqual(item["options"][0]["facts"]["effort"], {"text": "S", "tone": "good"})
+        self.assertNotIn("facts", item["options"][2])  # an option may have no facts; its cells show a dash
+        self.assertNotIn("criteria", signoff.load_decisions(self.folder.decisions)[0]["items"][0])
+
+    def test_criteria_must_be_a_list_of_id_and_label(self):
+        def change(fn):
+            return lambda d: fn(self.with_criteria(d))
+        self.assertIn("'criteria'", self.broken(change(lambda it: it.update(criteria={"effort": "Effort"}))))
+        self.assertIn("'criteria'", self.broken(change(lambda it: it.update(criteria=[]))))
+        self.assertIn("criterion 1", self.broken(change(lambda it: it["criteria"][0].pop("label"))))
+        self.assertIn("criterion 2", self.broken(change(lambda it: it["criteria"][1].update(label=["Risk"]))))
+        self.assertIn("weight", self.broken(change(lambda it: it["criteria"][0].update(weight=2))))
+        self.assertIn("'id' must match", self.broken(change(lambda it: it["criteria"][0].update(id="bad id"))))
+        self.assertIn("duplicate criterion id 'effort'",
+                      self.broken(change(lambda it: it["criteria"][1].update(id="effort"))))
+
+    def test_facts_name_only_the_items_criteria(self):
+        def change(fn):
+            return lambda d: fn(self.with_criteria(d))
+        self.assertIn("'cost' is not one of this item's criteria (effort, risk)",
+                      self.broken(change(lambda it: it["options"][0]["facts"].update(cost={"text": "1 day"}))))
+        msg = self.broken(lambda d: d["items"][0]["options"][0].update(facts={"effort": {"text": "S"}}))
+        self.assertIn("'facts' needs the item's 'criteria'", msg)
+        self.assertIn("option 1", msg)
+        self.assertIn("'facts'", self.broken(change(lambda it: it["options"][0].update(facts=[]))))
+
+    def test_a_fact_is_text_and_an_optional_tone(self):
+        def change(fn):
+            return lambda d: fn(self.with_criteria(d))
+        facts = lambda it: it["options"][0]["facts"]  # noqa: E731
+        self.assertIn("fact 'effort': must be an object", self.broken(change(lambda it: facts(it).update(effort="S"))))
+        self.assertIn("missing 'text'", self.broken(change(lambda it: facts(it).update(effort={"tone": "good"}))))
+        self.assertIn("'text' must be a string", self.broken(change(lambda it: facts(it).update(effort={"text": 3}))))
+        self.assertIn("score", self.broken(change(lambda it: facts(it)["effort"].update(score=4))))
+        for tone in ("better", "GOOD", "", None, 1):
+            self.assertIn("'tone' must be one of good, mid, bad",
+                          self.broken(change(lambda it, tone=tone: facts(it)["effort"].update(tone=tone))))
+
+    def test_many_criteria_load_fast(self):
+        # Criterion lookups must not grow with the number of criteria: --history loads every round.
+        data = sample_decisions()
+        item = data["items"][1]
+        item["criteria"] = [{"id": "c%d" % k, "label": "C"} for k in range(10000)]
+        item["options"] = [{"id": "o%d" % n, "label": "O", "facts": {"c%d" % k: {"text": "x"} for k in range(10000)}}
+                           for n in range(6)]
+        del item["recommended"]
+        self.folder.write(data)
+        self.assertLess(self.folder.decisions.stat().st_size, signoff.MAX_DECISIONS)
+        start = time.perf_counter()
+        signoff.load_decisions(self.folder.decisions)
+        self.assertLess(time.perf_counter() - start, 1.0)
 
     def test_tab_is_optional_text(self):
         data = sample_decisions()
@@ -480,11 +546,26 @@ class SchemaFile(unittest.TestCase):
         self.assertEqual(set(self.defs["option"]["required"]), {"id", "label"})
         self.assertEqual(set(self.schema["properties"]["free_text"]["properties"]), set(signoff.FREE_TEXT_KEYS))
 
+    def test_criteria_and_facts(self):
+        criterion, fact = self.defs["criterion"], self.defs["fact"]
+        self.assertEqual(set(criterion["properties"]), set(signoff.CRITERION_KEYS))
+        self.assertEqual(set(criterion["required"]), {"id", "label"})
+        self.assertFalse(criterion["additionalProperties"])
+        self.assertEqual(set(fact["properties"]), set(signoff.FACT_KEYS))
+        self.assertEqual(fact["required"], ["text"])
+        self.assertFalse(fact["additionalProperties"])
+        self.assertEqual(fact["properties"]["tone"]["enum"], list(signoff.TONE_VALUES))
+        self.assertEqual(self.defs["option"]["properties"]["facts"]["additionalProperties"], {"$ref": "#/$defs/fact"})
+
     def test_sample_follows_the_schema_shape(self):
         # The demo file must load, so the README's example is a real one.
         decisions, images = signoff.load_decisions(ROOT / "examples" / "demo" / "decisions.json")
         self.assertTrue(images)
         self.assertGreaterEqual(len(decisions["items"]), 4)
+        # One item compares its options on criteria, so the demo shows the table view too.
+        table = [it for it in decisions["items"] if it.get("criteria")]
+        self.assertEqual(len(table), 1)
+        self.assertTrue(all(o.get("facts") for o in table[0]["options"]))
 
     def test_history_demo(self):
         server = signoff.make_history_server(ROOT / "examples" / "history")
@@ -503,6 +584,7 @@ class SchemaFile(unittest.TestCase):
             items = [it for r in server.rounds for it in r.decisions["items"]]
             self.assertTrue(any(it["other"] for it in items) and any(it["skippable"] for it in items))
             self.assertTrue(any(len(it.get("images", [])) == len(it["options"]) > 1 for it in items))
+            self.assertTrue(any(it.get("criteria") for it in items))
         finally:
             server.server_close()
 

@@ -80,6 +80,54 @@
         "pdf"
       ],
       "skippable": true
+    },
+    {
+      "id": "storage",
+      "group": "Behaviour",
+      "title": "Where do the notes live?",
+      "description": "Every note is stored the same way. No pictures here: the options differ in effort, risk, the way back and offline use.",
+      "criteria": [
+        {"id": "effort", "label": "Effort"},
+        {"id": "risk", "label": "Risk"},
+        {"id": "reversible", "label": "Way back"},
+        {"id": "offline", "label": "Offline"}
+      ],
+      "options": [
+        {
+          "id": "files",
+          "label": "Plain files",
+          "detail": "one Markdown file per note",
+          "facts": {
+            "effort": {"text": "S · 1 day", "tone": "good"},
+            "risk": {"text": "Medium · sync conflicts", "tone": "mid"},
+            "reversible": {"text": "Easy · the files stay", "tone": "good"},
+            "offline": {"text": "Yes", "tone": "good"}
+          }
+        },
+        {
+          "id": "sqlite",
+          "label": "SQLite",
+          "detail": "one local database",
+          "facts": {
+            "effort": {"text": "M · 3 days", "tone": "mid"},
+            "risk": {"text": "Low", "tone": "good"},
+            "reversible": {"text": "Export · one script", "tone": "mid"},
+            "offline": {"text": "Yes", "tone": "good"}
+          }
+        },
+        {
+          "id": "cloud",
+          "label": "Cloud sync",
+          "detail": "a hosted service, with an account",
+          "facts": {
+            "effort": {"text": "L · 2 weeks", "tone": "bad"},
+            "risk": {"text": "High · an outage means no notes", "tone": "bad"},
+            "reversible": {"text": "Hard · remote data", "tone": "bad"},
+            "offline": {"text": "Read-only cache", "tone": "mid"}
+          }
+        }
+      ],
+      "recommended": "sqlite"
     }
   ],
   "free_text": {

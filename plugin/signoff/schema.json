@@ -50,7 +50,26 @@
         "other": { "type": "boolean", "default": false, "description": "Add an \"Other\" choice with its own text field. It is recorded as the choice \"_other\", with the text in \"other\"." },
         "skippable": { "type": "boolean", "default": false, "description": "Add a \"Skip\" choice. It is recorded as the choice \"_skip\", on its own." },
         "marks": { "type": "boolean", "default": false, "description": "Let the user draw rectangles on this item's pictures, each with a comment. They are recorded in the answer's \"marks\"." },
-        "sensitive": { "type": "boolean", "default": false, "description": "The answer may hold personal data: the item starts marked Private. It only acts on an item with a text field (comment, other or marks). The user can untick it, or tick it on any item. A private answer is recorded with \"private\": true; its text stays in the answers file, and the Markdown copy hides its comment, Other text and mark comments." }
+        "sensitive": { "type": "boolean", "default": false, "description": "The answer may hold personal data: the item starts marked Private. It only acts on an item with a text field (comment, other or marks). The user can untick it, or tick it on any item. A private answer is recorded with \"private\": true; its text stays in the answers file, and the Markdown copy hides its comment, Other text and mark comments." },
+        "criteria": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/criterion" }, "description": "What the options are compared on, in row order. With it, each option's facts show as chips on its card, and a Cards / Table toggle shows the options side by side, a row per criterion. The choice is the same in both views; the view is not saved." }
+      }
+    },
+    "criterion": {
+      "type": "object",
+      "required": ["id", "label"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/id", "description": "Unique within the item; the options' facts are keyed by it." },
+        "label": { "type": "string" }
+      }
+    },
+    "fact": {
+      "type": "object",
+      "required": ["text"],
+      "additionalProperties": false,
+      "properties": {
+        "text": { "type": "string", "description": "The value, short, e.g. \"M · 3 days\"." },
+        "tone": { "enum": ["good", "mid", "bad"], "description": "How the value compares: shown as ▲ (good), ● (mid) or ▼ (bad) beside the text, and in colour; never colour alone." }
       }
     },
     "image": {
@@ -82,7 +101,12 @@
       "properties": {
         "id": { "$ref": "#/$defs/id" },
         "label": { "type": "string" },
-        "detail": { "type": "string", "description": "A short line under the label." }
+        "detail": { "type": "string", "description": "A short line under the label." },
+        "facts": {
+          "type": "object",
+          "description": "This option's value on the item's criteria, keyed by criterion id. Only the item's own criteria; a criterion left out shows as a dash in the table.",
+          "additionalProperties": { "$ref": "#/$defs/fact" }
+        }
       }
     }
   }

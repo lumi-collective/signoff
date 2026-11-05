@@ -127,6 +127,10 @@ You can also ask for it directly: "put these on a Signoff page".
   all recommendations** in the header resets the open tab to the recommendations, comments untouched; clicking
   it again undoes that, until you change an item's options.
 - **Other and Skip** appear where the agent allows them: Other with its own text field, Skip on its own.
+- **Cards or a table.** When the agent compares the options on criteria (effort, risk, the way back), each card
+  shows its facts as small chips, and a **Cards / Table** toggle lays the options side by side, a row per
+  criterion. Pick in either view: it is the same choice. The view itself is not saved. On a phone the table
+  scrolls sideways in its own box, the criteria column staying in place.
 - **Private** beside a comment marks what you write on that item as private: the agent is asked not to
   repeat it, and the Markdown copy and the Summary hide it. The agent ticks it in advance where an answer may
   hold personal data; you can tick or untick it on any item. It is a request to the agent, not encryption.
@@ -270,6 +274,8 @@ JSON, one file per round. [`plugin/signoff/schema.json`](plugin/signoff/schema.j
 | `comment` | item | no | a comment box, default `true` |
 | `other`, `skippable`, `marks` | item | no | add **Other** with a text field, add **Skip**, let the user draw marks; each default `false` |
 | `sensitive` | item | no | the answer may hold personal data: the item starts marked **Private**, which the user can untick; only on an item with a text field (`comment`, `other` or `marks`); default `false` |
+| `criteria` | item | no | what the options are compared on: a list of `id` and `label`, in row order. Adds the facts as chips on the cards and a **Cards / Table** toggle |
+| `facts` | option | no | the option's value per criterion, keyed by criterion `id`: `text`, and optional `tone` `good`, `mid` or `bad` (shown as ▲, ● or ▼ with the text); only the item's own criteria; a missing one shows "–" in the table |
 
 Unknown keys are refused, so a typo shows up at once instead of being ignored. Text is plain: no Markdown, links
 or HTML.

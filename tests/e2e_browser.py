@@ -8,7 +8,9 @@ single-use start link in headless Chrome over the DevTools protocol, and drives 
 First one round: a non-recommended pick and a comment, the summary block above Done quotes the comment and its
 filter works, Private (marked by the agent on one item, ticked by the user on the other) hides the comment in the
 summary and the Markdown copy, unticking the agent's mark survives a reload, one click on Done. A round done
-earlier shows Private without the untick hint. Then two rounds: a non-recommended pick, both rounds accepted, the Summary's
+earlier shows Private without the untick hint. An item with criteria shows its facts as chips; the Cards / Table
+toggle shows the table, a pick there (by click and by number key) is saved and shows on the cards, and at 390 px
+the table scrolls in its own box. Then two rounds: a non-recommended pick, both rounds accepted, the Summary's
 filter counts, Done. Each run checks the exit code, stdout and the answers files.
 
 Not named test_*.py, so `unittest discover -s tests` does not run it: it needs a browser. It proves the server
@@ -412,11 +414,124 @@ def run_readonly(work):
         kill(browser.proc)
 
 
+def run_table(work):
+    """Criteria: chips on the cards, the Cards / Table toggle, a pick in the table is saved and shows on the cards."""
+    topic = work / "2026-01-08-storage"
+    topic.mkdir()
+    target = topic / "decisions.json"
+    data = json.loads((DEMO / "round-03.json").read_text(encoding="utf-8"))
+    data["items"] = [it for it in data["items"] if it.get("criteria")]
+    item = data["items"][0]
+    ids = [o["id"] for o in item["options"]]
+    rec = ids.index(item["recommended"])
+    # The same item as checkboxes with Skip, to check that Skip and the table clear each other.
+    many = dict(json.loads(json.dumps(item)), id="storage-many", select="many", skippable=True, recommended=[ids[rec]])
+    data["items"].append(many)
+    target.write_text(json.dumps(data), encoding="utf-8")
+    option = next(k for k in range(len(ids)) if k != rec)
+    key = next(k for k in range(len(ids)) if k not in (rec, option))  # the third option, picked with its number key
+    answers_file = topic / "decisions.answers.json"
+    first = '[data-item="%s"] ' % item["id"]
+
+    def saved_choice(it=item):
+        try:
+            return json.loads(answers_file.read_text(encoding="utf-8"))["answers"][it["id"]]["choice"]
+        except (OSError, ValueError, KeyError):
+            return None
+
+    def view():
+        return browser.js("(function () { var w = document.querySelector('.cmp-wrap'), o = document.getElementById('r0-i0-o0'); "
+                          "return {table: !!w && w.offsetParent !== null, cards: o.offsetParent !== null, "
+                          "pressed: Array.prototype.map.call(document.querySelectorAll(%s), "
+                          "function (b) { return b.getAttribute('aria-pressed'); })}; })()"
+                          % json.dumps(first + ".view-bar [data-view]"))
+
+    server, out, err, browser = serve(target, str(work / "profile-table"))
+    try:
+        wait_for("the page", lambda: browser.js("!!document.getElementById('r0-i0-o0')"))
+        facts = sum(len(o.get("facts", {})) for o in item["options"])
+        chips = browser.js("Array.prototype.map.call(document.querySelectorAll(%s), function (f) { "
+                           "return f.textContent; })" % json.dumps(first + ".opt .facts .fact"))
+        check(len(chips) == facts, "each fact should be a chip on its card: %r" % chips)
+        # A tone is its sign plus its word for screen readers, never colour alone; chips go in criteria order.
+        words = {"good": "(better)", "mid": "(middling)", "bad": "(worse)"}
+        want = [words.get(o["facts"][c["id"]].get("tone")) for o in item["options"] for c in item["criteria"]
+                if c["id"] in o.get("facts", {})]
+        said = browser.js("Array.prototype.map.call(document.querySelectorAll(%s), function (f) { "
+                          "var g = f.querySelector('.glyph'), w = f.querySelector('.visually-hidden'); "
+                          "return [g ? g.textContent : null, w ? w.textContent.trim() : null]; })"
+                          % json.dumps(first + ".opt .facts .fact"))
+        check(any(want) and said == [[{"(better)": "▲", "(middling)": "●", "(worse)": "▼"}.get(w), w] for w in want],
+              "each toned chip needs its sign and its word: %r" % said)
+        check(view() == {"table": False, "cards": True, "pressed": ["true", "false"]}, "cards first: %r" % view())
+
+        browser.click(first + ".view-bar [data-view=table]")
+        check(view() == {"table": True, "cards": False, "pressed": ["false", "true"]}, "the table view: %r" % view())
+        cells = browser.js("document.querySelectorAll(%s).length" % json.dumps(first + ".cmp tbody tr"))
+        check(cells == len(item["criteria"]), "a row per criterion, found %r" % cells)
+        check(browser.js("document.getElementById('r0-i0-x%d').checked" % rec), "the table starts at the recommendation")
+        browser.click("#r0-i0-x%d" % option)
+        wait_for("the pick in the table to be saved", lambda: saved_choice() == ids[option])
+        picked = browser.js("Array.prototype.map.call(document.querySelectorAll(%s), function (c) { "
+                            "return c.dataset.col; })" % json.dumps(first + ".cmp td.picked"))
+        check(picked == [str(option)] * len(item["criteria"]), "the picked column should be marked: %r" % picked)
+
+        # The number keys still pick, and focus stays in the table.
+        browser.js("document.getElementById('r0-i0-x%d').focus()" % option)
+        for kind in ("keyDown", "keyUp"):
+            browser.call("Input.dispatchKeyEvent", type=kind, key=str(key + 1), text=str(key + 1) if kind == "keyDown" else "")
+        state = browser.js("[document.getElementById('r0-i0-x%d').checked, document.getElementById('r0-i0-o%d').checked, "
+                           "document.activeElement.id]" % (key, key))
+        check(state == [True, True, "r0-i0-x%d" % key], "key %d should pick in both views: %r" % (key + 1, state))
+        wait_for("the key's pick to be saved", lambda: saved_choice() == ids[key])
+        browser.click("#r0-i0-x%d" % option)
+        wait_for("the pick to be saved again", lambda: saved_choice() == ids[option])
+
+        # On a phone the table scrolls in its own box; the page does not.
+        browser.call("Emulation.setDeviceMetricsOverride", width=390, height=900, deviceScaleFactor=1, mobile=False)
+        time.sleep(0.5)
+        fit = "(function () { var w = document.querySelector('.cmp-wrap'), h = w.parentNode.querySelector('.scroll-hint'); " \
+              "return [w.scrollWidth > w.clientWidth, document.documentElement.scrollWidth <= window.innerWidth, " \
+              "h.offsetParent !== null && !/[0-9]/.test(h.textContent)]; })()"
+        check(browser.js(fit) == [True, True, True],
+              "at 390 px the table should scroll in its box, with the hint, not the page: %r" % browser.js(fit))
+        browser.call("Emulation.setDeviceMetricsOverride", width=1280, height=900, deviceScaleFactor=1, mobile=False)
+        time.sleep(0.5)
+        check(browser.js(fit) == [False, True, False], "at 1280 px the table fits, without the hint: %r" % browser.js(fit))
+
+        browser.click(first + ".view-bar [data-view=cards]")
+        check(view()["cards"] and not view()["table"], "back to the cards: %r" % view())
+        check(browser.js("document.getElementById('r0-i0-o%d').checked" % option), "the cards should show the table's pick")
+
+        # Checkboxes: a second box in the table adds to the choice; Skip clears the table; a box in the table clears Skip.
+        def boxes():
+            return browser.js("[Array.prototype.map.call(document.getElementsByName('r0-i1-x'), function (i) { return i.checked; }), "
+                              "document.getElementById('r0-i1-skip').checked]")
+        browser.click('[data-item="storage-many"] .view-bar [data-view=table]')
+        browser.click("#r0-i1-x%d" % option)
+        wait_for("two boxes saved", lambda: saved_choice(many) == [ids[k] for k in sorted((rec, option))])
+        browser.click("#r0-i1-skip")
+        wait_for("Skip saved alone", lambda: saved_choice(many) == ["_skip"])
+        check(boxes() == [[False] * len(ids), True], "Skip should clear the table: %r" % boxes())
+        browser.click("#r0-i1-x%d" % key)
+        wait_for("a box in the table saved without Skip", lambda: saved_choice(many) == [ids[key]])
+        check(boxes() == [[k == key for k in range(len(ids))], False], "a box should clear Skip: %r" % boxes())
+
+        browser.click("#done-block")
+        answers = finished(server, out, err, [answers_file])[0]
+        check(answers.get("done") is True and answers["answers"][item["id"]]["choice"] == ids[option]
+              and answers["answers"][many["id"]]["choice"] == [ids[key]], "the table's picks should be the answers: %r" % answers)
+    except E2EError:
+        sys.stderr.write("--- Signoff stderr ---\n" + "".join(err))
+        raise
+
+
 def run():
     work = Path(tempfile.mkdtemp(prefix="signoff-e2e-"))
     WORK.append(work)
     run_single(work)
     run_readonly(work)
+    run_table(work)
     topic = work / "2026-01-05-settings"
     topic.mkdir()
     shutil.copytree(str(DEMO / "mockups"), str(topic / "mockups"))
@@ -484,6 +599,7 @@ def main():
         timer.cancel()
         cleanup()
     print("PASS: 1 round, comment quoted above Done, filter, Private hides it, one-click Done, exit 0; "
+          "table view: chips, toggle, a pick in the table saved and shown on the cards, exit 0; "
           "2 rounds, a non-recommended pick, both accepted, Summary filter, Done, exit 0, 2 answers paths on stdout")
     return 0
 

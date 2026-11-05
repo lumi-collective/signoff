@@ -59,11 +59,14 @@ OTHER, SKIP = "_other", "_skip"
 TOP_KEYS = ("version", "title", "tab", "intro", "notice", "lang", "items", "free_text")
 TOP_REQUIRED = ("version", "title", "items")
 ITEM_KEYS = ("id", "group", "title", "description", "cost", "images", "select", "options", "recommended", "comment",
-             "other", "skippable", "marks", "sensitive")
+             "other", "skippable", "marks", "sensitive", "criteria")
 ITEM_REQUIRED = ("id", "title", "options")
 IMAGE_KEYS = ("src", "html", "caption", "alt", "boxes")
 OUTCOME_KEYS = ("log", "line", "date")
-OPTION_KEYS = ("id", "label", "detail")
+OPTION_KEYS = ("id", "label", "detail", "facts")
+CRITERION_KEYS = ("id", "label")
+FACT_KEYS = ("text", "tone")
+TONE_VALUES = ("good", "mid", "bad")  # the page uses them as class names, so the list stays closed
 FREE_TEXT_KEYS = ("title", "placeholder")
 SELECT_VALUES = ("one", "many")
 SOURCE_VALUES = ("recommended", "accept_all", "user")
@@ -142,6 +145,23 @@ def _image(img, folder, where, lenient=False):
     return path
 
 
+def _facts(facts, criteria, where):
+    """An option's facts: {criterion id: {text, tone}}, only for the item's own criteria."""
+    if not criteria:
+        raise DecisionsError("%s: 'facts' needs the item's 'criteria'" % where)
+    if not isinstance(facts, dict):
+        raise DecisionsError("%s: 'facts' must be an object keyed by criterion id" % where)
+    for cid, fact in facts.items():
+        if cid not in criteria:
+            raise DecisionsError("%s: 'facts': %r is not one of this item's criteria (%s)"
+                                 % (where, cid, ", ".join(criteria)))
+        fwhere = "%s, fact %r" % (where, cid)
+        _keys(fact, FACT_KEYS, ("text",), fwhere)
+        _text(fact, "text", fwhere)
+        if "tone" in fact and fact["tone"] not in TONE_VALUES:
+            raise DecisionsError("%s: 'tone' must be one of %s" % (fwhere, ", ".join(TONE_VALUES)))
+
+
 def _item(item, n, folder, images, lenient=False):
     where = "item %d" % n
     if isinstance(item, dict) and isinstance(item.get("id"), str):
@@ -162,6 +182,19 @@ def _item(item, n, folder, images, lenient=False):
     for key in ("comment", "other", "skippable", "marks", "sensitive"):
         if not isinstance(item[key], bool):
             raise DecisionsError("%s: %r must be true or false" % (where, key))
+    criteria = {}  # criterion ids as keys: in order for the error text, and a fast lookup for each fact
+    if "criteria" in item:
+        if not isinstance(item["criteria"], list) or not item["criteria"]:
+            raise DecisionsError("%s: 'criteria' must be a non-empty list of {id, label}" % where)
+        for k, crit in enumerate(item["criteria"], 1):
+            cwhere = "%s, criterion %d" % (where, k)
+            _keys(crit, CRITERION_KEYS, CRITERION_KEYS, cwhere)
+            if not isinstance(crit["id"], str) or not ID_PATTERN.fullmatch(crit["id"]):
+                raise DecisionsError("%s: 'id' must match %s" % (cwhere, ID_PATTERN.pattern))
+            if crit["id"] in criteria:
+                raise DecisionsError("%s: duplicate criterion id %r" % (cwhere, crit["id"]))
+            criteria[crit["id"]] = None
+            _text(crit, "label", cwhere)
     options = item["options"]
     if not isinstance(options, list) or len(options) < (2 if item["select"] == "one" else 1):
         raise DecisionsError("%s: 'options' needs at least %s" % (where, "two" if item["select"] == "one" else "one"))
@@ -176,6 +209,8 @@ def _item(item, n, folder, images, lenient=False):
         seen.add(opt["id"])
         _text(opt, "label", owhere)
         _text(opt, "detail", owhere)
+        if "facts" in opt:
+            _facts(opt["facts"], criteria, owhere)
     if "recommended" in item:
         rec = item["recommended"]
         if item["select"] == "one":

@@ -101,6 +101,12 @@ How to batch:
 - `sensitive: true` when the answer may hold personal data (health, money, family, someone else's details, the
   user's own setup). The item starts marked Private; the user can untick it, or tick Private on any item. It
   only acts on an item with a text field: `comment`, `other` or `marks`.
+- `criteria` and `facts` when there is no picture to judge by but the options differ on several criteria
+  (effort, risk, the way back, offline use): `"criteria": [{"id": "effort", "label": "Effort"}, …]` on the item,
+  and on each option `"facts": {"effort": {"text": "M · 3 days", "tone": "mid"}, …}`. `tone` is `good`, `mid` or
+  `bad`, how this value compares with the others; leave it out when there is no better or worse. The page shows
+  the facts as chips on each card, and a Cards / Table toggle shows them side by side. Keep each text short. For a single
+  criterion, `detail` is enough.
 - All text is plain text. Line breaks are kept; HTML and Markdown are shown as typed.
 - The full format is in `${CLAUDE_PLUGIN_ROOT}/signoff/schema.json`.
 
