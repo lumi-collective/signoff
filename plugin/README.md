@@ -3,9 +3,10 @@
 Signoff gives a coding agent a local decision page. When the agent has several open decisions, it writes
 them to a decisions file, with mockups or screenshots, highlight boxes, costs and its recommendation
 preselected. Signoff opens that page in your browser. You choose an option for each decision, add a
-comment where you want, and press Done. The agent reads your answers from a file next to the decisions
-and carries on. Earlier rounds stay on the page as read-only tabs, and a past-decisions view lists every
-round in a project.
+comment where you want, and press Done. The page shows the project's name, and a Summary quotes your
+comments before you finish. The agent reads your answers from a file next to the decisions and carries on.
+Earlier rounds stay on the page as read-only tabs, and a past-decisions view lists every round in a
+project, with a search over the answers. Ask the agent to look back at earlier rounds, and it opens that view.
 
 ## Where it works
 
@@ -25,8 +26,8 @@ It reads the decisions files and the pictures, live mockups and text attachments
 folder.
 It writes your answers next to them, as JSON and as Markdown, and a .gitignore in that folder if there is
 none. An answer you mark Private stays in the JSON for the agent, which is asked not to repeat it; the
-Markdown copy leaves it out. It is not encrypted. The past-decisions view reads the decisions folder you set (by default `.signoff` in the project) and
-writes nothing. Signoff deletes nothing.
+Markdown copy leaves it out. It is not encrypted. The past-decisions view reads the decisions folder you
+set (by default `.signoff` in the project) and writes nothing. Signoff deletes nothing.
 
 ## What leaves your machine
 

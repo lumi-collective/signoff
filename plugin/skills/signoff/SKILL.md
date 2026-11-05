@@ -16,6 +16,8 @@ you. Rounds answered earlier stay on the page as read-only tabs, so the user can
   screenshot, or weigh a cost.
 - **AskUserQuestion:** 1 to 3 questions with short options and no images.
 - Nothing at all when the answer is obvious: do the obvious step and say so.
+- **`--history`:** when the user wants to look back at earlier rounds, open the read-only past-decisions page
+  (see Past decisions).
 
 ## 1. Write the round
 
@@ -197,11 +199,15 @@ as `<folder>/round-02.answers.json`. Read every line, not only the last:
 
 - Summarise the outcome back to the user in a few lines: what is decided, where they overruled you, and
   anything in the comments you need to clarify.
-- Do the work each choice implies, or add it to the project's task list or tracker.
+- A new fact in a comment is a fact: say back that you took it in, and record it in the project's memory or
+  task list, as you would a fact told in chat. Not from a Private answer: its text stays with you.
+- Do the work each choice implies, or add it to the project's task list or tracker. Start the task line with
+  the topic folder, the round and the item id (`2026-11-05-settings / round-02 / settings-layout`), so the
+  answer is easy to find again.
 - Move every durable decision into the project's own decision log (an ADR, a decisions file, the commit
-  message), in your own words. Do not commit the raw answers files: Signoff writes a `.gitignore` with
-  `*.answers.json` and `*.answers.md` into the folder when the folder has none, and never overwrites an
-  existing one.
+  message), in your own words, as decision · context · consequence. Do not commit the raw answers files:
+  Signoff writes a `.gitignore` with `*.answers.json` and `*.answers.md` into the folder when the folder has
+  none, and never overwrites an existing one.
 - Then record the outcome beside the round, as `<round>.outcome.json` (for example `round-02.outcome.json`):
   `{"log": "<path of the decision log>", "line": "<the line you wrote there>", "date": "YYYY-MM-DD"}`. The
   past-decisions page shows that line with the round. Write it only after the decision is in the log.
@@ -232,6 +238,8 @@ and outcome files directly instead.
   the outcome file's `line`. Record only the
   decision, in your own words, without the private details. Signoff does not enforce this: the answers file
   holds the text in plain JSON, and keeping it there is up to you.
+- **Names stay out unless the user says yes.** A person's name or e-mail address goes into a decision log or a
+  commit only after the user agrees, whether the item was Private or not.
 - One topic per folder, one round per file. Follow-up questions go in the next `round-NN.json` of the same
   folder, never into a finished round.
 - Keep the recommendation honest: preselecting it makes it easy to accept, so put the downside in `cost`.

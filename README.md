@@ -15,7 +15,10 @@ when and how to use them. The agent writes a JSON file of decisions for each rou
 them on `127.0.0.1`, one tab per round, and opens your browser. Every click and comment is saved as you go. You
 accept each round, check the Summary, and press **Done**: Signoff exits and prints the paths of the answers
 files, and the agent, which ran it in the background, wakes up and reads them. Rounds you answered earlier stay
-on the page as read-only tabs, so you can look back at what you said.
+on the page as read-only tabs.
+
+To look back at what you said, `--history` opens every round of a project in one read-only list (see
+[Past decisions](#past-decisions)).
 
 ## Who it's for
 
@@ -110,6 +113,14 @@ picture or a cost, the `signoff` skill tells it to:
 
 You can also ask for it directly: "put these on a Signoff page".
 
+**Look back** at earlier decisions of a project, from a clone of this repository:
+
+```
+python3 -I plugin/signoff/signoff.py --history <project root>
+```
+
+Ask the agent "what did we decide before?" and it opens the same page. See [Past decisions](#past-decisions).
+
 ## On the page
 
 <picture>
@@ -117,6 +128,9 @@ You can also ask for it directly: "put these on a Signoff page".
   <img alt="A Signoff page with four rounds as tabs: the first done, the second changed since it was accepted, the third accepted, the fourth open; a mockup with an orange box and a blue mark, the options with the recommendation preselected, and Other" src="media/page-light.png">
 </picture>
 
+- **The project's name** starts the header and the browser tab's title, so with several projects open you can
+  tell which one is asking. It is the name of the nearest folder with a `.git`, or the parent of a `.signoff`
+  folder, never the home folder and never a path. A decisions folder with neither shows no name.
 - **Rounds are tabs.** A round answered with Done in an earlier run is read only and ticked. A round that
   depends on earlier answers comes as a new run on the same folder, so the earlier ones stay in view.
 - **Pictures, boxes, costs.** Each item shows its pictures on the left, with the relevant part boxed in orange
@@ -131,6 +145,8 @@ You can also ask for it directly: "put these on a Signoff page".
   shows its facts as small chips, and a **Cards / Table** toggle lays the options side by side, a row per
   criterion. Pick in either view: it is the same choice. The view itself is not saved. On a phone the table
   scrolls sideways in its own box, the criteria column staying in place.
+- **Attachments.** Where an item lists text files (`.md` or `.txt`) the detail behind a choice shows under the
+  options in a box that starts closed, as plain text. Nothing in it is rendered as Markdown or HTML.
 - **Private** beside a comment marks what you write on that item as private: the agent is asked not to
   repeat it, and the Markdown copy and the Summary hide it. The agent ticks it in advance where an answer may
   hold personal data; you can tick or untick it on any item. It is a request to the agent, not encryption.
@@ -141,13 +157,18 @@ You can also ask for it directly: "put these on a Signoff page".
   accepted". Change anything in an accepted round, a comment included, and its tab shows ↺ until you accept it
   again.
 - **The Summary tab** lists every answer, flags where you departed from the recommendation, chose Other or Skip,
-  drew marks or wrote a comment, and links back to each item.
+  drew marks or wrote a comment, and links back to each item. A comment is quoted in its row, cut to three lines,
+  with a **Full text** button for the rest. The filter above the list shows **All**, **With comment** or **Not the
+  recommendation**, each with its count. A Private comment shows as "Private comment, hidden here.", with a
+  "private" badge.
+- **One round left open.** When only one round is still open, the same list sits above a second **Done** button at
+  the end of that round, so you check your answers and finish in one click.
 - **Done waits.** Until every open round is accepted, Done says which one is missing and takes you there; the
   server refuses an early Done too (409). Then Done closes every round at once and tells the agent. With a single
   round there is nothing to accept: Done does both.
 - **A notice** from the agent, such as "Synthetic data only", shows as a banner under the header.
 
-![The Summary tab: each round with its state, every answer, and flags where an answer departs from the recommendation, has a comment or marks](media/summary.png)
+![The Summary tab: each round with its state, every answer, flags where an answer departs from the recommendation, has a comment or marks, comments quoted, and a filter for All, With comment and Not the recommendation](media/summary.png)
 
 ### Marks
 
@@ -199,7 +220,9 @@ python3 -I plugin/signoff/signoff.py --history <project root> [--folder <decisio
 
 A read-only page of every round under the project, newest first: the rounds in `.signoff/*/`, or in the folder
 `--folder` names, with date, title, tab and status (done, open, not answered, or a file that cannot be read).
-Filter by text or from a date, and open a round to see it as it was answered, marks included. A round whose
+Filter by text or from a date, and open a round to see it as it was answered, marks included. The text
+search also covers your answers (chosen options, comments, Other text, mark comments, free text), never the text
+of a Private answer. A round whose
 decisions changed after it was answered carries a warning; a missing picture shows a placeholder; a broken file
 is listed with its error. Pictures are read when you open a round, up to 200 MiB for the whole list; past that,
 narrow it with `--since`.
@@ -319,8 +342,9 @@ Beside each round, `round-NN.answers.json`, from the first change on the page:
   again. The agent sees nothing of this until Done.
 - `decisions` names the round file the answers belong to and its SHA-256 when they were saved.
 
-Every save also writes `round-NN.answers.md`, the same answers as Markdown for people, all text escaped. Agents
-read the JSON.
+Every save also writes `round-NN.answers.md`, the same answers as Markdown for people, all text escaped. Its
+labels follow the round's `lang` (`en` or `hu`; anything else gets English), and an empty comment leaves no
+line. Agents read the JSON.
 
 **Done is final:** a round whose answers say `done: true` is shown read only from then on and never written
 again. If its round file has changed since (the SHA-256 no longer matches), Signoff refuses to start (exit code
@@ -365,6 +389,30 @@ write `py -3` for `python3`.
 
 With `--history`, stdout stays empty: 2 after the idle timeout, 130 after Ctrl+C, 1 for a bad root or a start
 link used twice.
+
+## Troubleshooting
+
+Signoff prints what went wrong on stderr, starting with `signoff:`. Its exit codes are in the table above.
+
+- **`python3: command not found`, or `python3` is older than 3.9.** Install Python 3.9 or newer. macOS and Linux
+  need it as `python3`; the plugin's `signoff` command calls that name. On Windows use the `py` launcher:
+  `py -3 -I plugin/signoff/signoff.py <folder>`. The plugin's `signoff.cmd` does the same.
+- **Windows: `signoff` may fail from the agent's Bash tool.** There the bare command reaches the shell launcher,
+  which calls `python3`. Run `py -3 -I "<plugin folder>/signoff/signoff.py" "<folder>"` instead; the skill tells
+  the agent so.
+- **No browser opens.** Signoff prints the start link on stderr before it tries to open a browser, as
+  `signoff: open http://127.0.0.1:<port>/b/…`. Open that link in a browser on the same machine, or see
+  `--no-open` in the options table above.
+- **Over SSH.** Use `--no-open`, as described in the options table above.
+- **410, "This start link was already used".** The link was opened twice, so another program may have used it,
+  and Signoff stopped with exit code 1. Check the answers files first: one that now says `done: true` was
+  finished by the other visitor; move it away, then run the same command again for a new link.
+- **"nothing to answer: … already done (Done is final)".** Every round in the folder has `done: true` in its
+  answers file. A finished round is never reopened. Put the new questions in the next `round-NN.json`, or in
+  another decisions file.
+- **"Changed in another tab or window, so this tab can no longer save" (409).** Another tab or window of the
+  same run, or a second run on the same folder, saved first. Copy any text you have not saved, reload, and go
+  on. Run one Signoff per topic at a time.
 
 ## What runs, and what leaves your machine
 
