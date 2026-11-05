@@ -23,7 +23,8 @@ when you stop it. The plugin also adds a signoff command that runs the same prog
 
 It reads the decisions files and the pictures and live mockups they list, inside the topic folder.
 It writes your answers next to them, as JSON and as Markdown, and a .gitignore in that folder if there is
-none. The past-decisions view reads the decisions folder you set (by default `.signoff` in the project) and
+none. An answer you mark Private stays in the JSON for the agent, which is asked not to repeat it; the
+Markdown copy leaves it out. It is not encrypted. The past-decisions view reads the decisions folder you set (by default `.signoff` in the project) and
 writes nothing. Signoff deletes nothing.
 
 ## What leaves your machine

@@ -49,7 +49,8 @@
         "comment": { "type": "boolean", "default": true, "description": "Show a comment box under the options." },
         "other": { "type": "boolean", "default": false, "description": "Add an \"Other\" choice with its own text field. It is recorded as the choice \"_other\", with the text in \"other\"." },
         "skippable": { "type": "boolean", "default": false, "description": "Add a \"Skip\" choice. It is recorded as the choice \"_skip\", on its own." },
-        "marks": { "type": "boolean", "default": false, "description": "Let the user draw rectangles on this item's pictures, each with a comment. They are recorded in the answer's \"marks\"." }
+        "marks": { "type": "boolean", "default": false, "description": "Let the user draw rectangles on this item's pictures, each with a comment. They are recorded in the answer's \"marks\"." },
+        "sensitive": { "type": "boolean", "default": false, "description": "The answer may hold personal data: the item starts marked Private. It only acts on an item with a text field (comment, other or marks). The user can untick it, or tick it on any item. A private answer is recorded with \"private\": true; its text stays in the answers file, and the Markdown copy hides its comment, Other text and mark comments." }
       }
     },
     "image": {

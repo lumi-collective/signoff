@@ -6,13 +6,16 @@
 It copies rounds of examples/demo into a temporary folder, starts `signoff.py --no-open` on it, opens the
 single-use start link in headless Chrome over the DevTools protocol, and drives the page with real mouse clicks.
 First one round: a non-recommended pick and a comment, the summary block above Done quotes the comment and its
-filter works, one click on Done. Then two rounds: a non-recommended pick, both rounds accepted, the Summary's
+filter works, Private (marked by the agent on one item, ticked by the user on the other) hides the comment in the
+summary and the Markdown copy, unticking the agent's mark survives a reload, one click on Done. A round done
+earlier shows Private without the untick hint. Then two rounds: a non-recommended pick, both rounds accepted, the Summary's
 filter counts, Done. Each run checks the exit code, stdout and the answers files.
 
 Not named test_*.py, so `unittest discover -s tests` does not run it: it needs a browser. It proves the server
 and the page together in a browser; it is not a Claude Code session. Standard library only, Python 3.9+.
 """
 import base64
+import hashlib
 import json
 import os
 import re
@@ -268,8 +271,10 @@ def run_single(work):
     topic = work / "2026-01-06-wording"
     topic.mkdir()
     target = topic / "decisions.json"
-    shutil.copyfile(str(DEMO / "round-04.json"), str(target))
-    items = json.loads(target.read_text(encoding="utf-8"))["items"]
+    data = json.loads((DEMO / "round-04.json").read_text(encoding="utf-8"))
+    data["items"][0]["sensitive"] = True  # the agent marks the first item; the user marks the second
+    target.write_text(json.dumps(data), encoding="utf-8")
+    items = data["items"]
     option = next(k for k, o in enumerate(items[0]["options"]) if o["id"] != items[0]["recommended"])
     # About two lines at 1280 px, five or more at 390 px: the quote is cut only on the narrow screen.
     comment = ("Keep it short; the label sits in a narrow column, and a long one wraps under the switch. "
@@ -314,6 +319,54 @@ def run_single(work):
         state = toggle()
         check(state["open"] and state["expanded"] == "true" and not state["cut"],
               "after the toggle the quote should show in full: %r" % state)
+
+        # Private: the agent's mark starts ticked, the user ticks the commented item, and the Summary hides the text.
+        ticked = browser.js("[document.getElementById('r0-i0-p').checked, document.getElementById('r0-i1-p').checked, "
+                            "document.querySelectorAll('.item .sens').length, "
+                            "!!document.querySelector('.item[data-item] .sens + .crow #r0-i0-p')]")
+        check(ticked == [True, False, 1, True], "Private should start as the agent marked it: %r" % ticked)
+        browser.click("#r0-i1-p")
+        wait_for("the Summary to hide the private comment", lambda: browser.js(
+            "!document.querySelector('#summary-block .summary-note') && "
+            "document.getElementById('summary-block').textContent.indexOf(%s) < 0" % json.dumps(comment[:40])))
+        badges = browser.js("document.querySelectorAll('#summary-block .badge.private').length")
+        check(badges == 2, "the Summary should show 2 private badges, shows %r" % badges)
+        check(not browser.js("document.getElementById('r0-i1-pn').hidden"), "the private note should show")
+        check(browser.js("!document.querySelector('#summary-block .summary-private ~ button')"),
+              "the Summary should offer no way to show a private comment")
+
+        # Other text on a private item stays out of the Summary too.
+        other_text = "Our family photo folder"
+        browser.click("#r0-i0-t")
+        browser.call("Input.insertText", text=other_text)
+        wait_for("the Summary to show Other as private", lambda: browser.js(
+            "document.getElementById('summary-block').textContent.indexOf('Other: private') >= 0"))
+        check(browser.js("document.getElementById('summary-block').textContent.indexOf(%s) < 0" % json.dumps(other_text)),
+              "the Summary shows the private Other text")
+
+        # Untick the agent's mark: after a reload the box stays empty, and the Summary quotes the comment again.
+        own = "Short is fine here."
+        browser.click("#r0-i0-c")
+        browser.call("Input.insertText", text=own)
+        browser.click("#r0-i0-p")
+        answers_file = topic / "decisions.answers.json"
+
+        def saved_unmarked():
+            try:
+                a = json.loads(answers_file.read_text(encoding="utf-8"))["answers"][items[0]["id"]]
+            except (OSError, ValueError, KeyError):
+                return False
+            return a.get("comment") == own and "private" not in a
+        wait_for("the unticked item saved without private", saved_unmarked)
+        browser.call("Page.reload")
+        wait_for("the page again", lambda: browser.js("!!document.getElementById('r0-i1-c')"))
+        state = browser.js("[document.getElementById('r0-i0-p').checked, document.getElementById('r0-i1-p').checked, "
+                           "Array.prototype.map.call(document.querySelectorAll('#summary-block .summary-note'), "
+                           "function (q) { return q.textContent; }), "
+                           "document.querySelectorAll('#summary-block .summary-list li')[0].querySelectorAll('.badge.private').length, "
+                           "document.querySelectorAll('#summary-block .badge.private').length]")
+        check(state == [False, True, [own], 0, 1], "after the reload the agent's mark should stay off: %r" % state)
+        browser.click("#r0-i0-o%d" % option)  # back to the pick, so Other and its text are not sent
         browser.click("#done-block")  # one click, no acceptance step
 
         answers = finished(server, out, err, [topic / "decisions.answers.json"])[0]
@@ -321,15 +374,49 @@ def run_single(work):
         got = answers["answers"]
         check(got[items[0]["id"]]["choice"] == items[0]["options"][option]["id"], "the pick was not stored: %r" % got)
         check(got[items[1]["id"]]["comment"] == comment, "the comment was not stored: %r" % got)
+        check("private" not in got[items[0]["id"]] and got[items[1]["id"]].get("private") is True,
+              "only the second item should be stored private: %r" % got)
+        md = (topic / "decisions.answers.md").read_text(encoding="utf-8")
+        check("narrow column" not in md and "- Comment: (private)" in md and "- Comment: " + own in md,
+              "the Markdown copy should hide the private comment and show the other:\n%s" % md)
     except E2EError:
         sys.stderr.write("--- Signoff stderr ---\n" + "".join(err))
         raise
+
+
+def run_readonly(work):
+    """A round done in an earlier run shows its Private box as answered, without the agent's untick hint."""
+    topic = work / "2026-01-07-private"
+    topic.mkdir()
+    data = json.loads((DEMO / "round-04.json").read_text(encoding="utf-8"))
+    data["items"][0]["sensitive"] = True
+    for name in ("round-01.json", "round-02.json"):
+        (topic / name).write_text(json.dumps(data), encoding="utf-8")
+    sha = hashlib.sha256((topic / "round-01.json").read_bytes()).hexdigest()
+    first = data["items"][0]
+    (topic / "round-01.answers.json").write_text(json.dumps({
+        "version": 1, "done": True, "saved": "2026-01-07T10:00:00Z", "free_text": "",
+        "decisions": {"file": "round-01.json", "sha256": sha},
+        "answers": {first["id"]: {"choice": first["recommended"], "comment": "", "private": True}}}), encoding="utf-8")
+    server, out, err, browser = serve(topic, str(work / "profile-readonly"))
+    try:
+        wait_for("the page", lambda: browser.js("!!document.getElementById('r1-i0-p')"))
+        state = browser.js("[document.querySelectorAll('#panel-0 .sens').length, document.getElementById('r0-i0-p').checked, "
+                           "document.getElementById('r0-i0-p').disabled, document.querySelectorAll('#panel-1 .sens').length]")
+        check(state == [0, True, True, 1], "a done round should show Private without the hint: %r" % state)
+    except E2EError:
+        sys.stderr.write("--- Signoff stderr ---\n" + "".join(err))
+        raise
+    finally:
+        kill(server)
+        kill(browser.proc)
 
 
 def run():
     work = Path(tempfile.mkdtemp(prefix="signoff-e2e-"))
     WORK.append(work)
     run_single(work)
+    run_readonly(work)
     topic = work / "2026-01-05-settings"
     topic.mkdir()
     shutil.copytree(str(DEMO / "mockups"), str(topic / "mockups"))
@@ -396,7 +483,7 @@ def main():
     finally:
         timer.cancel()
         cleanup()
-    print("PASS: 1 round, comment quoted above Done, filter, one-click Done, exit 0; "
+    print("PASS: 1 round, comment quoted above Done, filter, Private hides it, one-click Done, exit 0; "
           "2 rounds, a non-recommended pick, both accepted, Summary filter, Done, exit 0, 2 answers paths on stdout")
     return 0
 

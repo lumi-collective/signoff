@@ -98,6 +98,9 @@ How to batch:
 - `notice`: optional, a short banner under the header. Use it to say what the user must know before
   answering, for example that the mockups hold synthetic data only.
 - `comment`: a comment box under the options; default `true`.
+- `sensitive: true` when the answer may hold personal data (health, money, family, someone else's details, the
+  user's own setup). The item starts marked Private; the user can untick it, or tick Private on any item. It
+  only acts on an item with a text field: `comment`, `other` or `marks`.
 - All text is plain text. Line breaks are kept; HTML and Markdown are shown as typed.
 - The full format is in `${CLAUDE_PLUGIN_ROOT}/signoff/schema.json`.
 
@@ -171,6 +174,8 @@ as `<folder>/round-02.answers.json`. Read every line, not only the last:
 - `marks` (only on items with `marks: true`): `[{"image": 0, "box": [x, y, w, h], "comment": "…"}]`, where
   `image` is the picture's position in the item's `images` from 0 and `box` is in percent like `boxes`. Each one
   is the user pointing at something; act on its comment as you would on the item's comment.
+- `private: true`: the user marked the item Private. Use its comment, `other` text and mark comments to decide
+  and act, but follow the private-text rule below.
 - `<folder>/round-NN.answers.md` holds the same answers as Markdown for people. Read the JSON, not the
   Markdown.
 - Compare each choice with your `recommended`: where they differ, the user overruled you. Read every comment
@@ -210,6 +215,11 @@ and outcome files directly instead.
 - **Sensitive data stays local.** The page and the answers never leave the machine. Do not copy a decisions
   file, its images or its answers into a cloud service, an issue, a pull request or a chat that leaves the
   machine. Screenshots of real systems may show secrets or personal data: crop them or use a mockup.
+- **Private text stays with you.** The text of an answer with `private: true` (its comment, `other` text and
+  mark comments) never goes into a commit, your memory, a cloud service or the decision log, and not into
+  the outcome file's `line`. Record only the
+  decision, in your own words, without the private details. Signoff does not enforce this: the answers file
+  holds the text in plain JSON, and keeping it there is up to you.
 - One topic per folder, one round per file. Follow-up questions go in the next `round-NN.json` of the same
   folder, never into a finished round.
 - Keep the recommendation honest: preselecting it makes it easy to accept, so put the downside in `cost`.

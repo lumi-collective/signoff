@@ -127,6 +127,9 @@ You can also ask for it directly: "put these on a Signoff page".
   all recommendations** in the header resets the open tab to the recommendations, comments untouched; clicking
   it again undoes that, until you change an item's options.
 - **Other and Skip** appear where the agent allows them: Other with its own text field, Skip on its own.
+- **Private** beside a comment marks what you write on that item as private: the agent is asked not to
+  repeat it, and the Markdown copy and the Summary hide it. The agent ticks it in advance where an answer may
+  hold personal data; you can tick or untick it on any item. It is a request to the agent, not encryption.
 - **Everything saves as you go**; the header shows when it last saved. The box at the end of each tab takes
   anything the list did not ask.
 - **Accept each round.** With more than one round open, **Accept this round** at the end of a tab (or Ctrl+Enter,
@@ -266,6 +269,7 @@ JSON, one file per round. [`plugin/signoff/schema.json`](plugin/signoff/schema.j
 | `recommended` | item | no | an option id (`one`) or a list of them (`many`); preselected and labelled |
 | `comment` | item | no | a comment box, default `true` |
 | `other`, `skippable`, `marks` | item | no | add **Other** with a text field, add **Skip**, let the user draw marks; each default `false` |
+| `sensitive` | item | no | the answer may hold personal data: the item starts marked **Private**, which the user can untick; only on an item with a text field (`comment`, `other` or `marks`); default `false` |
 
 Unknown keys are refused, so a typo shows up at once instead of being ignored. Text is plain: no Markdown, links
 or HTML.
@@ -301,6 +305,8 @@ Beside each round, `round-NN.answers.json`, from the first change on the page:
   recommendations**) or `user`.
 - `marks`: your rectangles, `image` being the picture's position in the item's `images` (from 0) and `box` in
   percent like `boxes`.
+- `private`: `true` when you marked the item Private. Its comment, Other text and mark comments stay in this
+  file; the Markdown copy shows `(private)` in their place.
 - `accepted`, `accepted_at`: you accepted this round, and when; Done counts as accepting a single round.
   `changed_after_accept` is `true` while the round was changed after an earlier acceptance and not accepted
   again. The agent sees nothing of this until Done.
@@ -322,6 +328,10 @@ answers files are readable by your user only. The decision files and pictures ar
 repository the skill has the agent check with `git check-ignore` and tell you when the folder would be
 committed. The skill also tells the agent to move durable decisions into the project's own decision log, in its
 own words, rather than committing raw answers.
+
+A private answer is no safer on disk: its text is in the answers file in plain text, because the agent needs
+it. What Private changes is what the agent is told: the skill forbids it to put that text into a commit, its
+memory, a cloud service or a decision log, and the Markdown copy leaves it out.
 
 ## Running it yourself
 

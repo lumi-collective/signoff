@@ -237,6 +237,22 @@ button.accept-round{background:var(--sel)}
 .summary-list li.flag{border-left:0;box-shadow:inset 3px 0 0 var(--box)}
 .summary-list .link{font-weight:600;text-align:left}
 .badge{border:0;background:var(--seg);color:var(--soft);font-size:11.5px;padding:2px 8px}
+.crow{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:4px 12px;margin:14px 0 4px}
+.crow .clabel{margin:0}
+.lock-label{display:inline-flex;align-items:center;gap:6px;margin-left:auto;font-size:12.5px;color:var(--soft);cursor:pointer}
+.lock-label input{margin:0;width:14px;height:14px;accent-color:var(--accent)}
+/* a padlock drawn in CSS: body and shackle (img-src 'self' rules out a data: URI) */
+.lock-label::before,.sens::before,.badge.private::before{content:"";display:inline-block;flex:0 0 auto;width:9px;height:11px;
+  margin-right:4px;vertical-align:-1px;background:linear-gradient(currentColor,currentColor) 0 5px/9px 6px no-repeat,
+  radial-gradient(circle at 4.5px 5px,transparent 2px,currentColor 2.2px 3.5px,transparent 3.7px) 0 0/9px 5px no-repeat}
+.lock-label::before{margin-right:0}
+.sens{margin:14px 0 0;padding:7px 10px;border-radius:8px;background:var(--line);border:1px solid var(--line2);
+  border-left:3px solid var(--quiet);font-size:12.5px;color:var(--soft)}
+.sens strong{color:var(--text);font-weight:650}
+textarea.private{border-style:dashed}
+.lock-note{font-size:12px;color:var(--quiet);margin:4px 0 0}
+.summary-private{margin:6px 0 2px;padding:1px 0 1px 10px;border-left:2px solid var(--line2);color:var(--quiet);font-style:italic;
+  font-size:13.5px}
 dialog{border-radius:12px;box-shadow:0 12px 40px rgba(0,0,0,.25)}
 kbd{border-radius:4px}
 @media (prefers-reduced-motion:no-preference){
@@ -317,6 +333,10 @@ kbd{border-radius:4px}
       commentBadge: 'comment', nothing: 'nothing chosen', notAccepted: 'not accepted yet',
       show: 'Show', show_all: 'All', show_comment: 'With comment', show_differs: 'Not the recommendation',
       noneShown: 'Nothing to show.', more: 'Full text', less: 'Show less',
+      privateLabel: 'Private', sensTitle: 'May hold personal data.',
+      sens: ' The agent marked this item Private. Untick it if your text can be shared.',
+      lockNote: 'Private: your text still goes to the agent in the answers file, and the agent is asked not to repeat it in commits, memory, the cloud or a decision log. The Markdown copy and the Summary hide it. This is a request to the agent, not encryption.',
+      privateBadge: 'private', privateNote: 'Private comment, hidden here.',
       kAccept: 'accept the open round (Cmd+Enter on a Mac); with a single round, Done',
       light: 'Light', dark: 'Dark', theme: 'Theme', width: 'Width', board: 'Live mockup',
       missing: 'Picture not shown: {r}', full: 'Open full size', addMark: 'Add a mark to picture {n}',
@@ -351,6 +371,10 @@ kbd{border-radius:4px}
       commentBadge: 'megjegyzés', nothing: 'nincs választás', notAccepted: 'még nincs elfogadva',
       show: 'Mutasd', show_all: 'Mind', show_comment: 'Megjegyzéssel', show_differs: 'Eltér a javaslattól',
       noneShown: 'Nincs mit mutatni.', more: 'Teljes szöveg', less: 'Kevesebb',
+      privateLabel: 'Privát', sensTitle: 'Személyes adat lehet.',
+      sens: ' Az ágens Privátnak jelölte ezt a tételt. Vedd ki a pipát, ha a szöveged megosztható.',
+      lockNote: 'Privát: a szöveged a válaszfájlban így is eljut az ágenshez, de az ágenst arra kérjük, hogy ne vigye tovább commitba, memóriába, felhőbe vagy döntésnaplóba. A Markdown-másolat és az Összegzés elrejti. Ez kérés az ágensnek, nem titkosítás.',
+      privateBadge: 'privát', privateNote: 'Privát megjegyzés, itt rejtve.',
       kAccept: 'a nyitott kör elfogadása (Macen Cmd+Enter); egyetlen körnél: Kész',
       light: 'Világos', dark: 'Sötét', theme: 'Téma', width: 'Szélesség', board: 'Élő makett',
       missing: 'A kép nem látható: {r}', full: 'Megnyitás teljes méretben', addMark: 'Jelölés hozzáadása a(z) {n}. képhez',
@@ -747,17 +771,55 @@ kbd{border-radius:4px}
       marks.append(holder);
       fs.append(marks);
     }
+    // Private covers the item's text: comment, Other text and mark comments. No data-item and no name, so it is
+    // never taken for one of the choices.
+    var k = key(ri, item), lockable = item.comment || item.other || item.marks;
+    if (lockable && item.sensitive && !rounds[ri].readonly) {  // the hint asks for an untick, so only where one can
+      var sens = el('p', 'sens');
+      sens.append(el('strong', '', L.sensTitle), document.createTextNode(L.sens));
+      fs.append(sens);
+    }
+    if (lockable) {
+      var crow = el('div', 'crow');
+      if (item.comment) {
+        var cl = el('label', 'clabel', L.comment);
+        cl.htmlFor = k + '-c';
+        crow.append(cl);
+      }
+      var lock = el('label', 'lock-label'), p = el('input');
+      p.type = 'checkbox';
+      p.id = k + '-p';
+      p.dataset.round = ri;
+      p.setAttribute('aria-describedby', k + '-pn');
+      p.addEventListener('change', function () { showPrivate(ri, item); });
+      lock.append(p, document.createTextNode(L.privateLabel));
+      crow.append(lock);
+      fs.append(crow);
+    }
     if (item.comment) {
-      var cl = el('label', 'clabel', L.comment);
-      cl.htmlFor = key(ri, item) + '-c';
       var ta = el('textarea');
-      ta.id = cl.htmlFor;
+      ta.id = k + '-c';
       ta.maxLength = MAX_TEXT;
       ta.dataset.round = ri;
-      fs.append(cl, ta);
+      fs.append(ta);
+    }
+    if (lockable) {
+      var note = el('p', 'lock-note', L.lockNote);
+      note.id = k + '-pn';
+      note.hidden = true;
+      fs.append(note);
     }
     card.append(fs);
     return card;
+  }
+  function isPrivate(ri, item) {
+    var p = byId(key(ri, item) + '-p');
+    return !!p && p.checked;
+  }
+  function showPrivate(ri, item) {
+    var on = isPrivate(ri, item), ta = byId(key(ri, item) + '-c'), note = byId(key(ri, item) + '-pn');
+    if (ta) ta.classList.toggle('private', on);
+    if (note) note.hidden = !on;
   }
 
   function when(stamp) {
@@ -850,6 +912,11 @@ kbd{border-radius:4px}
       if (ta && a) ta.value = a.comment;
       var other = byId(key(ri, item) + '-t');
       if (other && a && a.other !== undefined) other.value = a.other;
+      var p = byId(key(ri, item) + '-p');
+      if (p) {
+        p.checked = a ? !!a.private : !!item.sensitive;  // a saved answer says what the user chose
+        showPrivate(ri, item);
+      }
       if (item.marks) {
         markState[ri][item.id] = ((a && a.marks) || []).map(function (m) { return {image: m.image, box: m.box.slice(), comment: m.comment}; });
         drawMarks(ri, item);
@@ -874,6 +941,7 @@ kbd{border-radius:4px}
         source: sources[ri][item.id]};
       if (picked.indexOf(OTHER) >= 0) a.other = byId(key(ri, item) + '-t').value;
       if (item.marks) a.marks = marksOf(ri, item);
+      if (isPrivate(ri, item)) a.private = true;
       answers[item.id] = a;
     });
     return {answers: answers, free_text: byId('r' + ri + '-free').value, done: !!done, accepted: wizard && accepted[ri],
@@ -1146,10 +1214,10 @@ kbd{border-radius:4px}
     showRound(to);
     tabButtons[to].focus();
   }
-  function choiceText(ri, item) {
+  function choiceText(ri, item, priv) {
     var picked = inputs(ri, item).filter(function (i) { return i.checked; }).map(function (i) { return i.value; });
     return {picked: picked, text: picked.map(function (v) {
-      if (v === OTHER) return L.other + ': ' + (byId(key(ri, item) + '-t').value || '–');
+      if (v === OTHER) return L.other + ': ' + (priv ? L.privateBadge : byId(key(ri, item) + '-t').value || '–');
       if (v === SKIP) return L.skipped;
       return labelOf(item, v);
     }).join(', ') || L.nothing};
@@ -1169,7 +1237,7 @@ kbd{border-radius:4px}
         : accepted[ri] ? L.accepted : changed[ri] ? L.changedTab.replace(/[()]/g, '').trim() : L.notAccepted)));
       var ul = el('ul', 'summary-list');
       r.decisions.items.forEach(function (item, n) {
-        var c = choiceText(ri, item), li = el('li');
+        var priv = isPrivate(ri, item), c = choiceText(ri, item, priv), li = el('li');
         var go = el('button', 'link', (n + 1) + '. ' + item.title);
         go.type = 'button';
         go.addEventListener('click', function () {
@@ -1188,9 +1256,11 @@ kbd{border-radius:4px}
         var ta = byId(key(ri, item) + '-c'), note = ta ? ta.value.trim() : '';
         if (note) {
           flags.push(L.commentBadge);
-          li.append(el('blockquote', 'summary-note', note));
+          // The Summary is the view most likely to end up in a screenshot: a private comment is only named here.
+          li.append(priv ? el('blockquote', 'summary-private', L.privateNote) : el('blockquote', 'summary-note', note));
         }
         flags.forEach(function (f) { li.append(el('span', 'badge', f)); });
+        if (priv) li.append(el('span', 'badge private', L.privateBadge));
         if (flags.length) li.classList.add('flag');
         li.dataset.show = ['all'].concat(note ? ['comment'] : [], rec.length && !same ? ['differs'] : []).join(' ');
         li.dataset.show.split(' ').forEach(function (k) { counts[k]++; });
@@ -1410,7 +1480,7 @@ kbd{border-radius:4px}
       || (t.tagName === 'INPUT' && t.type !== 'radio' && t.type !== 'checkbox'));
   }
   function focusItem(card) {
-    var target = card.querySelector('input:checked:not(:disabled)') || card.querySelector('input:not(:disabled)') || card;
+    var target = card.querySelector('.choices input:checked:not(:disabled)') || card.querySelector('input:not(:disabled)') || card;
     target.focus();
     card.scrollIntoView({block: 'nearest'});
   }
@@ -1442,7 +1512,7 @@ kbd{border-radius:4px}
       return;
     }
     if (/^[1-9]$/.test(e.key) && current) {
-      var input = current.querySelectorAll('input[type=radio], input[type=checkbox]')[Number(e.key) - 1];
+      var input = current.querySelectorAll('.choices input[type=radio], .choices input[type=checkbox]')[Number(e.key) - 1];
       if (!input || input.disabled) return;
       e.preventDefault();
       input.checked = input.type === 'radio' ? true : !input.checked;

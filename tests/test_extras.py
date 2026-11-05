@@ -334,6 +334,26 @@ class History(unittest.TestCase):
         self.assertEqual(sorted(self.entries(folder=str(self.root.path / "docs" / "decisions"))), custom)
         self.assertEqual(self.entries(folder="missing"), {})
 
+    def test_private_rounds_show_beside_old_ones(self):
+        topic = self.root.path / ".signoff" / "2026-03-02-private"
+        data = sample_decisions()
+        del data["items"][0]["images"]
+        data["items"][0]["sensitive"] = True
+        write(topic / "round-01.json", data)
+        sha = hashlib.sha256((topic / "round-01.json").read_bytes()).hexdigest()
+        write(topic / "round-01.answers.json", {
+            "version": 1, "done": True, "saved": "2026-03-02T10:00:00Z",
+            "decisions": {"file": "round-01.json", "sha256": sha},
+            "answers": {"layout": {"choice": "one", "comment": "mine", "private": True}}, "free_text": ""})
+        e = self.entries()
+        new = e["2026-03-02-private/round-01.json"]
+        self.assertEqual((new["status"], new["error"], new["warning"]), ("done", None, None))
+        self.assertTrue(new["decisions"]["items"][0]["sensitive"])
+        self.assertIs(new["answers"]["answers"]["layout"]["private"], True)
+        old = e["2026-01-05-settings/round-01.json"]
+        self.assertEqual((old["status"], old["error"]), ("done", None))
+        self.assertNotIn("private", old["answers"]["answers"]["layout"])
+
     def test_root_must_be_a_folder(self):
         with self.assertRaises(signoff.DecisionsError):
             signoff.make_history_server(self.root.path / "nope")

@@ -38,7 +38,8 @@ TOOLS = [
     {"name": "signoff_status",
      "description": "The state of a run from signoff_open: waiting (the page is open), done (the user pressed "
                     "Done), timeout (idle for 120 minutes; answers so far are kept) or error. answers_paths lists the "
-                    "answers JSON files to read, in tab order.",
+                    "answers JSON files to read, in tab order. An answer with \"private\": true holds text the user "
+                    "asked you not to repeat in a commit, your memory, a cloud service or a decision log.",
      "inputSchema": {"type": "object", "additionalProperties": False, "required": ["run_id"], "properties": {
          "run_id": {"type": "string"}}}},
 ]

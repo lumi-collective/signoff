@@ -59,7 +59,7 @@ OTHER, SKIP = "_other", "_skip"
 TOP_KEYS = ("version", "title", "tab", "intro", "notice", "lang", "items", "free_text")
 TOP_REQUIRED = ("version", "title", "items")
 ITEM_KEYS = ("id", "group", "title", "description", "cost", "images", "select", "options", "recommended", "comment",
-             "other", "skippable", "marks")
+             "other", "skippable", "marks", "sensitive")
 ITEM_REQUIRED = ("id", "title", "options")
 IMAGE_KEYS = ("src", "html", "caption", "alt", "boxes")
 OUTCOME_KEYS = ("log", "line", "date")
@@ -156,9 +156,10 @@ def _item(item, n, folder, images, lenient=False):
     item.setdefault("other", False)
     item.setdefault("skippable", False)
     item.setdefault("marks", False)
+    item.setdefault("sensitive", False)
     if item["select"] not in SELECT_VALUES:
         raise DecisionsError("%s: 'select' must be \"one\" or \"many\"" % where)
-    for key in ("comment", "other", "skippable", "marks"):
+    for key in ("comment", "other", "skippable", "marks", "sensitive"):
         if not isinstance(item[key], bool):
             raise DecisionsError("%s: %r must be true or false" % (where, key))
     options = item["options"]
@@ -265,8 +266,10 @@ def check_answers(state, decisions, stored=False):
         item = items.get(key)
         if item is None:
             raise ValueError("answer for unknown item %r" % key)
-        if not isinstance(ans, dict) or set(ans) - {"choice", "comment", "source", "other", "marks"}:
-            raise ValueError("answer %r must be {choice, comment, source, other, marks}" % key)
+        if not isinstance(ans, dict) or set(ans) - {"choice", "comment", "source", "other", "marks", "private"}:
+            raise ValueError("answer %r must be {choice, comment, source, other, marks, private}" % key)
+        if not isinstance(ans.get("private", False), bool):
+            raise ValueError("answer %r: private must be true or false" % key)
         choice, comment = ans.get("choice"), ans.get("comment", "")
         if "source" in ans and ans["source"] not in SOURCE_VALUES:
             raise ValueError("answer %r: source must be one of %s" % (key, ", ".join(SOURCE_VALUES)))
@@ -299,6 +302,8 @@ def check_answers(state, decisions, stored=False):
             clean[key]["marks"] = _check_marks(ans["marks"], item, key)
         if "source" in ans:
             clean[key]["source"] = ans["source"]
+        if "private" in ans:
+            clean[key]["private"] = ans["private"]
     result = {"answers": clean, "free_text": free, "done": done, "accepted": state.get("accepted", False)}
     try:
         json.dumps(result, ensure_ascii=False).encode("utf-8")
@@ -436,9 +441,14 @@ def answers_markdown(decisions, record):
         picked = choice if isinstance(choice, list) else ([] if choice is None else [choice])
         rec = item.get("recommended", [])
         rec = rec if isinstance(rec, list) else [rec]
+        # A private answer keeps its text in the JSON for the agent; this copy for people only says it is there.
+        private = ans.get("private") is True
+
+        def text(value):
+            return "(private)" if private and value.strip() else md_text(value)
         labels = {o["id"]: md_text(o["label"]) for o in item["options"]}
         labels[SKIP] = "Skipped"
-        labels[OTHER] = "Other: " + md_text(ans.get("other", ""))
+        labels[OTHER] = "Other: " + text(ans.get("other", ""))
         # Whether a choice was the recommendation only means something when there was one.
         shown = ", ".join(labels[c] + ("" if not rec else " (recommended)" if c in rec else " (not recommended)")
                           for c in picked) or "nothing chosen"
@@ -446,10 +456,10 @@ def answers_markdown(decisions, record):
                 "- Choice: " + shown,
                 "- Source: " + {"recommended": "recommendation, not changed", "accept_all": "Accept all",
                                 "user": "the user"}.get(ans.get("source"), "unknown"),
-                "- Comment: " + md_text(ans.get("comment", ""))]
+                "- Comment: " + text(ans.get("comment", ""))]
         for k, mark in enumerate(ans.get("marks", []), 1):
             out.append("- Mark %d, picture %d at %s (x, y, w, h in %%): %s" % (
-                k, mark["image"] + 1, ", ".join("%g" % v for v in mark["box"]), md_text(mark["comment"])))
+                k, mark["image"] + 1, ", ".join("%g" % v for v in mark["box"]), text(mark["comment"])))
         out.append("")
     title = decisions["free_text"].get("title") or "Anything else"
     out += ["## " + md_text(title.replace("\n", " ")), "", md_text(record["free_text"]), "",

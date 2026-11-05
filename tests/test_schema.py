@@ -43,6 +43,15 @@ class DecisionsFile(unittest.TestCase):
         self.assertIn("other", self.broken(lambda d: d["items"][0].update(other="yes")))
         self.assertIn("skippable", self.broken(lambda d: d["items"][1].update(skippable=1)))
 
+    def test_sensitive_is_an_optional_boolean(self):
+        self.assertFalse(signoff.load_decisions(self.folder.decisions)[0]["items"][0]["sensitive"])
+        data = sample_decisions()
+        data["items"][1]["sensitive"] = True
+        self.folder.write(data)
+        self.assertTrue(signoff.load_decisions(self.folder.decisions)[0]["items"][1]["sensitive"])
+        self.assertIn("sensitive", self.broken(lambda d: d["items"][0].update(sensitive="yes")))
+        self.assertIn("sensitive", self.broken(lambda d: d["items"][0].update(sensitive=1)))
+
     def test_tab_is_optional_text(self):
         data = sample_decisions()
         data["tab"] = "Layout"
@@ -380,6 +389,68 @@ class StoredAnswers(unittest.TestCase):
                 self.stored(**change)
         with self.assertRaises(ValueError):
             signoff.check_answers({"done": True, "answers": {}, "free_text": ""}, self.decisions, stored=True)
+
+
+class Private(unittest.TestCase):
+    """The user marks an answer private: the JSON keeps the text for the agent, the Markdown copy hides it."""
+
+    def setUp(self):
+        folder = Folder()
+        data = sample_decisions()
+        data["items"][0].update(other=True, marks=True, sensitive=True)
+        folder.write(data)
+        self.decisions, _ = signoff.load_decisions(folder.decisions)
+        folder.cleanup()
+
+    def check(self, answer, item="layout", stored=False):
+        state = {"answers": {item: answer}, "free_text": "", "done": False}
+        if stored:
+            state.update(version=1, saved="2026-01-01T12:00:00Z")
+        return signoff.check_answers(state, self.decisions, stored=stored)["answers"][item]
+
+    def test_private_is_kept(self):
+        self.assertIs(self.check({"choice": "one", "comment": "my own reason", "private": True})["private"], True)
+        self.assertIs(self.check({"choice": "one", "comment": "", "private": False})["private"], False)
+        self.assertIs(self.check({"choice": "one", "comment": "x", "private": True}, stored=True)["private"], True)
+
+    def test_any_item_can_be_private(self):
+        self.assertFalse(self.decisions["items"][1]["sensitive"])
+        self.assertIs(self.check({"choice": ["date"], "comment": "", "private": True}, item="filters")["private"], True)
+
+    def test_without_the_key_nothing_changes(self):
+        self.assertEqual(self.check({"choice": "one", "comment": "fine"}), {"choice": "one", "comment": "fine"})
+
+    def test_private_must_be_a_boolean(self):
+        for value in (1, 0, "yes", "true", None, [], {}):
+            with self.assertRaises(ValueError, msg=value):
+                self.check({"choice": "one", "comment": "", "private": value})
+            with self.assertRaises(ValueError, msg=value):
+                self.check({"choice": "one", "comment": "", "private": value}, stored=True)
+
+    def record(self, answer):
+        return {"answers": {"layout": answer, "filters": {"choice": ["date"], "comment": ""}},
+                "free_text": "", "done": False, "saved": "2026-01-01T12:00:00Z"}
+
+    def test_markdown_hides_private_text(self):
+        md = signoff.answers_markdown(self.decisions, self.record({
+            "choice": "_other", "other": "my *home* folder", "comment": "my health\n# not a heading", "private": True,
+            "marks": [{"image": 0, "box": [10, 20, 30, 40], "comment": "my desk"}]}))
+        for text in ("home", "health", "heading", "desk"):
+            self.assertNotIn(text, md)
+        self.assertIn("- Choice: Other: (private) (not recommended)", md)
+        self.assertIn("- Comment: (private)", md)
+        self.assertIn("- Mark 1, picture 1 at 10, 20, 30, 40 (x, y, w, h in %): (private)", md)
+
+    def test_markdown_private_without_text_says_none(self):
+        md = signoff.answers_markdown(self.decisions, self.record({"choice": "one", "comment": "", "private": True}))
+        self.assertIn("- Choice: Keep one (not recommended)\n", md)
+        self.assertIn("- Comment: (none)", md)
+
+    def test_markdown_shows_text_when_not_private(self):
+        # sensitive is only the agent's suggestion: what counts is the user's answer.
+        for answer in ({"choice": "one", "comment": "plain *note*"},
+                       {"choice": "one", "comment": "plain *note*", "private": False}):
+            self.assertIn("- Comment: plain \\*note\\*", signoff.answers_markdown(self.decisions, self.record(answer)))
 
 
 class SchemaFile(unittest.TestCase):
