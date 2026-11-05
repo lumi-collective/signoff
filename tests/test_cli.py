@@ -142,6 +142,7 @@ class Cli(unittest.TestCase):
         demo = Folder()
         try:
             shutil.copytree(str(ROOT / "examples" / "demo" / "mockups"), str(demo.path / "demo-mockups"))
+            shutil.copytree(str(ROOT / "examples" / "demo" / "notes"), str(demo.path / "notes"))
             demo.decisions.write_text((ROOT / "examples" / "demo" / "decisions.json").read_text(encoding="utf-8")
                                       .replace('"mockups/', '"demo-mockups/'), encoding="utf-8")
             proc = start(demo)

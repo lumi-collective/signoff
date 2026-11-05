@@ -101,6 +101,12 @@ dl.keys dt{white-space:nowrap}
 dl.keys dd{margin:0;color:var(--soft)}
 .missing{display:flex;align-items:center;justify-content:center;min-height:160px;border:1px dashed var(--line);border-radius:8px;
   color:var(--quiet);padding:16px;text-align:center}
+.attach{margin:12px 0 0;border:1px solid var(--line);border-radius:10px;background:var(--field);min-width:0}
+.attach summary{padding:8px 12px;cursor:pointer;font-weight:650;font-size:14px}
+.attach-meta{margin-left:10px;font-weight:400;font-size:12.5px;color:var(--quiet);overflow-wrap:anywhere}
+.attach pre{margin:0;padding:10px 12px;border-top:1px solid var(--line);max-height:340px;overflow:auto;white-space:pre-wrap;
+  overflow-wrap:anywhere;font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--text)}
+.attach-missing{margin:0;padding:10px 12px;border-top:1px solid var(--line);color:var(--quiet)}
 .board-bar{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;margin:0 0 8px}
 .board-label{font-size:12.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--accent)}
 .seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
@@ -375,6 +381,7 @@ kbd{border-radius:4px}
       legend: '▲ better · ● middling · ▼ worse', tone_good: 'better', tone_mid: 'middling', tone_bad: 'worse',
       kAccept: 'accept the open round (Cmd+Enter on a Mac); with a single round, Done',
       light: 'Light', dark: 'Dark', theme: 'Theme', width: 'Width', board: 'Live mockup',
+      attachMissing: 'Attachment not shown: {r}', lines: '{n} lines', line: '1 line', attachText: 'Attachment: {r}',
       missing: 'Picture not shown: {r}', full: 'Open full size', addMark: 'Add a mark to picture {n}',
       marks: 'Your marks', markHint: 'Draw a rectangle on a picture to point at something, or use the Add a mark button.',
       mark: 'Mark {n}', markOn: 'on picture {p}', markHandle: 'Mark {n} on picture {p}. Arrow keys move it, Shift and arrow keys resize it.',
@@ -416,6 +423,7 @@ kbd{border-radius:4px}
       legend: '▲ jobb · ● közepes · ▼ rosszabb', tone_good: 'jobb', tone_mid: 'közepes', tone_bad: 'rosszabb',
       kAccept: 'a nyitott kör elfogadása (Macen Cmd+Enter); egyetlen körnél: Kész',
       light: 'Világos', dark: 'Sötét', theme: 'Téma', width: 'Szélesség', board: 'Élő makett',
+      attachMissing: 'A melléklet nem látható: {r}', lines: '{n} sor', line: '1 sor', attachText: 'Melléklet: {r}',
       missing: 'A kép nem látható: {r}', full: 'Megnyitás teljes méretben', addMark: 'Jelölés hozzáadása a(z) {n}. képhez',
       marks: 'A jelöléseid', markHint: 'Rajzolj téglalapot a képre, hogy megmutass valamit, vagy használd a Jelölés hozzáadása gombot.',
       mark: '{n}. jelölés', markOn: 'a(z) {p}. képen', markHandle: '{n}. jelölés a(z) {p}. képen. A nyilak mozgatják, a Shift és a nyilak átméretezik.',
@@ -921,6 +929,23 @@ kbd{border-radius:4px}
     if (compare && item.options.some(function (o) { return o.facts && Object.keys(o.facts).some(function (c) { return o.facts[c].tone; }); })) {
       fs.append(el('p', 'legend-line', L.legend));
     }
+    // The agent's text files, closed until opened; always plain text, never rendered.
+    (item.attachments || []).forEach(function (att) {
+      var box = el('details', 'attach'), sum = el('summary', '', att.caption || att.src);
+      var n = att.text ? att.text.replace(/\n$/, '').split('\n').length : 0;
+      var meta = [att.caption ? att.src : '', n ? (n === 1 ? L.line : fmt(L.lines, {n: n})) : ''];
+      sum.append(el('span', 'attach-meta', meta.filter(Boolean).join(' · ')));
+      box.append(sum);
+      if (att.text !== undefined) {
+        var pre = el('pre', '', att.text);
+        pre.tabIndex = 0;  // it scrolls, so the keyboard must reach it
+        pre.setAttribute('aria-label', fmt(L.attachText, {r: att.caption || att.src}));
+        box.append(pre);
+      } else {
+        box.append(el('p', 'attach-missing', fmt(L.attachMissing, {r: att.missing})));
+      }
+      fs.append(box);
+    });
     if (item.marks) {
       var marks = el('div', 'mark-list');
       marks.append(el('p', 'clabel', L.marks));

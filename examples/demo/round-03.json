@@ -79,7 +79,13 @@
         "md",
         "pdf"
       ],
-      "skippable": true
+      "skippable": true,
+      "attachments": [
+        {
+          "src": "notes/export-formats.md",
+          "caption": "What each format keeps"
+        }
+      ]
     },
     {
       "id": "storage",

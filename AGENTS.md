@@ -58,6 +58,11 @@ it pass.
 - **Only listed files are served.** Pictures and boards by number, each resolved inside the decisions file's
   folder; read into memory at start for a decisions run, read on request (with the same link check) for the
   past-decisions page. No SVG, no directory listing, no path from the request ever touches the disk.
+  Attachments (`.md`, `.txt`) follow the same folder rule, are read at start, on both pages, and go inside
+  the page data as text; no route serves them. Every such path is checked as text before it is resolved: no
+  control character, and no drive or network path in Windows syntax (`C:`, `\\host`, `//host`), on every OS.
+  An absolute local path still works for pictures and boards inside the folder, as in 0.1.0; attachments
+  take only relative paths.
 - **Boards stay sandboxed.** Boards are served under their own token (`board_token`), which opens nothing else.
   Every board response carries `BOARD_CSP` (`sandbox allow-scripts`, nothing loaded from outside),
   and the page embeds it with `sandbox="allow-scripts"` and never `allow-same-origin`.

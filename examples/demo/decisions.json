@@ -94,7 +94,8 @@
         {"id": "pdf", "label": "PDF"},
         {"id": "html", "label": "HTML"}
       ],
-      "recommended": ["md", "pdf"]
+      "recommended": ["md", "pdf"],
+      "attachments": [{"src": "notes/export-formats.md", "caption": "What each format keeps"}]
     },
     {
       "id": "storage",

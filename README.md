@@ -276,6 +276,7 @@ JSON, one file per round. [`plugin/signoff/schema.json`](plugin/signoff/schema.j
 | `sensitive` | item | no | the answer may hold personal data: the item starts marked **Private**, which the user can untick; only on an item with a text field (`comment`, `other` or `marks`); default `false` |
 | `criteria` | item | no | what the options are compared on: a list of `id` and `label`, in row order. Adds the facts as chips on the cards and a **Cards / Table** toggle |
 | `facts` | option | no | the option's value per criterion, keyed by criterion `id`: `text`, and optional `tone` `good`, `mid` or `bad` (shown as ▲, ● or ▼ with the text); only the item's own criteria; a missing one shows "–" in the table |
+| `attachments` | item | no | text files shown under the options, each in a box that starts closed: `src` (inside the round's folder; `.md` or `.txt`, UTF-8, up to 256 KiB) and optional `caption`; up to 20 an item. Read at start and shown as plain text; the Markdown copy names them only |
 
 Unknown keys are refused, so a typo shows up at once instead of being ignored. Text is plain: no Markdown, links
 or HTML.
@@ -400,7 +401,8 @@ send requests to `127.0.0.1`. The rules, in short:
   same way on its next save, but only best effort, since two processes do not share a lock: run one Signoff per
   topic at a time. An answers file that another run finished with Done stays done.
 - **Only the files it names:** pictures by number, never by path; each resolved inside the round's folder; no
-  SVG, no directory listing.
+  SVG, no directory listing. Attachments follow the same folder rule, `.md` or `.txt` only, and go inside the
+  page as text; no route serves them.
 - **Agent text is text:** everything reaches the page through `textContent`; a strict Content-Security-Policy
   with a per-request nonce; no inline styles or handlers.
 - **Boards are sandboxed:** their own token, which opens nothing else; `Content-Security-Policy: sandbox
@@ -460,7 +462,12 @@ The session loads your copy. `AGENTS.md` lists the rules the code keeps. A promp
 
 - The page's own labels are in English and Hungarian.
 - Text is plain: no Markdown, links or code blocks in descriptions.
-- Pictures and boards are read at start; changing a round's files while the page is open needs a restart.
+- Attachments: up to 256 KiB each, 20 an item and 200 a round. A round's attachments together take up to 2 MiB of the page
+  and the past-decisions page holds up to 16 MiB of them, both counted as sent, where `<`, `>` and `&` take
+  6 bytes each; past that an attachment is not shown.
+- A drive or network path in a decisions file (`C:`, `\\host`, `//host`) is refused, on every OS. Attachments
+  take only relative paths; a picture or board may still use an absolute path inside the folder.
+- Pictures, boards and attachments are read at start; changing a round's files while the page is open needs a restart.
 - The answers say what was chosen, not what you looked at: after a timeout, an untouched item shows the
   recommendation.
 - Every round in a folder must be valid, done ones included: a broken earlier round stops the run. The

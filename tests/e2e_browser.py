@@ -10,7 +10,8 @@ filter works, Private (marked by the agent on one item, ticked by the user on th
 summary and the Markdown copy, unticking the agent's mark survives a reload, one click on Done. A round done
 earlier shows Private without the untick hint. An item with criteria shows its facts as chips; the Cards / Table
 toggle shows the table, a pick there (by click and by number key) is saved and shows on the cards, and at 390 px
-the table scrolls in its own box. Then two rounds: a non-recommended pick, both rounds accepted, the Summary's
+the table scrolls in its own box. An attachment starts closed, opens on a click and shows the file's text
+exactly, with nothing rendered. Then two rounds: a non-recommended pick, both rounds accepted, the Summary's
 filter counts, Done. Each run checks the exit code, stdout and the answers files.
 
 Not named test_*.py, so `unittest discover -s tests` does not run it: it needs a browser. It proves the server
@@ -526,12 +527,55 @@ def run_table(work):
         raise
 
 
+def run_attachment(work):
+    """An attachment shows closed, opens on a click, and holds the file's text exactly, nothing rendered."""
+    topic = work / "2026-01-09-export"
+    topic.mkdir()
+    shutil.copytree(str(DEMO / "notes"), str(topic / "notes"))
+    data = json.loads((DEMO / "round-03.json").read_text(encoding="utf-8"))
+    data["items"] = [it for it in data["items"] if it.get("attachments")]
+    target = topic / "decisions.json"
+    target.write_text(json.dumps(data), encoding="utf-8")
+    item = data["items"][0]
+    text = (topic / item["attachments"][0]["src"]).read_bytes().decode("utf-8")
+    check("<b>" in text and text.startswith("# "), "the demo attachment should hold a <b> and a # heading")
+    box = '[data-item="%s"] details.attach' % item["id"]
+
+    def state():
+        return browser.js("(function () { var d = document.querySelectorAll(%s), p = d[0] && d[0].querySelector('pre'); "
+                          "return p && {count: d.length, open: d[0].open, shown: p.checkVisibility(), "
+                          "text: p.textContent, children: p.children.length, label: d[0].querySelector('summary').textContent}; })()"
+                          % json.dumps(box))
+
+    server, out, err, browser = serve(target, str(work / "profile-attach"))
+    try:
+        closed = wait_for("the attachment", state)
+        check(closed["count"] == 1 and not closed["open"] and not closed["shown"], "the attachment should start closed: %r"
+              % {k: closed[k] for k in ("count", "open", "shown")})
+        check(item["attachments"][0]["caption"] in closed["label"], "the summary should name it: %r" % closed["label"])
+        browser.click(box + " > summary")
+        opened = state()
+        check(opened["open"] and opened["shown"], "a click should open the attachment")
+        check(opened["text"] == text, "the attachment should be the file's text exactly")
+        check(opened["children"] == 0 and browser.js("document.querySelectorAll('.attach b, .attach h1').length") == 0,
+              "nothing in the attachment may render")
+        browser.click("#done")
+        finished(server, out, err, [topic / "decisions.answers.json"])
+    except E2EError:
+        sys.stderr.write("--- Signoff stderr ---\n" + "".join(err))
+        raise
+    finally:
+        kill(server)
+        kill(browser.proc)
+
+
 def run():
     work = Path(tempfile.mkdtemp(prefix="signoff-e2e-"))
     WORK.append(work)
     run_single(work)
     run_readonly(work)
     run_table(work)
+    run_attachment(work)
     topic = work / "2026-01-05-settings"
     topic.mkdir()
     shutil.copytree(str(DEMO / "mockups"), str(topic / "mockups"))
@@ -600,6 +644,7 @@ def main():
         cleanup()
     print("PASS: 1 round, comment quoted above Done, filter, Private hides it, one-click Done, exit 0; "
           "table view: chips, toggle, a pick in the table saved and shown on the cards, exit 0; "
+          "an attachment starts closed, opens, shows the file's text unrendered, exit 0; "
           "2 rounds, a non-recommended pick, both accepted, Summary filter, Done, exit 0, 2 answers paths on stdout")
     return 0
 

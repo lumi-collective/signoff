@@ -16,12 +16,13 @@ import json
 import os
 import re
 import secrets
+import stat
 import sys
 import tempfile
 import threading
 import time
 import webbrowser
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 HERE = Path(__file__).resolve().parent
 MAX_BODY = 256 * 1024
@@ -35,8 +36,15 @@ IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
                ".gif": "image/gif"}
 BOARD_TYPES = (".html", ".htm")
 MAX_BOARD = 2 * 1024 * 1024
+ATTACHMENT_TYPES = (".md", ".txt")
+MAX_ATTACHMENT = 256 * 1024
+# Attachments go inside the page, so these count their size there, escaped (a "<" takes 6 bytes).
+MAX_ATTACHMENTS = 2 * 1024 * 1024  # one round's together
+MAX_ITEM_ATTACHMENTS = 20
+MAX_ROUND_ATTACHMENTS = 200  # each one is a file read at start
 MAX_MARKS = 50
 HISTORY_BUDGET = 200 * 1024 * 1024
+HISTORY_TEXT_BUDGET = 16 * 1024 * 1024  # all attachments on the past-decisions page
 DEFAULT_FOLDER = ".signoff"  # where topic folders live under a project root; the plugin's folder setting can change it
 # A board is the agent's own HTML with scripts. Served with this header it runs in a sandbox with an opaque
 # origin even when its URL is opened directly: it cannot read the page or send a save, and loads nothing from outside.
@@ -53,15 +61,18 @@ DATE_PATTERN = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}")
 ROUND_FILE = re.compile(r"^round-([0-9]{1,4})\.json$")
 SAVED_PATTERN = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
+LEADING_UNC = re.compile(r"^[\\/]{2}")
 # Option ids start with a letter or digit, so these two choices can never clash with one of them.
 OTHER, SKIP = "_other", "_skip"
 
 TOP_KEYS = ("version", "title", "tab", "intro", "notice", "lang", "items", "free_text")
 TOP_REQUIRED = ("version", "title", "items")
 ITEM_KEYS = ("id", "group", "title", "description", "cost", "images", "select", "options", "recommended", "comment",
-             "other", "skippable", "marks", "sensitive", "criteria")
+             "other", "skippable", "marks", "sensitive", "criteria", "attachments")
 ITEM_REQUIRED = ("id", "title", "options")
 IMAGE_KEYS = ("src", "html", "caption", "alt", "boxes")
+ATTACHMENT_KEYS = ("src", "caption")
 OUTCOME_KEYS = ("log", "line", "date")
 OPTION_KEYS = ("id", "label", "detail", "facts")
 CRITERION_KEYS = ("id", "label")
@@ -108,6 +119,28 @@ def _box_ok(box):
     return 0 <= x <= 100 and 0 <= y <= 100 and 0 < w and 0 < h and x + w <= 100.01 and y + h <= 100.01
 
 
+def _inside(folder, src, where):
+    """Resolve a file named in the decisions inside their folder. The text is checked first, on every OS: on
+    Windows a UNC path (\\\\host\\share) would open a network connection and send the user's NTLM hash, and a
+    drive-relative one (C:foo) reaches another folder. An absolute local path passes, as in 0.1.0, and must then
+    lead inside the folder. The message never repeats a refused path."""
+    if CONTROL_CHARS.search(src):
+        raise DecisionsError("%s: the path holds a control character" % where)
+    # A drive without a root is drive-relative (C:foo); C:\x is an absolute path, left to the folder check. Two
+    # leading separators cover every UNC form, also the one-part \\host that Python 3.9 gives no drive.
+    win = PureWindowsPath(src)
+    if LEADING_UNC.match(src) or (win.drive and not win.root):
+        raise DecisionsError("%s: the path must be relative to the decisions file's folder; a drive or network "
+                             "path points outside it" % where)
+    try:
+        path = (folder / src).resolve()
+    except (ValueError, RuntimeError, OSError) as e:  # a link loop on Python before 3.13, a name too long
+        raise DecisionsError("%s: %r cannot be resolved (%s)" % (where, src, type(e).__name__))
+    if path != folder and folder not in path.parents:
+        raise DecisionsError("%s: %r is outside the decisions file's folder (links are followed)" % (where, src))
+    return path
+
+
 def _image(img, folder, where, lenient=False):
     """Check one entry of an item's images: a picture (src) or a board (html). Returns its resolved path, or None
     when lenient and the file is missing."""
@@ -127,9 +160,7 @@ def _image(img, folder, where, lenient=False):
             raise DecisionsError("%s: 'boxes' entry %r must be [x, y, w, h] in percent of the image, inside 0-100"
                                  % (where, box))
     src = img["html" if board else "src"]
-    path = (folder / src).resolve()
-    if path != folder and folder not in path.parents:
-        raise DecisionsError("%s: %r is outside the decisions file's folder (links are followed)" % (where, src))
+    path = _inside(folder, src, where)
     suffix = path.suffix.lower()
     if board:
         if suffix not in BOARD_TYPES:
@@ -143,6 +174,49 @@ def _image(img, folder, where, lenient=False):
             return None
         raise DecisionsError("%s: %r not found" % (where, src))
     return path
+
+
+def _attachment(att, folder, where, used, lenient=False):
+    """Check one attachment and read its text into it, as 'text'. A path rule broken fails in both modes, as for
+    pictures; a file that cannot be read fails too, except with lenient (the history page), where it gets
+    'missing', the reason. used[0] counts the round's bytes so far, as they go into the page. Messages name src
+    as written, never a local path."""
+    _keys(att, ATTACHMENT_KEYS, ("src",), where)
+    for key in ATTACHMENT_KEYS:
+        _text(att, key, where)
+    src = att["src"]
+    if PureWindowsPath(src).anchor:  # a new key, and the page shows src: no local path, not even a rooted one
+        raise DecisionsError("%s: the path must be relative to the decisions file's folder" % where)
+    path = _inside(folder, src, where)
+    if path.suffix.lower() not in ATTACHMENT_TYPES:
+        raise DecisionsError("%s: %r must be a text file, .md or .txt" % (where, src))
+    reason = None
+    try:
+        if not path.exists():
+            reason = "not found"
+        elif not path.is_file():
+            reason = "not a file"
+        elif path.stat().st_size > MAX_ATTACHMENT:
+            reason = "larger than %d KiB" % (MAX_ATTACHMENT >> 10)
+        else:
+            text = read_image(path, MAX_ATTACHMENT).decode("utf-8-sig")
+            size = _page_size(text)
+            if used[0] + size > MAX_ATTACHMENTS:
+                reason = "over the %d MiB limit for one round's attachments in the page" % (MAX_ATTACHMENTS >> 20)
+            else:
+                att["text"] = text
+                used[0] += size
+    except OSError as e:
+        reason = "cannot be read (%s)" % (e.strerror or type(e).__name__)  # str(e) would hold the path
+    except UnicodeDecodeError:
+        reason = "not UTF-8 text"
+    except (DecisionsError, RuntimeError):  # RuntimeError: a link loop swapped in, on Python before 3.13
+        reason = "changed while Signoff was reading it"
+    if reason is None:
+        return
+    if not lenient:
+        raise DecisionsError("%s: %r: %s" % (where, src, reason))
+    att["missing"] = reason
 
 
 def _facts(facts, criteria, where):
@@ -162,7 +236,7 @@ def _facts(facts, criteria, where):
             raise DecisionsError("%s: 'tone' must be one of %s" % (fwhere, ", ".join(TONE_VALUES)))
 
 
-def _item(item, n, folder, images, lenient=False):
+def _item(item, n, folder, images, used, lenient=False):
     where = "item %d" % n
     if isinstance(item, dict) and isinstance(item.get("id"), str):
         where = "item %d (%s)" % (n, item["id"])
@@ -224,11 +298,20 @@ def _item(item, n, folder, images, lenient=False):
         raise DecisionsError("%s: 'images' must be a list" % where)
     for k, img in enumerate(shots, 1):
         images.append(_image(img, folder, "%s, image %d" % (where, k), lenient))
+    attachments = item.get("attachments", [])
+    if not isinstance(attachments, list) or len(attachments) > MAX_ITEM_ATTACHMENTS:
+        raise DecisionsError("%s: 'attachments' must be a list of up to %d" % (where, MAX_ITEM_ATTACHMENTS))
+    used[1] += len(attachments)
+    if used[1] > MAX_ROUND_ATTACHMENTS:
+        raise DecisionsError("%s: more than %d attachments in this round" % (where, MAX_ROUND_ATTACHMENTS))
+    for k, att in enumerate(attachments, 1):
+        _attachment(att, folder, "%s, attachment %d" % (where, k), used, lenient)
 
 
 def load_decisions(path, lenient=False):
     """Read and check a decisions file. Returns (decisions with defaults filled, the paths of its pictures and
-    boards in page order). With lenient=True a missing picture or board is None instead of an error."""
+    boards in page order). Attachments are read into the decisions. With lenient=True a missing picture or board
+    is None, and an attachment that cannot be read is marked missing, instead of an error."""
     path = Path(path)
     try:
         size = path.stat().st_size
@@ -242,6 +325,8 @@ def load_decisions(path, lenient=False):
         raise DecisionsError("%s: cannot read it (%s)" % (path, e.strerror or e))
     except ValueError as e:
         raise DecisionsError("%s: not valid JSON (%s)" % (path, e))
+    except RecursionError:
+        raise DecisionsError("%s: not valid JSON (nested too deeply)" % path)
     try:
         json.dumps(data, ensure_ascii=False).encode("utf-8")
     except UnicodeEncodeError:
@@ -259,9 +344,9 @@ def load_decisions(path, lenient=False):
     items = data["items"]
     if not isinstance(items, list) or not items:
         raise DecisionsError("decisions file: 'items' must be a non-empty list")
-    images, ids = [], set()
+    images, ids, used = [], set(), [0, 0]  # attachments: bytes in the page, count
     for n, item in enumerate(items, 1):
-        _item(item, n, folder, images, lenient)
+        _item(item, n, folder, images, used, lenient)
         if item["id"] in ids:
             raise DecisionsError("item %d: duplicate id %r" % (n, item["id"]))
         ids.add(item["id"])
@@ -414,12 +499,19 @@ MAX_IMAGE = 20 * 1024 * 1024
 
 def read_image(path, limit=MAX_IMAGE):
     """Read a picture or board and make sure the file read is the one that was checked: a link swapped in
-    between the check and the read would point outside the folder."""
-    fd = os.open(str(path), os.O_RDONLY | getattr(os, "O_BINARY", 0))
+    between the check and the read would point outside the folder. Non-blocking, and only a regular file: a FIFO
+    swapped in after the checks would otherwise block the open or the read for good."""
+    fd = os.open(str(path), os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0))
     try:
         st = os.fstat(fd)
-        same = os.stat(str(path.resolve()))
-        if path.resolve() != path or (st.st_dev, st.st_ino) != (same.st_dev, same.st_ino):
+        if not stat.S_ISREG(st.st_mode):
+            raise DecisionsError("%s: not a regular file" % path)
+        try:
+            real = path.resolve()
+        except RuntimeError:  # a link loop swapped in after the open, on Python before 3.13
+            real = None
+        same = os.stat(str(real)) if real == path else None
+        if same is None or (st.st_dev, st.st_ino) != (same.st_dev, same.st_ino):
             raise DecisionsError("%s: changed while Signoff was reading it" % path)
         with os.fdopen(fd, "rb") as f:
             fd = None
@@ -495,6 +587,10 @@ def answers_markdown(decisions, record):
         for k, mark in enumerate(ans.get("marks", []), 1):
             out.append("- Mark %d, picture %d at %s (x, y, w, h in %%): %s" % (
                 k, mark["image"] + 1, ", ".join("%g" % v for v in mark["box"]), text(mark["comment"])))
+        for att in item.get("attachments", []):  # its name only: the text is the agent's, and stays in its file
+            name = md_text(att["src"].replace("\n", " "))
+            caption = att.get("caption", "").replace("\n", " ")
+            out.append("- Attachment: " + ("%s (%s)" % (md_text(caption), name) if caption.strip() else name))
         out.append("")
     title = decisions["free_text"].get("title") or "Anything else"
     out += ["## " + md_text(title.replace("\n", " ")), "", md_text(record["free_text"]), "",
@@ -516,6 +612,11 @@ def _script_json(obj):
     text = json.dumps(obj, ensure_ascii=False, indent=1)
     return text.replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e") \
         .replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
+
+
+def _page_size(text):
+    """The bytes a text takes in the page's data, escaped."""
+    return len(_script_json(text).encode("utf-8"))
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -706,7 +807,7 @@ class Round:
                 self.saved = check_answers(stored, self.decisions, stored=True)
                 self.saved_at = stored["saved"]
                 self.meta = {k: stored[k] for k in ("accepted", "accepted_at", "changed_after_accept") if k in stored}
-            except (OSError, ValueError) as e:
+            except (OSError, ValueError, RecursionError) as e:
                 raise DecisionsError("%s: cannot resume from this answers file (%s); move it away to start fresh"
                                      % (self.answers_path, e))
             link = stored.get("decisions")
@@ -937,7 +1038,10 @@ class HistoryServer(_Server):
         base = root / folder
         real_base = base.resolve()
         for topic in (base.iterdir() if base.is_dir() else ()):
-            real = topic.resolve()
+            try:
+                real = topic.resolve()
+            except RuntimeError:  # a link loop, on Python before 3.13 (later ones fail is_dir below)
+                continue
             if topic.is_dir() and real_base in real.parents:  # a link out of the decisions folder is skipped
                 m = DATE_PATTERN.match(topic.name)
                 date = m.group(0) if m else datetime.date.fromtimestamp(topic.stat().st_mtime).isoformat()
@@ -964,6 +1068,7 @@ class HistoryServer(_Server):
             self.pictures.append(path)
             return "img/%d" % (len(self.pictures) - 1)
 
+        text_used, text_budget = 0, HISTORY_TEXT_BUDGET
         for e in entries:
             self.boards.append([])
             media = e.pop("media")
@@ -971,6 +1076,18 @@ class HistoryServer(_Server):
                 e["decisions"]["items"] = _media_view(e["decisions"]["items"], media,
                                                       lambda path: admit(path, "picture"),
                                                       lambda path: admit(path, "board"))
+                # Attachments go inside the page, every copy of them: their own budget, at their size there.
+                for item in e["decisions"]["items"]:
+                    for att in item.get("attachments", []):
+                        if "text" in att:
+                            size = _page_size(att["text"])
+                            if text_used + size > text_budget:
+                                del att["text"]
+                                att["missing"] = "over the attachment budget; narrow the list with --since"
+                                note = "Attachment %r not shown: %s." % (att["src"], att["missing"])
+                                e["warning"] = "%s %s" % (e["warning"], note) if e["warning"] else note
+                            else:
+                                text_used += size
         self.entries = entries
         self._listen()
 
@@ -988,7 +1105,8 @@ class HistoryServer(_Server):
             e.update(status="error", error=str(err).replace(str(path), path.name))  # no local paths on the page
             return e
         e.update(decisions=decisions, media=media, title=decisions["title"], tab=decisions.get("tab"))
-        warnings = []
+        warnings = ["Attachment %r not shown: %s." % (att["src"], att["missing"])
+                    for item in decisions["items"] for att in item.get("attachments", []) if "missing" in att]
         folder = path.parent.resolve()
 
         def local(err):  # error text without local paths
@@ -1010,13 +1128,13 @@ class HistoryServer(_Server):
                 link = stored.get("decisions")
                 if link and link != {"file": path.name, "sha256": sha}:
                     warnings.append("The decisions changed after these answers were saved; they may not match.")
-            except (OSError, ValueError) as err:
+            except (OSError, ValueError, RecursionError) as err:
                 warnings.append("The answers file cannot be read: %s" % local(err))
         outcome = path.with_name(path.stem + ".outcome.json")
         if outcome.exists() and inside(outcome):
             try:
                 e["outcome"] = load_outcome(outcome)
-            except (OSError, ValueError) as err:
+            except (OSError, ValueError, RecursionError) as err:
                 warnings.append("The outcome file cannot be read: %s" % local(err))
         e["warning"] = " ".join(warnings) or None
         return e

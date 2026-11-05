@@ -107,6 +107,12 @@ How to batch:
   `bad`, how this value compares with the others; leave it out when there is no better or worse. The page shows
   the facts as chips on each card, and a Cards / Table toggle shows them side by side. Keep each text short. For a single
   criterion, `detail` is enough.
+- `attachments` when the detail behind a choice is too long for `description`, such as a cut list or notes:
+  `"attachments": [{"src": "notes/cut-list.md", "caption": "Cut list"}]`. Each is a `.md` or `.txt` file
+  inside the folder, UTF-8, up to 256 KiB, at most 20 an item and 200 a round. A round's attachments together take up to
+  2 MiB in the page, where `<`, `>` and `&` count 6 bytes each. The page shows it under the
+  options in a box that starts closed, as plain text. The whole file goes on the page, and the past-decisions
+  view shows it again later, so attach nothing secret. `sensitive` does not hide it: it is your text.
 - All text is plain text. Line breaks are kept; HTML and Markdown are shown as typed.
 - The full format is in `${CLAUDE_PLUGIN_ROOT}/signoff/schema.json`.
 

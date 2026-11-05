@@ -372,6 +372,23 @@ class History(unittest.TestCase):
             signoff.make_history_server(self.root.path / "nope")
 
     @unittest.skipIf(os.name == "nt", "symlinks need extra rights on Windows")
+    def test_topic_link_loop_is_skipped(self):
+        (self.root.path / ".signoff" / "2026-03-05-loop").symlink_to("2026-03-05-loop")
+        self.assertIn("2026-01-05-settings/round-01.json", self.entries())
+
+    def test_deeply_nested_files(self):
+        topic = self.root.path / ".signoff" / "2026-03-06-deep"
+        write(topic / "round-01.json", sample_decisions())
+        for name in ("round-01.answers.json", "round-01.outcome.json", "round-02.json"):
+            write(topic / name, "[" * 100000)
+        e = self.entries()
+        self.assertEqual(e["2026-03-06-deep/round-02.json"]["status"], "error")
+        self.assertIn("not valid JSON", e["2026-03-06-deep/round-02.json"]["error"])
+        warning = e["2026-03-06-deep/round-01.json"]["warning"]
+        self.assertIn("answers file cannot be read", warning)
+        self.assertIn("outcome file cannot be read", warning)
+
+    @unittest.skipIf(os.name == "nt", "symlinks need extra rights on Windows")
     def test_topic_folder_linked_from_outside_is_skipped(self):
         outside = self.root.path / "elsewhere"
         (self.root.path / ".signoff" / "2026-03-01-linked").symlink_to(outside, target_is_directory=True)

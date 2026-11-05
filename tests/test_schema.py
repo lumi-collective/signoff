@@ -177,6 +177,33 @@ class DecisionsFile(unittest.TestCase):
     def test_id_with_trailing_newline(self):
         self.assertIn("id", self.broken(lambda d: d["items"][0].update(id="layout\n")))
 
+    def test_deeply_nested_json(self):
+        self.folder.decisions.write_text("[" * 100000, encoding="utf-8")
+        with self.assertRaises(signoff.DecisionsError) as ctx:
+            signoff.load_decisions(self.folder.decisions)
+        self.assertIn("not valid JSON", str(ctx.exception))
+
+    def test_deeply_nested_answers_stop_the_run_with_a_message(self):
+        self.folder.answers.write_text("[" * 100000, encoding="utf-8")
+        with self.assertRaises(signoff.DecisionsError) as ctx:
+            signoff.make_server(self.folder.decisions)
+        self.assertIn("cannot resume", str(ctx.exception))
+
+    def test_gate_reads_windows_paths_as_text(self):
+        # On every OS: a drive with its root (an absolute Windows path) passes to the folder check; a
+        # drive-relative or network path never gets that far.
+        def refused(src):
+            try:
+                signoff._inside(self.folder.path, src, "x")
+            except signoff.DecisionsError as e:
+                return "drive or network" in str(e)
+            return False
+        self.assertFalse(refused("C:\\proj\\x.png"))
+        self.assertFalse(refused("C:/proj/x.png"))
+        for src in ("C:foo.png", "\\\\host", "\\\\host\\share\\x.png", "//host/share/x.png", "\\\\?\\C:\\x.png",
+                    "\\\\.\\pipe\\x.png"):
+            self.assertTrue(refused(src), src)
+
     def test_lone_surrogate(self):
         self.folder.decisions.write_text(self.folder.decisions.read_text(encoding="utf-8").replace(
             '"Pick the settings layout"', '"\\ud800 x"'), encoding="utf-8")
@@ -237,6 +264,32 @@ class DecisionsFile(unittest.TestCase):
         (self.folder.path / "mockups" / "link.png").symlink_to(ROOT / "plugin" / "signoff" / "page.html")
         msg = self.broken(lambda d: d["items"][0]["images"][0].update(src="mockups/link.png"))
         self.assertIn("outside", msg)
+
+    def test_image_control_character(self):
+        for src in ("mockups/a\x00.png", "mockups/a\x1b.png"):
+            self.assertIn("control character", self.broken(lambda d: d["items"][0]["images"][0].update(src=src)))
+
+    def test_network_and_drive_paths(self):
+        # Refused as text, on every OS, before anything touches the disk: on Windows each of these would
+        # reach out over the network (and send the user's NTLM hash) or to another drive.
+        for src in ("\\\\host\\share\\a.png", "//host/share/a.png", "\\\\host@SSL@443\\a.png", "C:a.png",
+                    "\\\\?\\C:\\a.png", "\\\\.\\pipe\\a.png", "\\\\host", "//host"):
+            self.assertIn("relative", self.broken(lambda d: d["items"][0]["images"][0].update(src=src)), src)
+            board = src.replace(".png", ".html")
+            self.assertIn("relative", self.broken(lambda d: d["items"][0]["images"].append({"html": board})), board)
+
+    def test_absolute_image_inside_folder_loads_as_before(self):
+        # Rounds written for 0.1.0 may name a picture by its absolute path; they must still load.
+        data = sample_decisions()
+        data["items"][0]["images"][0]["src"] = str(self.folder.path / "mockups" / "a.png")
+        self.folder.write(data)
+        _, images = signoff.load_decisions(self.folder.decisions)
+        self.assertEqual(images, [self.folder.path / "mockups" / "a.png"])
+
+    @unittest.skipIf(os.name == "nt", "symlinks need extra rights on Windows")
+    def test_image_link_loop(self):
+        (self.folder.path / "mockups" / "loop.png").symlink_to("loop.png")
+        self.broken(lambda d: d["items"][0]["images"][0].update(src="mockups/loop.png"))
 
     def test_svg_rejected(self):
         (self.folder.path / "mockups" / "a.svg").write_text("<svg/>", encoding="utf-8")
@@ -546,6 +599,14 @@ class SchemaFile(unittest.TestCase):
         self.assertEqual(set(self.defs["option"]["required"]), {"id", "label"})
         self.assertEqual(set(self.schema["properties"]["free_text"]["properties"]), set(signoff.FREE_TEXT_KEYS))
 
+    def test_attachment(self):
+        att = self.defs["attachment"]
+        self.assertEqual(set(att["properties"]), set(signoff.ATTACHMENT_KEYS))
+        self.assertEqual(att["required"], ["src"])
+        self.assertFalse(att["additionalProperties"])
+        self.assertEqual(self.defs["item"]["properties"]["attachments"]["items"], {"$ref": "#/$defs/attachment"})
+        self.assertEqual(self.defs["item"]["properties"]["attachments"]["maxItems"], signoff.MAX_ITEM_ATTACHMENTS)
+
     def test_criteria_and_facts(self):
         criterion, fact = self.defs["criterion"], self.defs["fact"]
         self.assertEqual(set(criterion["properties"]), set(signoff.CRITERION_KEYS))
@@ -566,6 +627,11 @@ class SchemaFile(unittest.TestCase):
         table = [it for it in decisions["items"] if it.get("criteria")]
         self.assertEqual(len(table), 1)
         self.assertTrue(all(o.get("facts") for o in table[0]["options"]))
+        # One item has a text attachment, with markup that must stay text on the page.
+        attached = [a for it in decisions["items"] for a in it.get("attachments", [])]
+        self.assertEqual(len(attached), 1)
+        self.assertIn("<b>", attached[0]["text"])
+        self.assertTrue(attached[0]["text"].startswith("# "))
 
     def test_history_demo(self):
         server = signoff.make_history_server(ROOT / "examples" / "history")
@@ -585,6 +651,7 @@ class SchemaFile(unittest.TestCase):
             self.assertTrue(any(it["other"] for it in items) and any(it["skippable"] for it in items))
             self.assertTrue(any(len(it.get("images", [])) == len(it["options"]) > 1 for it in items))
             self.assertTrue(any(it.get("criteria") for it in items))
+            self.assertTrue(any(it.get("attachments") for it in items))
         finally:
             server.server_close()
 
