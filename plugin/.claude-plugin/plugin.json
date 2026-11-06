@@ -1,7 +1,7 @@
 {
   "name": "signoff",
   "displayName": "Signoff",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A local decision page for coding agents: the agent lists its open decisions with mockups, highlight boxes, costs and a preselected recommendation; you answer in the browser and press Done. Local only: it listens on 127.0.0.1 and sends nothing out.",
   "author": { "name": "trustmeimlumi", "url": "https://github.com/trustmeimlumi" },
   "homepage": "https://github.com/lumi-collective/signoff",

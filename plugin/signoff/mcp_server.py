@@ -24,7 +24,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 SIGNOFF = HERE / "signoff.py"
 PROTOCOL = "2025-06-18"
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 
 TOOLS = [
     {"name": "signoff_open",

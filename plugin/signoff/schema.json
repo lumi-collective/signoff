@@ -52,7 +52,7 @@
         "marks": { "type": "boolean", "default": false, "description": "Let the user draw rectangles on this item's pictures, each with a comment. They are recorded in the answer's \"marks\"." },
         "sensitive": { "type": "boolean", "default": false, "description": "The answer may hold personal data: the item starts marked Private. It only acts on an item with a text field (comment, other or marks). The user can untick it, or tick it on any item. A private answer is recorded with \"private\": true; its text stays in the answers file, and the Markdown copy hides its comment, Other text and mark comments." },
         "criteria": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/criterion" }, "description": "What the options are compared on, in row order. With it, each option's facts show as chips on its card, and a Cards / Table toggle shows the options side by side, a row per criterion. The choice is the same in both views; the view is not saved." },
-        "attachments": { "type": "array", "maxItems": 20, "items": { "$ref": "#/$defs/attachment" }, "description": "Text files read when Signoff starts and shown under the options, each in a collapsed box as plain text: nothing in them is rendered. The Markdown copy names them only. Not changed by sensitive: the text is yours, not the user's." }
+        "attachments": { "type": "array", "maxItems": 20, "items": { "$ref": "#/$defs/attachment" }, "description": "Text files read when Signoff starts and shown under the options, each in a collapsed box as plain text: nothing in them is rendered. At most 20 an item and 200 a round. The Markdown copy names them only. Not changed by sensitive: the text is yours, not the user's." }
       }
     },
     "attachment": {

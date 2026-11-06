@@ -123,7 +123,8 @@ def _inside(folder, src, where):
     """Resolve a file named in the decisions inside their folder. The text is checked first, on every OS: on
     Windows a UNC path (\\\\host\\share) would open a network connection and send the user's NTLM hash, and a
     drive-relative one (C:foo) reaches another folder. An absolute local path passes, as in 0.1.0, and must then
-    lead inside the folder. The message never repeats a refused path."""
+    lead inside the folder. The control-character and drive or network messages leave the path out; the resolve and
+    folder errors show it as written."""
     if CONTROL_CHARS.search(src):
         raise DecisionsError("%s: the path holds a control character" % where)
     # A drive without a root is drive-relative (C:foo); C:\x is an absolute path, left to the folder check. Two

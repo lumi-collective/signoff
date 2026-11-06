@@ -196,7 +196,7 @@ class Marks(unittest.TestCase):
 
 def write(path, data):
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(data if isinstance(data, str) else json.dumps(data), encoding="utf-8")
+    path.write_bytes((data if isinstance(data, str) else json.dumps(data)).encode("utf-8"))  # no \r\n on Windows
 
 
 class HistoryRoot:

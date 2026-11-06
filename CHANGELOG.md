@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.2.0
+
+- **Summary:** each row quotes its comment, cut to three lines, with a **Full text** button. A filter shows **All**, **With comment** or **Not the recommendation**, each with its count. With one round open, the same list sits above a second **Done** at the end of the round; Done stays one click.
+- **Private:** an item's optional `sensitive: true` starts it marked Private, and the user can tick or untick Private on any item with a comment, Other or marks. The answers file records `private: true` and keeps the text for the agent. The Markdown copy writes `(private)` in place of the comment, Other text and mark comments; the Summary shows "Private comment, hidden here." with a badge; the past-decisions search skips that text. The skill and the MCP server's `signoff_status` description tell the agent not to repeat it in a commit, its memory, a cloud service or a decision log. It is a request to the agent, not encryption.
+- **Table view:** optional `criteria` on an item and `facts` on its options (`text`, and an optional `tone`, `good`, `mid` or `bad`, shown as ▲, ● or ▼ with a word for screen readers). Facts show as chips on the cards; a **Cards / Table** toggle lays the options side by side, a row per criterion, with one choice for both views. The view is not saved. On a phone the table scrolls sideways in its own box.
+- **Attachments:** an item's optional `attachments` lists `.md` or `.txt` files inside the round's folder, by relative path, with an optional `caption`. They are read at start and shown as plain text in a box that starts closed; no route serves them. Up to 256 KiB each, 20 an item, 200 a round, and 2 MiB a round in the page, counted as sent (`<`, `>` and `&` take 6 bytes each); the past-decisions page holds up to 16 MiB of them. The Markdown copy names them only.
+- **Paths:** the path of a picture, board or attachment is checked as text before it is resolved, on every OS. A control character, a leading `//` or `\\` (UNC, `\\?\`, `\\.\pipe`) or a drive without a root (`C:foo`) is refused. An absolute path inside the folder still works for pictures and boards. A path that cannot be resolved, such as a link loop, is an error that names the item.
+- Pictures, boards and attachments are opened without blocking where the OS allows it, and must be regular files, so a FIFO cannot hang the start.
+- The past-decisions page keeps going past a looping topic link and deeply nested JSON in a decisions, answers or outcome file; it lists that file with its error or warning.
+- **Project name:** the header and the browser tab's title start with the project's folder name: the nearest folder with a `.git`, or the parent of a `.signoff` folder; never the home folder, never a path. The past-decisions page shows its root folder's name there.
+- The past-decisions search also covers the answers: chosen options, comments, Other text, mark comments and the free text, never the text of a Private answer.
+- The Markdown copy uses the round's `lang` for its labels (`en`, `hu`; any other language gets English) and leaves out an empty comment.
+- The skill: when to open `--history`; a fact the user puts in a comment is recorded like one told in chat, never from a Private answer; a name or e-mail address goes into a log or commit only with the user's yes; decision log entries as decision · context · consequence; task lines start with the topic folder, the round and the item id.
+- README: a Troubleshooting section. `plugin.json` says Signoff is local only. The repository moved to `github.com/lumi-collective/signoff`; `schema.json`'s `$id` follows.
+- **Older installs:** decisions and answers files from 0.1.0 load in 0.2.0 as before. A 0.1.0 install refuses a round that uses `sensitive`, `criteria`, `facts` or `attachments` ("unknown key"), and an answers file with `private: true`, which 0.2.0 writes for any item the user marks Private ("cannot resume from this answers file"). Update the plugin (`claude plugin update signoff@signoff`, then `/reload-plugins`); do not move the answers file away.
+
 ## 0.1.0
 
 First release.

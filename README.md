@@ -130,7 +130,8 @@ Ask the agent "what did we decide before?" and it opens the same page. See [Past
 
 - **The project's name** starts the header and the browser tab's title, so with several projects open you can
   tell which one is asking. It is the name of the nearest folder with a `.git`, or the parent of a `.signoff`
-  folder, never the home folder and never a path. A decisions folder with neither shows no name.
+  folder, never the home folder and never a path. A decisions folder with neither shows no name. The
+  past-decisions page shows the name of its root folder instead.
 - **Rounds are tabs.** A round answered with Done in an earlier run is read only and ticked. A round that
   depends on earlier answers comes as a new run on the same folder, so the earlier ones stay in view.
 - **Pictures, boxes, costs.** Each item shows its pictures on the left, with the relevant part boxed in orange
@@ -336,7 +337,7 @@ Beside each round, `round-NN.answers.json`, from the first change on the page:
 - `marks`: your rectangles, `image` being the picture's position in the item's `images` (from 0) and `box` in
   percent like `boxes`.
 - `private`: `true` when you marked the item Private. Its comment, Other text and mark comments stay in this
-  file; the Markdown copy shows `(private)` in their place.
+  file; the Markdown copy shows `(private)` in their place (`(privát)` in a Hungarian round).
 - `accepted`, `accepted_at`: you accepted this round, and when; Done counts as accepting a single round.
   `changed_after_accept` is `true` while the round was changed after an earlier acceptance and not accepted
   again. The agent sees nothing of this until Done.
@@ -513,8 +514,8 @@ The session loads your copy. `AGENTS.md` lists the rules the code keeps. A promp
 - Attachments: up to 256 KiB each, 20 an item and 200 a round. A round's attachments together take up to 2 MiB of the page
   and the past-decisions page holds up to 16 MiB of them, both counted as sent, where `<`, `>` and `&` take
   6 bytes each; past that an attachment is not shown.
-- A drive or network path in a decisions file (`C:`, `\\host`, `//host`) is refused, on every OS. Attachments
-  take only relative paths; a picture or board may still use an absolute path inside the folder.
+- A drive-relative or network path in a decisions file (`C:foo`, `\\host`, `//host`) is refused, on every OS.
+  Attachments take only relative paths; a picture or board may still use an absolute path inside the folder.
 - Pictures, boards and attachments are read at start; changing a round's files while the page is open needs a restart.
 - The answers say what was chosen, not what you looked at: after a timeout, an untouched item shows the
   recommendation.
@@ -537,10 +538,11 @@ the MCP server as real processes. CI runs them on Linux, macOS and Windows with 
 validates the plugin on the pinned Claude Code.
 
 `tests/e2e_browser.py` is a separate check that needs Chrome (set `CHROME` to its path if it is not found); the
-unit-test discovery does not pick it up. It starts Signoff on two rounds of `examples/demo`, opens the start link in
-headless Chrome over the DevTools protocol, picks a non-recommended option, accepts both rounds with real mouse
-clicks and presses Done. Then it checks that Signoff exited 0, that stdout lists exactly the two answers paths, and
-that each answers file says `done: true` and `accepted: true` and holds the pick. CI runs it on Linux and Windows.
+unit-test discovery does not pick it up. It opens the start link in headless Chrome over the DevTools protocol, drives
+the page with real mouse clicks, and checks the exit code, stdout and the answers files. Six cases: one round (the
+comment quoted above Done, the filter, Private, one-click Done); the project name in the header and the tab title;
+the `--history` search; the table view; an attachment; and two rounds (a non-recommended pick, both accepted, the
+Summary's filter, Done, exit 0, exactly the two answers paths on stdout). CI runs it on Linux and Windows.
 That proves the server and the page together in headless Chrome on those systems. It does not prove a real Claude
 Code session, and it does not run on macOS in CI.
 
