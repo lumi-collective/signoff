@@ -1551,14 +1551,15 @@ class _Server(http.server.ThreadingHTTPServer):
 def project_root(path):
     """The root of the project a decisions file or folder belongs to, or None. The server knows no project root, so
     it looks up from the decisions folder: the nearest folder that has a .git (a folder or a file) or holds a .signoff
-    folder. The home folder is never one (a dotfiles repo there would show the login name). A decisions folder with
-    neither marker has no project."""
+    folder (not a link: decisions under a link resolve to its target, so they would not map here). The home folder is
+    never one (a dotfiles repo there would show the login name). A decisions folder with neither marker has no
+    project."""
     path = Path(path).resolve()
     home = Path.home().resolve()
     for up in [path] + list(path.parents):
-        root = up if (up / ".git").exists() else up.parent if up.name == DEFAULT_FOLDER else None
-        if root is not None and root != home and root.name:
-            return root
+        marker = up / DEFAULT_FOLDER
+        if ((up / ".git").exists() or marker.is_dir() and not marker.is_symlink()) and up != home and up.name:
+            return up
     return None
 
 

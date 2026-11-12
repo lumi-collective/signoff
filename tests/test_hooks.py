@@ -201,6 +201,13 @@ class Hook(HookBase):
         self.run_hook(dict(self.event("SessionStart", source="startup"), cwd=str(lone)))
         self.assertEqual(self.written(), [])
 
+    def test_a_project_without_git_that_holds_a_signoff_folder_is_noted(self):
+        plain = self.home.parent / "plain"
+        (plain / ".signoff").mkdir(parents=True)
+        self.run_hook(dict(self.event("SessionStart", source="startup"), cwd=str(plain)))
+        pid = hashlib.sha256(str(plain).encode("utf-8")).hexdigest()[:16]
+        self.assertEqual(self.session()["project"], pid)
+
     def test_a_failed_write_is_said_on_stderr_and_exits_0(self):
         (self.home / "sessions").write_bytes(b"")  # a file where the folder should be
         p = self.run_hook(self.event("Stop"))

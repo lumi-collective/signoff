@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **A project without git:** a folder that holds a `.signoff` folder is now a project root, as a folder with `.git` is, the nearer one winning. A session started in such a project's own folder was not noted, so the inbox showed no session row, band or todo for it, and a decisions folder outside its `.signoff` got no project name on the page. In a git repo with a `sub/.signoff/` folder, a session started in `sub` now belongs to `sub`, as the decisions under `sub/.signoff/` already did, not to the repo, and so does a decisions folder elsewhere under `sub`: its band counts `sub`'s rows, the inbox reads `sub`'s todo file, and messages on the repo's todo items no longer reach it. Likewise a `.signoff` folder in a parent folder without git (not the home folder) now takes in every folder below it that has no nearer `.git` or `.signoff`. A `.signoff` that is a file or a link marks nothing.
+
 ## 0.4.0
 
 - **The band:** in a Claude Code that runs plugin mods (its tests run in Claude Code's plugin test kit on 2.1.309 in CI and on 2.1.322), the plugin's mod shows `Signoff: N waiting` above the prompt while the inbox runs. N is the number of rows of Waiting on you that belong to the session's project. The band has **Open** and **Hide** (hidden until the number changes), and a notice comes once a session when the number rises from none. The mod reads the inbox's `state.json` every five seconds and starts no process for that. The new `hint` setting (`band`, `status`, `off`) moves the number to the status line or turns the mod off. It does not run on Windows, where the inbox does not run yet. An older Claude Code runs the hooks as before and skips the mod.

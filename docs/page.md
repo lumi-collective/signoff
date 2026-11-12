@@ -7,7 +7,7 @@
 
 - **The project's name** and its two-letter monogram (the same as in the inbox) start the header, and the name
   starts the browser tab's title, so with several projects open you can tell which one is asking. It is the name
-  of the nearest folder with a `.git`, or the parent of a `.signoff` folder, never the home folder and never a
+  of the nearest folder with a `.git` or a `.signoff` folder (not a link) in it, never the home folder and never a
   path. A decisions folder with neither shows no name. The past-decisions page shows the name of its root folder
   instead.
 - **Rounds are in the sidebar**, each with its state in a word: open, accepted, changed, done. A round answered

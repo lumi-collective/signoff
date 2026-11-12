@@ -463,8 +463,8 @@ class History(unittest.TestCase):
 
 
 class ProjectName(unittest.TestCase):
-    """The page shows the project folder's name, never a path: the git root above the decisions folder, else the
-    folder above a .signoff folder, else nothing."""
+    """The page shows the project folder's name, never a path: the nearest folder at or above the decisions folder
+    with a .git or a .signoff folder in it, else nothing."""
 
     def setUp(self):
         import tempfile
@@ -515,6 +515,48 @@ class ProjectName(unittest.TestCase):
 
     def test_nothing_to_go_on_is_none(self):
         self.assertIsNone(signoff.project_name(self.topic("loose", "a", "b")))
+
+    def test_a_folder_holding_a_signoff_folder_is_the_root(self):
+        self.topic("plain", ".signoff", "topic")
+        self.topic("plain", "sub")
+        proj = self.base / "plain"
+        for path in (proj, proj / "sub", proj / ".signoff" / "topic"):
+            self.assertEqual(signoff.project_root(path), proj, path)
+
+    def test_a_signoff_file_marks_no_root(self):
+        self.topic("filed", "sub")
+        (self.base / "filed" / ".signoff").write_text("", encoding="utf-8")
+        self.assertIsNone(signoff.project_root(self.base / "filed" / "sub"))
+
+    @unittest.skipIf(os.name == "nt", "symlinks need extra rights on Windows")
+    def test_a_linked_signoff_folder_marks_no_root(self):
+        # A run's decisions under the link resolve to the target, outside this folder, so a session here would get
+        # a project its runs never do.
+        self.topic("shared", "topic")
+        self.topic("linked")
+        (self.base / "linked" / ".signoff").symlink_to(self.base / "shared")
+        self.assertIsNone(signoff.project_root(self.base / "linked"))
+        self.assertIsNone(signoff.project_root(self.base / "linked" / ".signoff" / "topic"))
+
+    def test_a_signoff_folder_at_home_makes_home_no_root(self):
+        self.topic(".signoff", "t")
+        self.topic("sub")
+        self.topic("projects", "foo", ".signoff")
+        with mock.patch.object(signoff.Path, "home", return_value=self.base):
+            self.assertIsNone(signoff.project_root(self.base))
+            self.assertIsNone(signoff.project_root(self.base / "sub"))
+            self.assertEqual(signoff.project_root(self.base / "projects" / "foo"), self.base / "projects" / "foo")
+
+    def test_a_nested_signoff_folder_in_a_git_repo_is_its_own_root(self):
+        self.topic("repo", ".git")
+        self.topic("repo", "sub", ".signoff", "t")
+        self.topic("repo", "sub", "x")
+        self.topic("repo", "other")
+        repo = self.base / "repo"
+        for path in (repo / "sub", repo / "sub" / "x", repo / "sub" / ".signoff" / "t"):
+            self.assertEqual(signoff.project_root(path), repo / "sub", path)
+        for path in (repo, repo / "other"):
+            self.assertEqual(signoff.project_root(path), repo, path)
 
     def test_the_page_gets_the_name_and_no_path(self):
         self.topic("shop", ".git")
