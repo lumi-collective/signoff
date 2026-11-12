@@ -93,7 +93,8 @@ Signoff inbox: the user sent you a message on the todo item "Ship the release": 
 ```
 
 A session open in the project gets it within seconds from the plugin's monitor (`plugin/monitors/`), which wakes
-an idle session too; with several sessions open there, each one gets it. Monitors do not run with `claude -p`. With no session of the project open, the next session
+an idle session too (in a session that started while no inbox ran, the monitor looks every 30 seconds whether one
+runs, so the first message can take that long); with several sessions open there, each one gets it. Monitors do not run with `claude -p`. With no session of the project open, the next session
 that starts there gets the messages not yet handled, at most ten, when it starts; since they come from a hook, the
 agent is asked to tell you about them first and act once you say so. `signoff inbox done <id>`
 writes an empty `<id>.done` beside the request; a request without one comes back at a later session start. The

@@ -22,11 +22,12 @@ Instructions for coding agents working on Signoff. The README says what it does 
   the rest as a block comment (the monitor then sleeps); `test_hooks.py` checks the commands token by token (no
   PowerShell runs in CI). On Windows `hook.sh` exits before Python (the monitor sleeps): the inbox does not run
   there. On macOS and Linux, without `SIGNOFF_INBOX_HOME`, `hook.sh` exits before Python when the default home
-  has no `inbox.lock`; it mirrors only those defaults of `inbox_home()`, and a test keeps the two in step.
+  has no live inbox (see the hooks rule), SessionStart only when it has no `inbox.lock`; it mirrors only those
+  defaults of `inbox_home()`, and a test keeps the two in step.
   PostToolUse and PostToolUseFailure run `hook.sh clear`: there it also exits before Python when that home's
-  `waiting.flag` is empty or absent. SessionStart has two groups: `startup` runs `hook.sh start` (on macOS with
+  `waiting.flag` is empty or absent, tested first. SessionStart has two groups: `startup` runs `hook.sh start` (on macOS with
   `/Applications/Signoff.app` or `~/Applications/Signoff.app` there, it first keeps the home's `launcher` link, see
-  the hooks rule, in `sh`); `resume|clear|compact` runs `hook.sh` as the other events do.
+  the hooks rule, in `sh`); `resume|clear|compact` runs `hook.sh session`.
 - `plugin/hooks/register.tsx`: the plugin's mod, the hooks module `hooks.json` names under `modules` (Claude Code's
   docs give 2.1.286 as the first to run mods; its test runs on 2.1.309 in CI and 2.1.322; 2.1.200 skips the key
   and runs the hooks, checked). The band (`Signoff: N waiting`, Open, Hide),
@@ -369,7 +370,8 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   everyone who installs the plugin (the status line shows it), and Claude Code turns both its lines and its ending
   into model turns, so `inbox monitor` never ends while its session lives and prints only request lines. While
   `inbox_on()` is false it sleeps (in `hook.sh`, without Python, for the default homes and on Windows), prints nothing, writes
-  nothing. With the inbox on, it reads `requests/<project>/` of its folder's project every `REQUEST_EVERY` seconds
+  nothing. For the default homes `hook.sh` also sleeps while the inbox is not live (the hooks' rule), looking every
+  30 seconds, and then execs Python, which stays for the session even after the inbox stops. With the inbox on, it reads `requests/<project>/` of its folder's project every `REQUEST_EVERY` seconds
   and prints one line for each request written since `SINCE_MARGIN` seconds before its session started
   (`SIGNOFF_SINCE` from `hook.sh`; a request near the start may also come in the hand-over: twice beats never; the
   margin is a guess, the gap between the hook and the monitor's start is not measured), not
@@ -535,6 +537,16 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   writes the byte back if one began meanwhile, so it is never empty under a wait (a hook killed between the two
   writes aside). A stale byte costs a Python start at a tool call, nothing more. With the inbox on and the flag
   empty, `hook.sh clear` costs a session about what `hook.sh` costs with the inbox off (an `sh` start and a stat).
+  The live gate: for the default homes, `hook.sh` runs `inbox hook` at SessionStart (every source; `hook.sh start`
+  or `hook.sh session`) while `inbox.lock` is there, and at the other events only while the inbox is live:
+  `inbox.lock` touched within a minute (`find -mmin -1`; the inbox touches it every `STATE_EVERY` seconds, an inbox
+  from 0.3.0 never; a `find` that fails leaves the lock alone to decide), tested after `waiting.flag` for `clear`.
+  Known limit: while the inbox is not live, those events write nothing, so a session file may be stale when an
+  inbox starts (a wait that began or ended meanwhile, and `waiting.flag` with it) until the session's next event;
+  a session that ended meanwhile is never marked `ended`, so only its pid tells, and a reused pid keeps it a live
+  session (a counted wait, if it waited, and no hand-over to new sessions) until its file is `SESSIONS_MAX_AGE`
+  old. `inbox hook` itself has no such gate: with `SIGNOFF_INBOX_HOME`, a relative `HOME` or no `uname`, Python
+  has started already.
   The hand-over: at SessionStart (not a compaction), with the inbox on and no other live session of the project (a
   `sessions/` file no older than `SESSIONS_MAX_AGE`, not `ended`, its `pid` alive and not this Claude Code's), the
   hook prints the project's pending requests (no `<id>.done`), oldest first: one head line (`HANDOVER_HEAD`: tell

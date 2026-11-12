@@ -6,13 +6,13 @@
 # session a turn (verified 2026-11-07, CLI 2.1.319). hooks.json and monitors.json exec this script, so $PPID is
 # Claude Code.
 
-# The monitor's way to do nothing: sleep until the file in $1 is there (no $1: until the session ends). It looks for
-# Claude Code by $PPID, which Git Bash does not have: there it sleeps on.
+# The monitor's way to do nothing: sleep until the command in $1 succeeds (no $1: until the session ends). It looks
+# for Claude Code by $PPID, which Git Bash does not have: there it sleeps on.
 wait_for() {
   while :; do
     sleep 30
     [ "$OS" = Windows_NT ] || kill -0 "$PPID" 2>/dev/null || exit 0
-    [ -n "$1" ] && [ -e "$1" ] && return 0
+    [ -n "$1" ] && "$1" && return 0
   done
 }
 monitor=
@@ -63,9 +63,18 @@ if [ "$1" = start ] && { [ -d /Applications/Signoff.app ] || [ -d "$HOME/Applica
   link_launcher
 fi
 
-# Most sessions have no inbox: stop before starting Python (about 50 ms, and on a Mac without the Command Line Tools
-# /usr/bin/python3 would offer to install them). This mirrors only inbox_home()'s macOS and Linux defaults, which
-# stays the one resolver: SIGNOFF_INBOX_HOME, a relative HOME or no uname go on to Python.
+# Whether the inbox lives: it touches inbox.lock at each look (STATE_EVERY, 2 s), and a stopped or killed one leaves
+# it old. -mmin -1 is within 60 s for BSD, GNU and busybox find. A find that fails (none on PATH, no -mmin) leaves the
+# lock alone to decide, as before.
+live() {
+  [ -e "$home/inbox.lock" ] || return 1
+  t=$(find "$home/inbox.lock" -prune -mmin -1 2>/dev/null) || return 0
+  [ -n "$t" ]
+}
+
+# Most sessions have no live inbox: stop before starting Python (about 50 ms, and on a Mac without the Command Line
+# Tools /usr/bin/python3 would offer to install them). This mirrors only inbox_home()'s macOS and Linux defaults,
+# which stays the one resolver: SIGNOFF_INBOX_HOME, a relative HOME or no uname go on to Python.
 if [ -z "$SIGNOFF_INBOX_HOME" ]; then
   case "$HOME" in /*)
     home=
@@ -77,13 +86,17 @@ if [ -z "$SIGNOFF_INBOX_HOME" ]; then
            *) home="$HOME/.local/state/signoff" ;;
          esac ;;
     esac
-    if [ -n "$home" ] && [ ! -e "$home/inbox.lock" ]; then
-      [ -n "$monitor" ] || exit 0
-      wait_for "$home/inbox.lock"
-    fi
-    # The hooks keep waiting.flag non-empty while a session may wait: with it empty or absent, there is no wait to end.
-    if [ -n "$home" ] && [ "$1" = clear ] && [ ! -s "$home/waiting.flag" ]; then
-      exit 0
+    if [ -n "$home" ]; then
+      case "$1" in
+        # SessionStart runs Python while the lock is there, live or not: the hand-over, and the session file an
+        # inbox started later shows.
+        start|session) [ -e "$home/inbox.lock" ] || exit 0 ;;
+        # The hooks keep waiting.flag non-empty while a session may wait: with it empty or absent, there is no wait
+        # to end. Tested first, so a tool call starts no process.
+        clear) [ -s "$home/waiting.flag" ] && live || exit 0 ;;
+        monitor) live || wait_for live ;;
+        *) live || exit 0 ;;
+      esac
     fi ;;
   esac
 fi

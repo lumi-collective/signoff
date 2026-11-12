@@ -43,16 +43,17 @@ a Mac with the Signoff app installed, a new session's start also keeps one link 
 to the plugin's signoff command, so the app finds the plugin; still no Python, and no link when the plugin runs
 from a git checkout. On
 Windows, where the inbox does not run yet, it stops at once. Once the inbox has run, it
-starts that program for a moment each time, except after a tool call: then only while some session may be
-waiting on you. It never changes or blocks the session, and without Python it does
+starts that program for a moment when a session starts, and at the other times only while the inbox runs (its
+lock file touched within the last minute); after a tool call, only while some session may also be waiting on
+you. It never changes or blocks the session, and without Python it does
 nothing. On Windows it runs in Git Bash; without Git Bash, Claude Code runs it in PowerShell, where it does
 nothing (Claude Code then says once per session that a hook ran in PowerShell; you can ignore it). One
 exception: when a session starts and no other session of that project is open, the hook hands the new session the messages you sent the project from the inbox that are not handled yet.
 
 The plugin also has a monitor: in every interactive Claude Code session, Claude Code keeps one small background
-process running, shown as one monitor in the status line. Until the inbox has run, it is a shell loop that only
-sleeps and checks for the inbox's lock file twice a minute; on Windows a loop that only sleeps. Once
-the inbox has run, it is the Python program, which looks every two seconds for new messages you sent this
+process running, shown as one monitor in the status line. Until the inbox runs, it is a shell loop that only
+sleeps and checks the inbox's lock file twice a minute; on Windows a loop that only sleeps. Once
+the inbox runs, it is the Python program for the rest of the session, which looks every two seconds for new messages you sent this
 project from the inbox and prints each one for the agent. Claude Code ends it with the session (checked on macOS).
 
 The plugin also has a mod, where Claude Code runs plugin mods. It is code that runs inside Claude Code in

@@ -4,7 +4,7 @@
   "hooks": {
     "SessionStart": [
       { "matcher": "startup", "hooks": [{ "type": "command", "command": "echo `# >$null <#` >/dev/null; f=\"${CLAUDE_PLUGIN_ROOT}\"/hooks/hook.sh; [ -r \"$f\" ] || exit 0; exec sh \"$f\" start #>", "timeout": 5 }] },
-      { "matcher": "resume|clear|compact", "hooks": [{ "type": "command", "command": "echo `# >$null <#` >/dev/null; f=\"${CLAUDE_PLUGIN_ROOT}\"/hooks/hook.sh; [ -r \"$f\" ] || exit 0; exec sh \"$f\" #>", "timeout": 5 }] }
+      { "matcher": "resume|clear|compact", "hooks": [{ "type": "command", "command": "echo `# >$null <#` >/dev/null; f=\"${CLAUDE_PLUGIN_ROOT}\"/hooks/hook.sh; [ -r \"$f\" ] || exit 0; exec sh \"$f\" session #>", "timeout": 5 }] }
     ],
     "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "echo `# >$null <#` >/dev/null; f=\"${CLAUDE_PLUGIN_ROOT}\"/hooks/hook.sh; [ -r \"$f\" ] || exit 0; exec sh \"$f\" #>", "timeout": 5 }] }],
     "Notification": [{ "matcher": "permission_prompt", "hooks": [{ "type": "command", "command": "echo `# >$null <#` >/dev/null; f=\"${CLAUDE_PLUGIN_ROOT}\"/hooks/hook.sh; [ -r \"$f\" ] || exit 0; exec sh \"$f\" #>", "timeout": 5 }] }],

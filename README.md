@@ -169,7 +169,8 @@ the app can find it. Other ways to build it, and the details: [docs/inbox.md](do
 ## What runs, and what leaves your machine
 
 - **Runs:** one Python process for as long as the page is open, and your browser. The plugin's hooks and its
-  monitor run in every Claude Code session; until the inbox has run, they only look for `inbox.lock` (on macOS
+  monitor run in every Claude Code session; until the inbox has run, they only look for `inbox.lock`, and while
+  no inbox runs, only a session's start does more than look at that file's time (on macOS
   with the Signoff app installed, a new session's start also keeps a link to the plugin's command for the app). The hooks
   always exit 0 and print nothing, so they never block or change a session; the one exception is the hand-over of
   messages from the inbox at a session's start. In an interactive session of a Claude Code that runs plugin mods,

@@ -44,7 +44,12 @@ Claude Code process id (none on Windows), the state (`idle`, `working` or `ended
 for a background session (`claude --bg`), and, while the session waits on you for a permission or an answer to
 its question, `waiting: "permission"` and since when. The wait ends at your next prompt, when the tool has run
 (so a long command you allowed still shows as waiting until it finishes), or when the turn or the session ends. `waiting.flag` in the home holds a byte while some session may wait and is
-empty otherwise, so the hook at each tool call can stop before Python. A session outside a
+empty otherwise, so the hook at each tool call can stop before Python. While no inbox runs (it touches
+`inbox.lock` every two seconds; a lock a minute old or more counts as stopped), only a session's start, resume,
+clear or compaction notes it: the other hooks stop before Python, and the monitor of a session that has not seen
+an inbox run sleeps in the shell, looking every 30 seconds. So when you open the inbox, a session's row may be out
+of date (a wait that began or ended meanwhile) until that session's next prompt, tool call or turn end. A session
+that ended meanwhile is never marked ended; it drops out because its process is gone. A session outside a
 project (no `.git` or `.signoff` folder in its folder or above it, the home folder aside) is not noted. No prompt, reply, message, tool input or output,
 transcript path or token is written. The files are readable by you only. `signoff inbox home` prints the home's path (exit 1 when it would
 not be an absolute path, for example with a relative `LOCALAPPDATA`).

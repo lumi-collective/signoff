@@ -723,7 +723,8 @@ class HookLauncher(unittest.TestCase):
 
 @unittest.skipIf(sys.platform == "win32", "the sh launcher is tested on POSIX")
 class HookFastPath(unittest.TestCase):
-    """hook.sh stops before Python when the default home has no inbox.lock. It knows only the macOS and Linux
+    """hook.sh stops before Python when the default home has no inbox.lock, or (but at SessionStart) one that no live
+    inbox touched within a minute. It knows only the macOS and Linux
     defaults; SIGNOFF_INBOX_HOME and Windows go to Python, whose inbox_home() stays the one resolver."""
 
     def setUp(self):
@@ -894,6 +895,75 @@ class HookFastPath(unittest.TestCase):
         self.monitor(dict(env, SHIM_LOCK=str(home / "inbox.lock")), until=self.mark)
         self.assertTrue(self.mark.exists(), "the monitor never reached Python")
         self.assertTrue(self.mark.read_text().strip().endswith("signoff.py inbox monitor"))
+
+    def lock(self, system, platform, age):
+        """The default home's inbox.lock, its time `age` seconds ago (a live inbox touches it every 2 s), with the
+        system's find on PATH as hook.sh would find it. The environment to run hook.sh with."""
+        if not (self.bin / "find").exists():
+            (self.bin / "find").symlink_to(shutil.which("find", path="/usr/bin:/bin"))
+        self.uname(system)
+        env = self.env(PATH=str(self.bin) + os.pathsep + "/bin")
+        home = self.python_home(platform, env)
+        home.mkdir(parents=True, exist_ok=True)
+        lock = home / "inbox.lock"
+        lock.write_bytes(b"")
+        os.utime(str(lock), (time.time() - age,) * 2)
+        return env
+
+    def test_a_stopped_or_killed_inbox_starts_no_python_but_at_session_start(self):
+        for system, platform in (("Darwin", "darwin"), ("Linux", "linux")):
+            # UserPromptSubmit, Notification, Stop, StopFailure and SessionEnd run hook.sh bare, PostToolUse and
+            # PostToolUseFailure with clear; a session may wait (the flag has a byte), so only the lock decides.
+            env = self.lock(system, platform, 600)
+            (self.python_home(platform, env) / "waiting.flag").write_bytes(b"1\n")
+            for args in ((), ("clear",)):
+                self.assertFalse(self.started(env, *args), (system, args))
+            for args in (("start",), ("session",)):  # SessionStart, every source: Python, as in 0.4.0
+                self.assertTrue(self.started(env, *args), (system, args))
+            env = self.lock(system, platform, 0)  # a live inbox: every event as in 0.4.0
+            for args in ((), ("clear",), ("start",), ("session",)):
+                self.assertTrue(self.started(env, *args), (system, args))
+
+    def test_without_find_the_lock_alone_counts_as_before(self):
+        env = self.lock("Darwin", "darwin", 600)
+        (self.bin / "find").unlink()
+        self.assertTrue(self.started(dict(env, PATH=str(self.bin))))  # /bin has find where /bin is /usr/bin
+
+    def test_the_monitor_sleeps_without_python_while_the_inbox_is_stopped(self):
+        running, out, err = self.monitor(self.lock("Darwin", "darwin", 600))
+        self.assertEqual((running, out, self.mark.exists()), (True, b"", False), err)
+
+    def test_the_sleeping_monitor_becomes_python_when_a_stopped_inbox_starts(self):
+        env = self.lock("Darwin", "darwin", 600)
+        (self.bin / "python3").write_text('#!/bin/sh\necho "$@" > "$SHIM_MARK"\n')
+        # Each sleep returns at once; the third touches the lock, as a starting inbox does.
+        (self.bin / "sleep").write_text('#!/bin/sh\nn=$(cat "$SHIM_N" 2>/dev/null)\necho "x$n" > "$SHIM_N"\n'
+                                        '[ "$n" = xx ] && : > "$SHIM_LOCK"\nexit 0\n')
+        (self.bin / "sleep").chmod(0o755)
+        lock = self.python_home("darwin", env) / "inbox.lock"
+        self.monitor(dict(env, SHIM_LOCK=str(lock), SHIM_N=str(self.tmp / "sleeps")), until=self.mark)
+        self.assertTrue(self.mark.exists(), "the monitor never reached Python")
+        self.assertTrue(self.mark.read_text().strip().endswith("signoff.py inbox monitor"))
+        self.assertEqual((self.tmp / "sleeps").read_text().strip(), "xxx")  # asleep until then
+
+    def test_the_sleeping_monitor_ends_with_its_session(self):
+        env = self.lock("Darwin", "darwin", 600)
+        (self.bin / "sleep").write_text("#!/bin/sh\nexec /bin/sleep 0.1\n")  # a fast loop, so the test is short
+        (self.bin / "sleep").chmod(0o755)
+        # The session lives for a second, so the monitor's sh starts with it as its parent (dash reads $PPID then).
+        p = subprocess.run(["/bin/sh", "-c", '/bin/sh "$0" monitor >/dev/null 2>&1 </dev/null & echo $!; /bin/sleep 1',
+                            str(HOOK_SH)], capture_output=True, env=env, timeout=30)
+        pid, deadline = int(p.stdout), time.monotonic() + 10
+        while True:
+            try:
+                os.kill(pid, 0)
+            except OSError:
+                break
+            if time.monotonic() > deadline:
+                os.kill(pid, 9)
+                self.fail("the sleeping monitor outlived its session")
+            time.sleep(0.2)
+        self.assertFalse(self.mark.exists())
 
     def test_the_monitors_json_command_never_exits_while_the_session_lives(self):
         command = json.loads((ROOT / "plugin" / "monitors" / "monitors.json").read_text(encoding="utf-8"))[0]["command"]
@@ -1140,7 +1210,8 @@ class HooksFile(unittest.TestCase):
                                          "SessionStart", "Stop", "StopFailure", "UserPromptSubmit"])
         # Only permission prompts (and AskUserQuestion, which comes as one): not idle_prompt and the rest. Every
         # SessionStart source runs the hook, and only a new session (startup) keeps the app's launcher link: a
-        # resumed one may run an older plugin.
+        # resumed one may run an older plugin. The others run hook.sh with session: SessionStart runs Python while
+        # inbox.lock is there, the other events only while the inbox lives.
         matchers = {"Notification": ["permission_prompt"], "SessionStart": ["startup", "resume|clear|compact"]}
         for event, groups in hooks.items():
             self.assertEqual([g.get("matcher") for g in groups], matchers.get(event, [None]), event)
@@ -1148,7 +1219,10 @@ class HooksFile(unittest.TestCase):
                 command = group["hooks"][0]["command"]
                 self.assertEqual(command.endswith(" clear #>"), event in ("PostToolUse", "PostToolUseFailure"), event)
                 self.assertEqual(command.endswith(" start #>"), group.get("matcher") == "startup", event)
-                self.assertEqual(command.replace(" start #>", " #>"), hooks["Stop"][0]["hooks"][0]["command"]
+                self.assertEqual(command.endswith(" session #>"), group.get("matcher") == "resume|clear|compact",
+                                 event)
+                self.assertEqual(command.replace(" start #>", " #>").replace(" session #>", " #>"),
+                                 hooks["Stop"][0]["hooks"][0]["command"]
                                  if event == "SessionStart" else command, event)
             for group in groups:
                 for h in group["hooks"]:

@@ -13,16 +13,17 @@ once. One exception on macOS, at a new session's start (not a resumed, cleared o
 `bin/signoff` (the home made 0700 when absent; nothing when the home is a link or not yours), so the app finds
 the plugin. It writes only when the link is missing or points elsewhere, as a new link renamed over the old one,
 and not when the plugin runs from a git checkout (a `.git` beside the plugin folder: `--plugin-dir` or a
-directory marketplace, which runs in place); for that setup, build the app with the fixed launcher. Once the inbox has run, the script starts the Python program for a moment; after a tool
-call only while some session may wait on you (`waiting.flag`). They always
+directory marketplace, which runs in place); for that setup, build the app with the fixed launcher. Once the inbox has run, the script starts the Python program for a moment at each session start, and at the
+other events only while the inbox runs (`inbox.lock` touched within the last minute); after a tool
+call only while some session may also wait on you (`waiting.flag`). They always
 exit 0 and print nothing, so they never block or change a session; without Python they do nothing. The one
 exception is the hand-over of messages from the inbox at a session's start, described in [the inbox's page](inbox.md#the-inbox). They
 run in `sh`: on Windows that is Git Bash, which Claude Code uses for hooks when it is installed; without it Claude
 Code uses PowerShell, where each command does nothing (Claude Code then says once per session that a hook ran in
 PowerShell; for Signoff's hooks you can ignore it, or install Git for Windows). The plugin's monitor
 (`plugin/monitors/`) keeps one process for as long as each interactive session runs (the status line shows "1
-monitor"): until the inbox has run, a shell loop that sleeps and looks for `inbox.lock` every 30 seconds (on
-Windows a loop that only sleeps); then the Python program, which looks for new messages every two seconds. It never ends by itself, because Claude Code
+monitor"): until an inbox runs, a shell loop that sleeps and looks at `inbox.lock` every 30 seconds (on
+Windows a loop that only sleeps); then, for the rest of the session, the Python program, which looks for new messages every two seconds. It never ends by itself, because Claude Code
 would give the agent a turn to read that it ended. The plugin's mod (`plugin/hooks/register.tsx`, in a Claude Code
 that runs plugin mods, interactive sessions, not on Windows) runs inside Claude Code and starts no process of its own
 to look. Every five seconds it checks for `inbox.lock` in the default homes. Once one is there, it runs
