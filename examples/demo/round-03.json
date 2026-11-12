@@ -1,0 +1,143 @@
+{
+  "version": 1,
+  "title": "Notebook app, round 3: behaviour",
+  "tab": "Behaviour",
+  "intro": "Independent of round 2, so it is open at the same time. The first item is a live mockup.",
+  "notice": "Synthetic data only: the app, the screens and the numbers are made up.",
+  "lang": "en",
+  "items": [
+    {
+      "id": "settings-live",
+      "group": "Behaviour",
+      "title": "Does the two-column settings page work at every width?",
+      "description": "A live mockup: switch the theme and the width above it, and click the toggles.",
+      "cost": "The layout from round 1; about 60 lines of CSS.",
+      "images": [
+        {
+          "html": "boards/settings.html",
+          "caption": "Settings, two columns from 760 px"
+        }
+      ],
+      "options": [
+        {
+          "id": "ship",
+          "label": "Ship it like this"
+        },
+        {
+          "id": "tweak",
+          "label": "Needs changes",
+          "detail": "say what in the comment"
+        }
+      ],
+      "recommended": "ship"
+    },
+    {
+      "id": "theme",
+      "group": "Behaviour",
+      "title": "Default theme",
+      "description": "What a new install shows before anyone touches the setting.",
+      "options": [
+        {
+          "id": "system",
+          "label": "Follow the system"
+        },
+        {
+          "id": "light",
+          "label": "Always light"
+        },
+        {
+          "id": "dark",
+          "label": "Always dark"
+        }
+      ],
+      "recommended": "system",
+      "comment": false,
+      "other": true
+    },
+    {
+      "id": "export",
+      "group": "Behaviour",
+      "title": "Export formats",
+      "description": "Formats offered in the Export menu.",
+      "cost": "Markdown is free; PDF adds a print stylesheet; HTML adds a template.",
+      "select": "many",
+      "options": [
+        {
+          "id": "md",
+          "label": "Markdown"
+        },
+        {
+          "id": "pdf",
+          "label": "PDF"
+        },
+        {
+          "id": "html",
+          "label": "HTML"
+        }
+      ],
+      "recommended": [
+        "md",
+        "pdf"
+      ],
+      "skippable": true,
+      "attachments": [
+        {
+          "src": "notes/export-formats.md",
+          "caption": "What each format keeps"
+        }
+      ]
+    },
+    {
+      "id": "storage",
+      "group": "Behaviour",
+      "title": "Where do the notes live?",
+      "description": "Every note is stored the same way. No pictures here: the options differ in effort, risk, the way back and offline use.",
+      "criteria": [
+        {"id": "effort", "label": "Effort"},
+        {"id": "risk", "label": "Risk"},
+        {"id": "reversible", "label": "Way back"},
+        {"id": "offline", "label": "Offline"}
+      ],
+      "options": [
+        {
+          "id": "files",
+          "label": "Plain files",
+          "detail": "one Markdown file per note",
+          "facts": {
+            "effort": {"text": "S · 1 day", "tone": "good"},
+            "risk": {"text": "Medium · sync conflicts", "tone": "mid"},
+            "reversible": {"text": "Easy · the files stay", "tone": "good"},
+            "offline": {"text": "Yes", "tone": "good"}
+          }
+        },
+        {
+          "id": "sqlite",
+          "label": "SQLite",
+          "detail": "one local database",
+          "facts": {
+            "effort": {"text": "M · 3 days", "tone": "mid"},
+            "risk": {"text": "Low", "tone": "good"},
+            "reversible": {"text": "Export · one script", "tone": "mid"},
+            "offline": {"text": "Yes", "tone": "good"}
+          }
+        },
+        {
+          "id": "cloud",
+          "label": "Cloud sync",
+          "detail": "a hosted service, with an account",
+          "facts": {
+            "effort": {"text": "L · 2 weeks", "tone": "bad"},
+            "risk": {"text": "High · an outage means no notes", "tone": "bad"},
+            "reversible": {"text": "Hard · remote data", "tone": "bad"},
+            "offline": {"text": "Read-only cache", "tone": "mid"}
+          }
+        }
+      ],
+      "recommended": "sqlite"
+    }
+  ],
+  "free_text": {
+    "title": "Anything else",
+    "placeholder": "Anything the list does not ask about"
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "description": "Signoff inbox: notes which project each session runs in, whether it is working or idle, and whether it waits on you for a permission or an answer. Writes nothing until the Signoff inbox has run on this computer, except, with the Signoff macOS app installed, a link to the plugin's signoff command for the app.",
+  "modules": ["./register.tsx"],
+  "hooks": {
+    "SessionStart": [
+      { "matcher": "startup", "hooks": [{ "type": "command", "command": "echo `# >$null <#` >/dev/null; f=\"${CLAUDE_PLUGIN_ROOT}\"/hooks/hook.sh; [ -r \"$f\" ] || exit 0; exec sh \"$f\" start #>", "timeout": 5 }] },
+      { "matcher": "resume|clear|compact", "hooks": [{ "type": "command", "command": "echo `# >$null <#` >/dev/null; f=\"${CLAUDE_PLUGIN_ROOT}\"/hooks/hook.sh; [ -r \"$f\" ] || exit 0; exec sh \"$f\" #>", "timeout": 5 }] }
+    ],
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "echo `# >$null <#` >/dev/null; f=\"${CLAUDE_PLUGIN_ROOT}\"/hooks/hook.sh; [ -r \"$f\" ] || exit 0; exec sh \"$f\" #>", "timeout": 5 }] }],
+    "Notification": [{ "matcher": "permission_prompt", "hooks": [{ "type": "command", "command": "echo `# >$null <#` >/dev/null; f=\"${CLAUDE_PLUGIN_ROOT}\"/hooks/hook.sh; [ -r \"$f\" ] || exit 0; exec sh \"$f\" #>", "timeout": 5 }] }],
+    "PostToolUse": [{ "hooks": [{ "type": "command", "command": "echo `# >$null <#` >/dev/null; f=\"${CLAUDE_PLUGIN_ROOT}\"/hooks/hook.sh; [ -r \"$f\" ] || exit 0; exec sh \"$f\" clear #>", "timeout": 5 }] }],
+    "PostToolUseFailure": [{ "hooks": [{ "type": "command", "command": "echo `# >$null <#` >/dev/null; f=\"${CLAUDE_PLUGIN_ROOT}\"/hooks/hook.sh; [ -r \"$f\" ] || exit 0; exec sh \"$f\" clear #>", "timeout": 5 }] }],
+    "Stop": [{ "hooks": [{ "type": "command", "command": "echo `# >$null <#` >/dev/null; f=\"${CLAUDE_PLUGIN_ROOT}\"/hooks/hook.sh; [ -r \"$f\" ] || exit 0; exec sh \"$f\" #>", "timeout": 5 }] }],
+    "StopFailure": [{ "hooks": [{ "type": "command", "command": "echo `# >$null <#` >/dev/null; f=\"${CLAUDE_PLUGIN_ROOT}\"/hooks/hook.sh; [ -r \"$f\" ] || exit 0; exec sh \"$f\" #>", "timeout": 5 }] }],
+    "SessionEnd": [{ "hooks": [{ "type": "command", "command": "echo `# >$null <#` >/dev/null; f=\"${CLAUDE_PLUGIN_ROOT}\"/hooks/hook.sh; [ -r \"$f\" ] || exit 0; exec sh \"$f\" #>", "timeout": 5 }] }]
+  }
+}

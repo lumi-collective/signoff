@@ -1,0 +1,126 @@
+{
+  "version": 1,
+  "title": "Notebook app: what goes into the settings redesign?",
+  "intro": "Seven choices from the redesign. My recommendation is preselected on each; change what you disagree with and press Done.",
+  "notice": "Synthetic data only: the app, the screens and the numbers are made up.",
+  "lang": "en",
+  "items": [
+    {
+      "id": "settings-layout",
+      "group": "Layout",
+      "title": "Settings in two columns",
+      "description": "The settings page is one long column today. Two columns put Account and Editor next to Sync and Notifications.",
+      "cost": "About 60 lines of CSS, no new components.",
+      "images": [
+        {
+          "src": "mockups/settings-two-columns.png",
+          "caption": "Proposed: two columns from 1100 px",
+          "boxes": [[20.2, 9.6, 38.6, 50], [59.4, 9.6, 38.6, 41.6]]
+        }
+      ],
+      "select": "one",
+      "options": [
+        {"id": "two", "label": "Two columns"},
+        {"id": "one", "label": "Keep one column", "detail": "no work"}
+      ],
+      "recommended": "two"
+    },
+    {
+      "id": "sidebar",
+      "group": "Layout",
+      "title": "Collapsible sidebar",
+      "description": "An icon-only sidebar that gives the notes 160 px more width.",
+      "cost": "About 150 lines and a new remembered setting. Needs tooltips for every icon.",
+      "images": [
+        {"src": "mockups/sidebar-collapsed.png", "caption": "Collapsed", "boxes": [[0.3, 0.4, 5.3, 99.2]]}
+      ],
+      "options": [
+        {"id": "build", "label": "Build it"},
+        {"id": "later", "label": "Later", "detail": "after the settings work ships"}
+      ],
+      "recommended": "later"
+    },
+    {
+      "id": "filters",
+      "group": "Lists",
+      "title": "Which filters on the notes list?",
+      "description": "Filters sit as pills above the list. Each one is a query and a pill.",
+      "cost": "About 40 lines per filter.",
+      "images": [
+        {"src": "mockups/list-filters.png", "caption": "Filter pills above the list", "boxes": [[20.3, 9.6, 35, 5.2]]}
+      ],
+      "select": "many",
+      "options": [
+        {"id": "date", "label": "Date"},
+        {"id": "tag", "label": "Tag"},
+        {"id": "owner", "label": "Owner", "detail": "only useful for shared notebooks"}
+      ],
+      "recommended": ["date", "tag"]
+    },
+    {
+      "id": "empty-state",
+      "group": "Lists",
+      "title": "Illustration for an empty list",
+      "description": "A small drawing and one line of help when a filter matches nothing.",
+      "cost": "One SVG asset, rendered to PNG, and 20 lines.",
+      "options": [
+        {"id": "yes", "label": "Add it"},
+        {"id": "text", "label": "Text only", "detail": "\"No notes match these filters.\""}
+      ],
+      "recommended": "text"
+    },
+    {
+      "id": "theme",
+      "group": "Behaviour",
+      "title": "Default theme",
+      "description": "What a new install shows before anyone touches the setting.",
+      "options": [
+        {"id": "system", "label": "Follow the system"},
+        {"id": "light", "label": "Always light"},
+        {"id": "dark", "label": "Always dark"}
+      ],
+      "recommended": "system",
+      "comment": false
+    },
+    {
+      "id": "export",
+      "group": "Behaviour",
+      "title": "Export formats",
+      "description": "Formats offered in the Export menu.",
+      "cost": "Markdown is free; PDF adds a print stylesheet; HTML adds a template.",
+      "select": "many",
+      "options": [
+        {"id": "md", "label": "Markdown"},
+        {"id": "pdf", "label": "PDF"},
+        {"id": "html", "label": "HTML"}
+      ],
+      "recommended": ["md", "pdf"],
+      "attachments": [{"src": "notes/export-formats.md", "caption": "What each format keeps"}]
+    },
+    {
+      "id": "storage",
+      "group": "Behaviour",
+      "title": "Where do the notes live?",
+      "description": "Every note is stored the same way. No pictures here: the options differ in effort, risk, the way back and offline use.",
+      "criteria": [
+        {"id": "effort", "label": "Effort"},
+        {"id": "risk", "label": "Risk"},
+        {"id": "reversible", "label": "Way back"},
+        {"id": "offline", "label": "Offline"}
+      ],
+      "options": [
+        {"id": "files", "label": "Plain files", "detail": "one Markdown file per note",
+         "facts": {"effort": {"text": "S · 1 day", "tone": "good"}, "risk": {"text": "Medium · sync conflicts", "tone": "mid"},
+                   "reversible": {"text": "Easy · the files stay", "tone": "good"}, "offline": {"text": "Yes", "tone": "good"}}},
+        {"id": "sqlite", "label": "SQLite", "detail": "one local database",
+         "facts": {"effort": {"text": "M · 3 days", "tone": "mid"}, "risk": {"text": "Low", "tone": "good"},
+                   "reversible": {"text": "Export · one script", "tone": "mid"}, "offline": {"text": "Yes", "tone": "good"}}},
+        {"id": "cloud", "label": "Cloud sync", "detail": "a hosted service, with an account",
+         "facts": {"effort": {"text": "L · 2 weeks", "tone": "bad"}, "risk": {"text": "High · an outage means no notes", "tone": "bad"},
+                   "reversible": {"text": "Hard · remote data", "tone": "bad"}, "offline": {"text": "Read-only cache", "tone": "mid"}}}
+      ],
+      "recommended": "sqlite"
+    }
+  ],
+  "free_text": {"title": "Anything else", "placeholder": "Anything the list does not ask about"}
+}

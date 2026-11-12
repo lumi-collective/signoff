@@ -1,0 +1,5 @@
+{
+  "log": "docs/decisions.md",
+  "line": "Notes list gets Date and Tag filters, no Filter button.",
+  "date": "2026-01-06"
+}

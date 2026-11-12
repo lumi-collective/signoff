@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "done": true,
+  "saved": "2026-01-06T09:30:05Z",
+  "decisions": {
+    "file": "round-02.json",
+    "sha256": "a56d6ef70733753c694f751d01872f57865cb8f3d0102071154a73734af288cf"
+  },
+  "answers": {
+    "filters": {
+      "choice": [
+        "date",
+        "tag"
+      ],
+      "comment": "",
+      "source": "accept_all",
+      "marks": [
+        {
+          "image": 0,
+          "box": [
+            49.4,
+            9,
+            6.6,
+            6
+          ],
+          "comment": "Drop the Filter button; the pills are enough."
+        }
+      ]
+    },
+    "empty-state": {
+      "choice": "_skip",
+      "comment": "",
+      "source": "user"
+    }
+  },
+  "free_text": ""
+}

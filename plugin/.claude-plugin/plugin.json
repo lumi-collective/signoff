@@ -1,0 +1,26 @@
+{
+  "name": "signoff",
+  "displayName": "Signoff",
+  "version": "0.4.0",
+  "description": "A local decision page for coding agents: the agent lists its open decisions with mockups, highlight boxes, costs and a preselected recommendation; you answer in the browser and press Done. Local only: it listens on 127.0.0.1 and sends nothing out.",
+  "author": { "name": "trustmeimlumi", "url": "https://github.com/trustmeimlumi" },
+  "homepage": "https://github.com/lumi-collective/signoff",
+  "repository": "https://github.com/lumi-collective/signoff",
+  "license": "MIT",
+  "keywords": ["decisions", "review", "human-in-the-loop", "mockups", "skill"],
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "folder": {
+      "type": "string",
+      "title": "Decisions folder",
+      "description": "Where the agent keeps a topic folder per decision, relative to the project root or absolute. The past-decisions page reads the same folder.",
+      "default": ".signoff"
+    },
+    "hint": {
+      "type": "string",
+      "title": "Waiting hint",
+      "description": "While the Signoff inbox runs, how a session shows what waits on you in its project: band (a line above the prompt), status (a status line entry) or off (nothing, and no looking). Any other value is band.",
+      "default": "band"
+    }
+  }
+}

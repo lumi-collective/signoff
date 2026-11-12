@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "title": "Notebook app, round 2: lists",
+  "tab": "Lists",
+  "intro": "These follow from round 1. Other and Skip are there when no option fits.",
+  "notice": "Synthetic data only: the app, the screens and the numbers are made up.",
+  "lang": "en",
+  "items": [
+    {
+      "id": "filters",
+      "group": "Lists",
+      "title": "Which filters on the notes list?",
+      "description": "Filters sit as pills above the list. Each one is a query and a pill.",
+      "cost": "About 40 lines per filter.",
+      "images": [
+        {
+          "src": "mockups/list-filters.png",
+          "caption": "Filter pills above the list",
+          "boxes": [
+            [
+              20.3,
+              9.6,
+              35,
+              5.2
+            ]
+          ]
+        }
+      ],
+      "select": "many",
+      "options": [
+        {
+          "id": "date",
+          "label": "Date"
+        },
+        {
+          "id": "tag",
+          "label": "Tag"
+        },
+        {
+          "id": "owner",
+          "label": "Owner",
+          "detail": "only useful for shared notebooks"
+        }
+      ],
+      "recommended": [
+        "date",
+        "tag"
+      ],
+      "other": true,
+      "marks": true
+    },
+    {
+      "id": "empty-state",
+      "group": "Lists",
+      "title": "Illustration for an empty list",
+      "description": "A small drawing and one line of help when a filter matches nothing.",
+      "cost": "One SVG asset, rendered to PNG, and 20 lines.",
+      "options": [
+        {
+          "id": "yes",
+          "label": "Add it"
+        },
+        {
+          "id": "text",
+          "label": "Text only",
+          "detail": "\"No notes match these filters.\""
+        }
+      ],
+      "recommended": "text",
+      "skippable": true
+    }
+  ],
+  "free_text": {
+    "title": "Anything else",
+    "placeholder": "Anything the list does not ask about"
+  }
+}

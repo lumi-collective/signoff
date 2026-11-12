@@ -1,0 +1,65 @@
+name: test
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  server:
+    name: server (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ["3.9", "3.13"]
+        # ubuntu-latest (Ubuntu 26.04) has no Python 3.9 build; 3.9 runs on the previous LTS.
+        exclude:
+          - os: ubuntu-latest
+            python: "3.9"
+        include:
+          - os: ubuntu-24.04
+            python: "3.9"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -I -B -m unittest discover -s tests -v
+
+  browser:
+    name: browser end to end (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      - run: python -I -B tests/e2e_browser.py
+
+  plugin:
+    name: plugin (claude plugin validate + test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+      - run: npm install -g --no-fund --no-audit @anthropic-ai/claude-code@2.1.309
+      - run: claude plugin validate plugin
+      - run: claude plugin validate .claude-plugin/marketplace.json
+      - run: claude plugin test plugin

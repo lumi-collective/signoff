@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "done": true,
+  "saved": "2026-02-10T08:15:00Z",
+  "decisions": {
+    "file": "decisions.json",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "answers": {
+    "formats": {
+      "choice": [
+        "md"
+      ],
+      "comment": "PDF later.",
+      "source": "user"
+    }
+  },
+  "free_text": ""
+}

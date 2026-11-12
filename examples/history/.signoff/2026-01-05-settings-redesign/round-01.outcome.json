@@ -1,0 +1,5 @@
+{
+  "log": "docs/decisions.md",
+  "line": "Settings move to two columns; the sidebar becomes collapsible.",
+  "date": "2026-01-05"
+}

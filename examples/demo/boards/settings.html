@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Settings, two columns</title>
+<style>
+  :root { --bg: #f4f4f7; --panel: #fff; --line: #dedde6; --text: #1c1a24; --soft: #625d72; --accent: #5b47c7; }
+  :root.dark { --bg: #15131c; --panel: #1f1c2a; --line: #363146; --text: #ece8f4; --soft: #9a95a8; --accent: #b9a6ff; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 system-ui, sans-serif; }
+  .app { display: grid; grid-template-columns: 200px 1fr; min-height: 100vh; }
+  nav { background: #22202c; color: #c9c5d6; padding: 18px 14px; }
+  nav b { display: block; color: #fff; margin-bottom: 16px; }
+  nav a { display: block; padding: 6px 10px; border-radius: 6px; color: inherit; text-decoration: none; }
+  nav a.on { background: #34314a; color: #fff; }
+  main { padding: 24px; }
+  h1 { font-size: 20px; margin: 0 0 16px; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+  h2 { font-size: 14px; margin: 0 0 12px; }
+  label { display: block; font-size: 13px; color: var(--soft); margin: 10px 0 4px; }
+  input[type=text] { width: 100%; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); font: inherit; }
+  .switch { display: flex; align-items: center; justify-content: space-between; margin-top: 12px; }
+  button.toggle { width: 44px; height: 24px; border-radius: 12px; border: 0; background: var(--line); position: relative; cursor: pointer; }
+  button.toggle::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: left .15s; }
+  button.toggle[aria-pressed=true] { background: var(--accent); }
+  button.toggle[aria-pressed=true]::after { left: 23px; }
+  @media (max-width: 760px) { .cols { grid-template-columns: 1fr; } }
+  @media (max-width: 520px) { .app { grid-template-columns: 1fr; } nav { display: none; } main { padding: 16px; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <nav><b>Notebook</b><a href="#">All notes</a><a href="#">Tags</a><a href="#">Shared</a><a class="on" href="#">Settings</a></nav>
+  <main>
+    <h1>Settings</h1>
+    <div class="cols">
+      <section><h2>Account</h2><label for="n">Display name</label><input id="n" type="text" value="Sam Example">
+        <label for="e">Email</label><input id="e" type="text" value="sam@example.com"></section>
+      <section><h2>Sync</h2><div class="switch">Sync on mobile data <button class="toggle" type="button" aria-pressed="true" aria-label="Sync on mobile data"></button></div>
+        <div class="switch">Sync attachments <button class="toggle" type="button" aria-pressed="false" aria-label="Sync attachments"></button></div></section>
+      <section><h2>Editor</h2><label for="f">Font size</label><input id="f" type="text" value="15 px">
+        <div class="switch">Spell check <button class="toggle" type="button" aria-pressed="true" aria-label="Spell check"></button></div></section>
+      <section><h2>Notifications</h2><div class="switch">Reminders <button class="toggle" type="button" aria-pressed="true" aria-label="Reminders"></button></div>
+        <div class="switch">Weekly digest <button class="toggle" type="button" aria-pressed="false" aria-label="Weekly digest"></button></div></section>
+    </div>
+  </main>
+</div>
+<script>
+  // Signoff passes the page's theme as ?theme=light or ?theme=dark.
+  if (new URLSearchParams(location.search).get("theme") === "dark") document.documentElement.classList.add("dark");
+  document.querySelectorAll("button.toggle").forEach(function (b) {
+    b.addEventListener("click", function () { b.setAttribute("aria-pressed", String(b.getAttribute("aria-pressed") !== "true")); });
+  });
+</script>
+</body>
+</html>

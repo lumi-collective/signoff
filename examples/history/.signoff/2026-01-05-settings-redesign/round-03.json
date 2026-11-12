@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "title": "Notebook app, round 3: sidebar details",
+  "tab": "Sidebar",
+  "intro": "Follows from round 1, where the collapsible sidebar was chosen.",
+  "notice": "Synthetic data only: the app, the screens and the numbers are made up.",
+  "lang": "en",
+  "items": [
+    {
+      "id": "remember",
+      "title": "Remember the collapsed state per device?",
+      "options": [
+        {
+          "id": "device",
+          "label": "Per device"
+        },
+        {
+          "id": "account",
+          "label": "Per account"
+        }
+      ],
+      "recommended": "device",
+      "other": true
+    }
+  ],
+  "free_text": {
+    "title": "Anything else",
+    "placeholder": "Anything the list does not ask about"
+  }
+}

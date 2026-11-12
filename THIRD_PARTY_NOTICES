@@ -1,0 +1,47 @@
+Third-party notices
+
+Signoff's page (plugin/signoff/page.html) and its theme generator (tests/theme_tokens.py) contain colour values
+taken from the projects below. Some are blends of two colours of the same palette, and some are moved toward
+black, white or the palette's text colour to meet WCAG contrast; the page names each moved colour. The Signoff
+palette is Signoff's own.
+
+Catppuccin (Latte, Mocha): colour values from https://github.com/catppuccin/palette
+Copyright (c) 2021 Catppuccin
+MIT License (text below).
+
+Rose Pine (Dawn, Main): colour values from https://github.com/rose-pine/rose-pine-palette
+Copyright (c) mvllow
+MIT License (text below).
+
+Gruvbox (Light, Dark): colour values from https://github.com/morhetz/gruvbox
+Copyright holder: Pavel Pertsev (morhetz). The repository has no LICENSE file; it states
+"MIT/X11" in its README and "license": "MIT" in package.json. No copyright year is given upstream.
+MIT License (text below).
+
+Tokyo Night (Light, Night): colour values from https://github.com/tokyo-night/tokyo-night-vscode-theme
+Copyright (c) 2018-present Enkia
+MIT License (text below).
+
+Dracula and Alucard: colour values from https://github.com/dracula/dracula-theme and https://draculatheme.com/spec
+Copyright (c) 2023 Dracula Theme
+MIT License (text below).
+
+MIT License
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

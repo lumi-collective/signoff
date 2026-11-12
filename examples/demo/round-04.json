@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "title": "Notebook app, round 4: wording",
+  "tab": "Wording",
+  "intro": "Two labels in the settings page. Independent of the other rounds.",
+  "notice": "Synthetic data only: the app, the screens and the numbers are made up.",
+  "lang": "en",
+  "items": [
+    {
+      "id": "sync-label",
+      "group": "Wording",
+      "title": "Label for the sync switch",
+      "options": [
+        {
+          "id": "sync",
+          "label": "Sync on mobile data"
+        },
+        {
+          "id": "cellular",
+          "label": "Use cellular data for sync"
+        }
+      ],
+      "recommended": "sync",
+      "other": true
+    },
+    {
+      "id": "digest-label",
+      "group": "Wording",
+      "title": "Label for the weekly email",
+      "options": [
+        {
+          "id": "digest",
+          "label": "Weekly digest"
+        },
+        {
+          "id": "summary",
+          "label": "Weekly summary email"
+        }
+      ],
+      "recommended": "digest",
+      "skippable": true
+    }
+  ],
+  "free_text": {
+    "title": "Anything else",
+    "placeholder": "Anything the list does not ask about"
+  }
+}

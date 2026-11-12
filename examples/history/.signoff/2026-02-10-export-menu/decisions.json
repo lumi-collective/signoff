@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "title": "Export menu",
+  "lang": "en",
+  "notice": "Synthetic data only: the app, the screens and the numbers are made up.",
+  "items": [
+    {
+      "id": "formats",
+      "title": "Export formats",
+      "select": "many",
+      "images": [
+        {
+          "src": "mockups/export-menu.png",
+          "caption": "The menu (picture since removed)"
+        }
+      ],
+      "options": [
+        {
+          "id": "md",
+          "label": "Markdown"
+        },
+        {
+          "id": "pdf",
+          "label": "PDF"
+        },
+        {
+          "id": "html",
+          "label": "HTML"
+        }
+      ],
+      "recommended": [
+        "md",
+        "pdf"
+      ]
+    }
+  ]
+}

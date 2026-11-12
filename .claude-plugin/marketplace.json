@@ -1,0 +1,14 @@
+{
+  "name": "signoff",
+  "owner": {
+    "name": "trustmeimlumi"
+  },
+  "description": "Signoff, a Claude Code plugin: a local page where you sign off on an agent's decisions.",
+  "plugins": [
+    {
+      "name": "signoff",
+      "source": "./plugin",
+      "description": "A local decision page for coding agents: decisions with mockups, highlight boxes, costs and a preselected recommendation, answered in the browser."
+    }
+  ]
+}

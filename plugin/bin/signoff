@@ -1,0 +1,9 @@
+#!/bin/sh
+# Runs Signoff from this plugin folder; the arguments are passed on as given.
+# readlink -f: a link to this file (in ~/bin, say) still finds the plugin folder.
+script="$(dirname "$(readlink -f "$0")")/../signoff/signoff.py"
+# Git Bash: python.org's Python brings py, and a python3 there may be the Store's stub, which fails.
+if [ "$OS" = Windows_NT ] && command -v py >/dev/null 2>&1; then
+  exec py -3 -I "$script" "$@"
+fi
+exec python3 -I "$script" "$@"

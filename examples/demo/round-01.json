@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "title": "Notebook app, round 1: layout",
+  "tab": "Layout",
+  "intro": "Two layout choices. My recommendation is preselected on each.",
+  "notice": "Synthetic data only: the app, the screens and the numbers are made up.",
+  "lang": "en",
+  "items": [
+    {
+      "id": "settings-layout",
+      "group": "Layout",
+      "title": "Settings in two columns",
+      "description": "The settings page is one long column today. Two columns put Account and Editor next to Sync and Notifications.",
+      "cost": "About 60 lines of CSS, no new components.",
+      "images": [
+        {
+          "src": "mockups/settings-two-columns.png",
+          "caption": "Proposed: two columns from 1100 px",
+          "boxes": [
+            [
+              20.2,
+              9.6,
+              38.6,
+              50
+            ],
+            [
+              59.4,
+              9.6,
+              38.6,
+              41.6
+            ]
+          ]
+        }
+      ],
+      "select": "one",
+      "options": [
+        {
+          "id": "two",
+          "label": "Two columns"
+        },
+        {
+          "id": "one",
+          "label": "Keep one column",
+          "detail": "no work"
+        }
+      ],
+      "recommended": "two"
+    },
+    {
+      "id": "sidebar",
+      "group": "Layout",
+      "title": "Collapsible sidebar",
+      "description": "An icon-only sidebar that gives the notes 160 px more width.",
+      "cost": "About 150 lines and a new remembered setting. Needs tooltips for every icon.",
+      "images": [
+        {
+          "src": "mockups/sidebar-collapsed.png",
+          "caption": "Collapsed",
+          "boxes": [
+            [
+              0.3,
+              0.4,
+              5.3,
+              99.2
+            ]
+          ]
+        }
+      ],
+      "options": [
+        {
+          "id": "build",
+          "label": "Build it"
+        },
+        {
+          "id": "later",
+          "label": "Later",
+          "detail": "after the settings work ships"
+        }
+      ],
+      "recommended": "later"
+    }
+  ],
+  "free_text": {
+    "title": "Anything else",
+    "placeholder": "Anything the list does not ask about"
+  }
+}

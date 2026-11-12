@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "done": false,
+  "saved": "2026-01-07T16:02:44Z",
+  "decisions": {
+    "file": "round-03.json",
+    "sha256": "963ca1a3599dfa9eb378506eee425bb9e0ef0f4ded10084a344b9d2a9718fff1"
+  },
+  "answers": {
+    "remember": {
+      "choice": "_other",
+      "other": "Per device, synced once a day",
+      "comment": "",
+      "source": "user"
+    }
+  },
+  "free_text": ""
+}

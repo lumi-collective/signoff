@@ -1,0 +1,3 @@
+# LF everywhere: the example answers files record the SHA-256 of their decisions files, and a CRLF checkout
+# (Windows) would change those bytes.
+* text=auto eol=lf

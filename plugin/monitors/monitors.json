@@ -1,0 +1,7 @@
+[
+  {
+    "name": "inbox",
+    "command": "echo `# >$null <#` >/dev/null; f=\"${CLAUDE_PLUGIN_ROOT}\"/hooks/hook.sh; [ -r \"$f\" ] && exec sh \"$f\" monitor; while [ \"$OS\" = Windows_NT ] || kill -0 $PPID 2>/dev/null; do sleep 60; done #>; while (1) { sleep 60 }",
+    "description": "Messages you send to this project from the Signoff inbox"
+  }
+]

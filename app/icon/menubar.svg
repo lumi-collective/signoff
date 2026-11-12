@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" viewBox="-0.4 -0.15 24.9 24.9">
+  <title>Signoff, menu bar</title>
+  <!-- icon.svg's mark in one colour for a macOS template image: the frame stops short of the round, and the check
+       is cut out of it. build-icon.sh renders it to menubar.png. -->
+  <defs>
+    <mask id="frame"><rect x="-1" y="-1" width="27" height="27" fill="#fff"/><circle cx="15.5" cy="15" r="6.4" fill="#000"/></mask>
+    <mask id="round"><rect x="-1" y="-1" width="27" height="27" fill="#fff"/>
+      <path d="M13.1 15.1l1.7 1.7 3.1-3.3" fill="none" stroke="#000" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></mask>
+  </defs>
+  <rect x="4.3" y="5.3" width="10.4" height="8.4" rx="1.6" fill="none" stroke="#000" stroke-width="2.2" mask="url(#frame)"/>
+  <circle cx="15.5" cy="15" r="5.1" fill="#000" mask="url(#round)"/>
+</svg>

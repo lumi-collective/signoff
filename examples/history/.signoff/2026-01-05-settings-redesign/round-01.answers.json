@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "done": true,
+  "saved": "2026-01-05T10:12:40Z",
+  "decisions": {
+    "file": "round-01.json",
+    "sha256": "7cc7e28b3d7c8eb17809f4f1c74691adc06a9f983a8df4c7e32fc3be834c5c46"
+  },
+  "answers": {
+    "settings-layout": {
+      "choice": "two",
+      "comment": "",
+      "source": "recommended"
+    },
+    "sidebar": {
+      "choice": "build",
+      "comment": "Users asked for it twice.",
+      "source": "user"
+    }
+  },
+  "free_text": ""
+}

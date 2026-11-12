@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/lumi-collective/signoff/blob/main/plugin/signoff/schema.json",
+  "title": "Signoff decisions file",
+  "description": "A list of decisions for a person to make on a local page. All text is plain text; line breaks are kept, nothing is rendered as HTML or Markdown.",
+  "type": "object",
+  "required": ["version", "title", "items"],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "const": 1 },
+    "title": { "type": "string", "description": "The page heading." },
+    "tab": { "type": "string", "description": "A short label for this round's tab when a folder of rounds is served. Default: the title." },
+    "intro": { "type": "string", "description": "One or two sentences under the heading." },
+    "notice": { "type": "string", "description": "A short notice shown as a banner under the header, e.g. \"Synthetic data only\"." },
+    "lang": { "type": "string", "description": "BCP 47 language tag of the content, e.g. \"en\" or \"de\". Default \"en\"." },
+    "items": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/item" } },
+    "free_text": {
+      "type": "object",
+      "description": "The free-text box at the end of the page. It is always shown; this only names it.",
+      "additionalProperties": false,
+      "properties": {
+        "title": { "type": "string", "default": "Anything else" },
+        "placeholder": { "type": "string" }
+      }
+    }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$" },
+    "item": {
+      "type": "object",
+      "required": ["id", "title", "options"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$", "description": "Unique and stable: the answers are keyed by it." },
+        "group": { "type": "string", "description": "A heading is shown whenever this changes from the item before." },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "cost": { "type": "string", "description": "What it costs: effort, lines, tokens, money, risk." },
+        "images": { "type": "array", "items": { "$ref": "#/$defs/image" } },
+        "select": { "enum": ["one", "many"], "default": "one", "description": "one: radio buttons. many: checkboxes." },
+        "options": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/option" }, "description": "At least two when select is \"one\"." },
+        "recommended": {
+          "description": "Preselected and labelled. An option id for \"one\", a list of option ids for \"many\".",
+          "oneOf": [
+            { "$ref": "#/$defs/id" },
+            { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/id" } }
+          ]
+        },
+        "comment": { "type": "boolean", "default": true, "description": "Show a comment box under the options." },
+        "other": { "type": "boolean", "default": false, "description": "Add an \"Other\" choice with its own text field. It is recorded as the choice \"_other\", with the text in \"other\"." },
+        "skippable": { "type": "boolean", "default": false, "description": "Add a \"Skip\" choice. It is recorded as the choice \"_skip\", on its own." },
+        "marks": { "type": "boolean", "default": false, "description": "Let the user draw rectangles on this item's pictures, each with a comment. They are recorded in the answer's \"marks\"." },
+        "sensitive": { "type": "boolean", "default": false, "description": "The answer may hold personal data: the item starts marked Private. It only acts on an item with a text field (comment, other or marks). The user can untick it, or tick it on any item. A private answer is recorded with \"private\": true; its text stays in the answers file, and the Markdown copy hides its comment, Other text and mark comments." },
+        "criteria": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/criterion" }, "description": "What the options are compared on, in row order. With it, each option's facts show as chips on its card, and a Cards / Table toggle shows the options side by side, a row per criterion. The choice is the same in both views; the view is not saved." },
+        "attachments": { "type": "array", "maxItems": 20, "items": { "$ref": "#/$defs/attachment" }, "description": "Text files read when Signoff starts and shown under the options, each in a collapsed box as plain text: nothing in them is rendered. At most 20 an item and 200 a round. The Markdown copy names them only. Not changed by sensitive: the text is yours, not the user's." }
+      }
+    },
+    "attachment": {
+      "type": "object",
+      "required": ["src"],
+      "additionalProperties": false,
+      "properties": {
+        "src": { "type": "string", "description": "Path relative to the decisions file, inside its folder (links are followed): a .md or .txt file, UTF-8, up to 256 KiB. A round's attachments together: up to 2 MiB as they go into the page, where <, > and & take 6 bytes each. No drive, network or absolute path. The page shows this name." },
+        "caption": { "type": "string", "description": "The box's label. Default: src." }
+      }
+    },
+    "criterion": {
+      "type": "object",
+      "required": ["id", "label"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/id", "description": "Unique within the item; the options' facts are keyed by it." },
+        "label": { "type": "string" }
+      }
+    },
+    "fact": {
+      "type": "object",
+      "required": ["text"],
+      "additionalProperties": false,
+      "properties": {
+        "text": { "type": "string", "description": "The value, short, e.g. \"M · 3 days\"." },
+        "tone": { "enum": ["good", "mid", "bad"], "description": "How the value compares: shown as ▲ (good), ● (mid) or ▼ (bad) beside the text, and in colour; never colour alone." }
+      }
+    },
+    "image": {
+      "type": "object",
+      "description": "A picture (src) or a board (html): exactly one of the two.",
+      "oneOf": [ { "required": ["src"] }, { "required": ["html"], "not": { "required": ["boxes"] } } ],
+      "additionalProperties": false,
+      "properties": {
+        "src": { "type": "string", "description": "Path relative to the decisions file. It must stay inside that folder. PNG, JPEG, WebP or GIF; no SVG." },
+        "html": { "type": "string", "description": "A board: one self-contained HTML file relative to the decisions file, inside its folder, up to 2 MiB. Inline CSS and JS, data: images; nothing loads from outside, and it must hold nothing secret. It runs sandboxed and reads ?theme=light or ?theme=dark from its URL." },
+        "caption": { "type": "string" },
+        "alt": { "type": "string", "description": "Text for screen readers. Default: the caption, else the item title." },
+        "boxes": {
+          "type": "array",
+          "description": "Highlight boxes as [x, y, w, h] in percent of the image, the meaning of W3C Media Fragments xywh=percent.",
+          "items": {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": { "type": "number", "minimum": 0, "maximum": 100 }
+          }
+        }
+      }
+    },
+    "option": {
+      "type": "object",
+      "required": ["id", "label"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "label": { "type": "string" },
+        "detail": { "type": "string", "description": "A short line under the label." },
+        "facts": {
+          "type": "object",
+          "description": "This option's value on the item's criteria, keyed by criterion id. Only the item's own criteria; a criterion left out shows as a dash in the table.",
+          "additionalProperties": { "$ref": "#/$defs/fact" }
+        }
+      }
+    }
+  }
+}
