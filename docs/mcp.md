@@ -1,5 +1,7 @@
 # Other agents: the MCP server
 
+**Experimental:** the plugin does not register this server, and the snippets below are untested.
+
 Claude Code uses the command line and the skill. For other agents, `plugin/signoff/mcp_server.py` is an MCP server over
 stdio, standard library only, with two tools that never block:
 

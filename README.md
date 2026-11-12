@@ -75,7 +75,7 @@ has no browser. It sends the same requests the page does.
 | claude.ai (web, mobile) and Cowork | Not supported: the plugin does not install there. |
 | Chrome | Tested, headless, driven over the DevTools protocol. |
 | Firefox, Safari | Untested. |
-| Other agents (Codex, Cursor, Cline) | Through the [MCP server](docs/mcp.md#other-agents-the-mcp-server); the config snippets are untested. |
+| Other agents (Codex, Cursor, Cline) | Through the experimental [MCP server](docs/mcp.md#other-agents-the-mcp-server); the config snippets are untested. |
 
 ## Install, update, uninstall
 
@@ -227,7 +227,7 @@ All of them: [docs/limits.md](docs/limits.md).
 - [Running it yourself](docs/running.md): options, exit codes and the Signoff home.
 - [The inbox and the macOS app](docs/inbox.md): the inbox in full, and how to build the app.
 - [What runs, and the security model](docs/security.md): processes, files written, and the rules in full.
-- [Other agents: the MCP server](docs/mcp.md): Codex, Cursor and Cline.
+- [Other agents: the MCP server](docs/mcp.md): Codex, Cursor and Cline; experimental.
 - [Troubleshooting](docs/troubleshooting.md): messages and what to do about them.
 - [Limits](docs/limits.md): sizes and what Signoff does not do.
 - [Development and customizing](docs/development.md): tests, how the media is made, forking it with Claude.

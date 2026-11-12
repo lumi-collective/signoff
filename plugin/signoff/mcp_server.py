@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Signoff for agents other than Claude Code: an MCP server over stdio (newline-delimited JSON-RPC 2.0).
+Experimental: the plugin does not register it, and the per-agent snippets in the Signoff repository's docs/mcp.md are untested.
 
     python3 -I mcp_server.py
 
