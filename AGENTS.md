@@ -46,6 +46,10 @@ Instructions for coding agents working on Signoff. The README says what it does 
   folder, how to run it in the background and what to do with the answers. Its description is in every
   session's skill list, so it stays short, and the inbox's text is in `plugin/skills/signoff-inbox/SKILL.md`,
   whose description loads it only while the inbox is in play (todo markers, messages, `inbox done`).
+  SKILL.md loads whole on every use, so it stays under 9 KiB (`test_skill.py`): the less used fields are in
+  `fields.md` beside it, and what to do once Signoff exits (the exit codes, the answers file, the actions) in
+  `answers.md`. It links each by a relative path (a test checks that every `.md` beside it is linked), and they
+  hold no `${...}`, which only SKILL.md gets filled in.
 - `plugin/signoff/signoff.py`: the server and command line. Python 3.9+, standard library only. Importable:
   `load_decisions`, `check_answers`, `make_server`, `main`. Also the inbox (`signoff inbox serve|open|stop`,
   `InboxServer`), its `todo.md` reader (`parse_todos`, `markdown_blocks`), its control socket client
