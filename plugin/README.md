@@ -33,7 +33,10 @@ web server on 127.0.0.1 only, on a free port, with a secret token, new for each 
 your default browser on a single-use start link. It stops when you press Done, when another program
 finishes its answers files with Done, when it sits idle too long, or when you stop it. While the Signoff
 inbox is open, it starts no server and opens no page: it waits, with no time limit, for the answers the inbox
-writes. The plugin also adds a signoff command that runs the same program.
+writes. The plugin also adds a signoff command that runs the same program. The agent asks a batch of up to four short
+text-only questions, 2 to 4 options each, in the terminal instead of on a page; a bigger batch, or one with a
+picture, goes on the page. The Questions in chat setting in /config sets that number, from 0 (no batch in the
+terminal) to 4.
 
 The plugin also has hooks: in every Claude Code session, when the session starts or ends, when you send a
 prompt, when it asks for your permission or an answer, after each tool call and when a turn ends, Claude Code
@@ -104,7 +107,7 @@ folder, and the palette and light or dark the inbox kept, when there is one.
 It writes your answers next to them, as JSON and as Markdown, and a .gitignore in that folder if there is
 none. An answer you mark Private stays in the JSON for the agent, which is asked not to repeat it; the
 Markdown copy leaves it out. It is not encrypted. The past-decisions view reads the decisions folder you
-set (by default `.signoff` in the project) and writes nothing. Once the inbox has run on
+set (the Decisions folder setting; by default `.signoff` in the project) and writes nothing. Once the inbox has run on
 your computer, a run also writes an empty lock file beside each open round, and a short note of the run in the
 inbox's folder: the topic folder, a hash of the project folder's path, the round file names, its process id and
 when it started and ended. Once the inbox has run, the hooks also keep small files there: one per

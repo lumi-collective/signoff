@@ -21,6 +21,12 @@
       "title": "Waiting hint",
       "description": "While the Signoff inbox runs, how a session shows what waits on you in its project: band (a line above the prompt), status (a status line entry) or off (nothing, and no looking). Any other value is band.",
       "default": "band"
+    },
+    "chat": {
+      "type": "string",
+      "title": "Questions in chat",
+      "description": "A batch of up to this many short questions, each text only (no picture, board, attachment or marks) with 2 to 4 options, the agent asks in the terminal instead of on the page; a bigger batch goes on the page. 0 to 4; 0: no batch in the terminal. Any other value is 4.",
+      "default": "4"
     }
   }
 }

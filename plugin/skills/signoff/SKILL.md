@@ -1,6 +1,6 @@
 ---
 name: signoff
-description: Put your open decisions on a local web page for the user - mockups, highlight boxes, costs, your recommendation preselected; the answers come back as a file. Use for open decisions and tasks that wait on the user, batched in one round. A go or skip that blocks your next step, or a remote session, stays AskUserQuestion. The user's own instructions win.
+description: Put your open decisions on a local web page for the user - mockups, highlight boxes, costs, your recommendation preselected; the answers come back as a file. Use for open decisions and tasks that wait on the user, batched in one round. A go or skip that blocks your next step, a few short text questions, or a remote session, stays AskUserQuestion. The user's own instructions win.
 ---
 
 # Signoff
@@ -12,16 +12,16 @@ you. Rounds answered earlier stay on the page, read only, so the user can look b
 
 ## When to use it
 
-- **Signoff:** every open decision, and every task that waits on the user (a command to run, a click in a GUI),
-  goes on one round: collect them, one page per batch, not one per question. Put a picture on each option where
-  you can.
-- **AskUserQuestion:** only for a gate that blocks your next step (go or skip on a commit, a push, a publish), and in
-  a remote or mobile session where no browser page can open.
+- **Signoff:** every other open decision, and every task that waits on the user (a command to run, a click in a
+  GUI), goes on one round: collect them, one page per batch, not one per question. Put a picture on each option
+  where you can.
+- **AskUserQuestion:** a gate that blocks your next step (go or skip on a commit, a push, a publish); a remote or
+  mobile session where no browser page can open; and a batch of at most `${user_config.chat}` short questions,
+  each text only (no picture, board, attachment or marks) with 2 to 4 options. A bigger batch, or one with a
+  picture, goes whole on the page. That limit is 0 to 4 (0: no batch in chat); any other value means 4.
 - Nothing at all when the answer is obvious: do the obvious step and say so.
 - The user's own instructions win: if they would rather answer in chat, or set another threshold, follow that.
 - A todo item that waits on the user gets a marker while the Signoff inbox is on: the `signoff-inbox` skill says how.
-- **`--history`:** when the user wants to look back at earlier rounds, open the read-only past-decisions page
-  (see Past decisions).
 
 ## 1. Write the round
 

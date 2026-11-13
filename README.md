@@ -31,7 +31,9 @@ make sense next to a screenshot. Signoff puts them on one page, each with its pi
 recommendation, so you can go through them in a few minutes and leave a comment where a choice is not enough.
 
 A quick go or skip that blocks the agent's next step stays Claude Code's own question prompt in the terminal; the
-skill tells the agent so.
+skill tells the agent so. A batch of up to four short questions, text only with 2 to 4 options each, goes there
+too; a bigger batch, or one with a picture, goes on the page. The plugin's Questions in chat option in `/config`
+sets that number, from 0 (no batch in the terminal) to 4.
 
 ## How it works
 
