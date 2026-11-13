@@ -56,8 +56,9 @@ as you would for the same request typed here; mark it done the same way.
 
 A round the user answered in the inbox after its Signoff run had ended (Ctrl+C, the idle timeout, or a session
 that ended) comes the same way, on the Signoff rounds `"<topic folder> / round-01, round-02"`, with a fixed text
-the inbox wrote once every round named there was done. Tell the user the answers came in, and act once the user
-says so: find each round in that topic folder under the project's decisions folder, read its answers file and act
-on it as `${CLAUDE_PLUGIN_ROOT}/skills/signoff/answers.md` says (sections 3 and 4), outcome file included. A
-round that already has its `<round>.outcome.json`, or whose answers file does not say `done: true`, needs
-nothing. Do not run Signoff on these rounds again. Then mark the message done.
+the inbox wrote once the run's last open round was done (the rounds named are all the run asked). Tell the user
+the answers came in, and act once the user says so: find each round in that topic folder under the project's
+decisions folder, read its answers file and act on it as `${CLAUDE_PLUGIN_ROOT}/skills/signoff/answers.md` says
+(sections 3 and 4), outcome file included. A round that already has its `<round>.outcome.json`, or whose answers
+file does not say `done: true`, needs nothing. Do not run Signoff on these rounds again. Then mark the message
+done.
