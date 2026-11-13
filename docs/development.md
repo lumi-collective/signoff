@@ -48,9 +48,10 @@ python3 -I -B tests/e2e_browser.py
 ```
 
 Everything in `media/` is synthetic. The screenshots come from `examples/demo/` and `examples/history/` in
-headless Chrome, en-US, UTC. The two demos are made from the repository root:
+headless Chrome, en-US, UTC. They and the two demos are made from the repository root:
 
 ```
+python3 media/demo/screenshots.py      # media/*.png: the page, the Summary, marks, a board, the past decisions
 python3 media/demo/record_page.py      # media/demo-page.gif: the real page, driven over the DevTools protocol
 vhs media/demo-agent.tape              # media/demo-agent.gif: needs vhs; media/demo/setup.sh builds its folder
 ```

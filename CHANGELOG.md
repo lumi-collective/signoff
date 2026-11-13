@@ -7,6 +7,7 @@
 - **The MCP server is marked experimental** in its docs, the README and its module docstring: the plugin does not register it, and the per-agent snippets are untested.
 - **A smaller skill:** the `signoff` skill's `SKILL.md`, which loads whole each time the skill is used, went from about 17 KB to about 9 KB. The less used fields of a round moved word for word to `fields.md` beside it, and what to do once Signoff exits (the exit codes, the answers file, turning answers into actions) to `answers.md`; SKILL.md tells the agent when to read each, and now also says to put nothing secret in a board or an attachment.
 - **Issue trackers:** the `signoff-inbox` skill tells the agent, in a project that keeps its tasks in an issue tracker, to copy into the todo file only the issues that wait on you, each with its link, and to keep them in step. Signoff makes no call to the tracker.
+- **Fresh pictures:** the screenshots in the docs and the README's page demo show today's page, rounds in a sidebar, not tabs on top. `python3 media/demo/screenshots.py` now makes the screenshots as `record_page.py` makes the demo, and both run Signoff in a home of their own, so a running inbox on your machine no longer takes their run.
 
 ## 0.4.0
 

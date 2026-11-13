@@ -2,7 +2,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../media/page-dark.png">
-  <img alt="A Signoff page with four rounds as tabs: the first done, the second changed since it was accepted, the third accepted, the fourth open; a mockup with an orange box and a blue mark, the options with the recommendation preselected, and Other" src="../media/page-light.png">
+  <img alt="A Signoff page with the project's name and monogram in the header and four rounds in a sidebar, the first accepted and the second open, its three items listed under them; a mockup with the agent's orange box and the user's blue mark, the agent's recommendation and the cost in the margin, and the options under the picture with the two recommended ones and one more ticked" src="../media/page-light.png">
 </picture>
 
 - **The project's name** and its two-letter monogram (the same as in the inbox) start the header, and the name
@@ -54,7 +54,7 @@
   round there is nothing to accept: Done does both.
 - **A notice** from the agent, such as "Synthetic data only", shows as a banner under the header.
 
-![The Summary tab: each round with its state, every answer, flags where an answer departs from the recommendation, has a comment or marks, comments quoted, and a filter for All, With comment and Not the recommendation](../media/summary.png)
+![The Summary: every round accepted in the sidebar; each round with its state and every answer, flags where an answer departs from the recommendation or has a mark, a filter for All, With comment and Not the recommendation, and Done at the end](../media/summary.png)
 
 ## Marks
 
@@ -63,7 +63,7 @@ picture you mean, in blue so it stands apart from the agent's orange boxes, and 
 mouse, **Add a mark** puts one in the middle of the picture; on the mark's button the arrow keys move it and
 Shift with the arrow keys resizes it. **Remove** deletes it.
 
-![A mockup with the agent's orange box and the user's blue mark numbered 1, and the mark's comment under the options](../media/marks.png)
+![An item: a mockup with the agent's orange box and the user's blue mark numbered 1 over a button, and the mark's comment under the options](../media/marks.png)
 
 ## Live mockups (boards)
 
@@ -71,7 +71,7 @@ Instead of a picture, an item can show a board: the agent's own HTML page, runni
 light or dark and for a 1280, 768 or 390 pixel wide view, scaled to fit. Toggles and menus in it work; it cannot
 read the Signoff page or save anything.
 
-![A board shown dark at 768 pixels wide, with the theme and width switches above it](../media/board.png)
+![An item with a board shown dark at 768 pixels wide, the theme and width switches above it, the recommendation and cost in the margin, and the options under it](../media/board.png)
 
 ## Keyboard
 
@@ -110,4 +110,4 @@ themes), the page uses a black and white high-contrast set instead. The palettes
 Its own labels are in English, or in Hungarian when the decisions file's `lang` says `hu`; your content can be
 in any language.
 
-<img alt="The same page at phone width: the header, the notice, the tabs, and the mockup above the question" src="../media/page-phone.png" width="320">
+<img alt="The same page at phone width, in Focus: the header, the notice, item 1 of 3 with Previous and Next, the question and its mockup with the mark, the recommendation under it, and Accept this round at the bottom" src="../media/page-phone.png" width="320">

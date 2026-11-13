@@ -25,4 +25,4 @@ the page shows that line with the round:
 Nothing on this page can be changed and nothing is written: it has no save route and no Done. Close it with
 Ctrl+C; it also stops after the idle timeout.
 
-![The past-decisions page: rounds with dates, status and outcomes on the left, the chosen round read only on the right](../media/history.png)
+![The past-decisions page: the project's name in the header, rounds with dates, status and outcomes in the sidebar, the chosen round with its outcome read only on the right](../media/history.png)

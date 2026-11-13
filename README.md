@@ -11,7 +11,7 @@ from a notification and the agent carries on. Nothing leaves your machine.**
 [![test](https://github.com/lumi-collective/signoff/actions/workflows/test.yml/badge.svg)](https://github.com/lumi-collective/signoff/actions/workflows/test.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-![Two rounds of questions as tabs: a box ticked, a mark drawn on a mockup with a comment, the first round accepted, the second accepted with Ctrl+Enter, the Summary tab, then Done](media/demo-page.gif)
+![Two rounds of questions in a sidebar: a mark drawn on a mockup with a comment, a box ticked, the first round accepted, the second accepted with Ctrl+Enter, the Summary, then Done](media/demo-page.gif)
 
 Signoff is a Claude Code plugin: a small Python server, one static page, and a skill that teaches the agent
 when and how to use them. The agent writes a JSON file of decisions for each round of questions. Signoff serves

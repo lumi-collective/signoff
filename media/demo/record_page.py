@@ -4,7 +4,7 @@
     python3 media/demo/record_page.py            (from the repository root)
 
 It copies two rounds of examples/demo into a temporary folder, starts Signoff on them, and drives a headless
-Chrome over the DevTools protocol: pick an option, draw a mark, accept both rounds, look at the Summary, press
+Chrome over the DevTools protocol: draw a mark, pick an option, accept both rounds, look at the Summary, press
 Done. Each step is a screenshot; ffmpeg turns them into a GIF. The data is the synthetic demo, the browser runs
 in en-US and UTC, and the dot that moves around is drawn by this script to show where the pointer is.
 Needs Google Chrome or Chromium (set CHROME to its path if it is not found) and ffmpeg.
@@ -132,7 +132,7 @@ def main():
     frames.mkdir()
     server = subprocess.Popen([sys.executable, "-I", "-B", str(ROOT / "plugin" / "signoff" / "signoff.py"), str(topic),
                                "--no-open", "--timeout", "3"], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                              universal_newlines=True)
+                              universal_newlines=True, env=dict(os.environ, SIGNOFF_INBOX_HOME=str(work / "no-home")))
     start = re.search(r"http://\S+", server.stderr.readline()).group(0)
     b = Browser(str(work / "profile"))
     shots = []
@@ -180,7 +180,6 @@ def main():
         b.call("Page.navigate", url=start)
         time.sleep(1.5)
         point(640, 400, 1.8)                                   # the page: two rounds, a Summary, Done waiting
-        click("#r0-i0-o2", 1.0)                                # tick Owner too
         x, y = center("#panel-0 svg.marks")                    # draw a mark over the Filter button
         layer = json.loads(b.js("JSON.stringify(document.querySelector('#panel-0 svg.marks').getBoundingClientRect())"))
         x0, y0 = layer["x"] + layer["width"] * 0.49, layer["y"] + layer["height"] * 0.09
@@ -199,6 +198,8 @@ def main():
             b.call("Input.insertText", text=part)
             shot(0.35)
         time.sleep(1.0)                                        # let the autosave land
+        scroll_to("#r0-i0-o2")                                 # the options sit under the picture
+        click("#r0-i0-o2", 1.0)                                # tick Owner too
         scroll_to("#accept-0")
         click("#accept-0", 1.6)                                # accept: on to the next round
         click("#r1-i0-o1", 1.0)                                # Wording: the other label
