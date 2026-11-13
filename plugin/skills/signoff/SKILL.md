@@ -17,8 +17,8 @@ you. Rounds answered earlier stay on the page, read only, so the user can look b
   where you can.
 - **AskUserQuestion:** a gate that blocks your next step (go or skip on a commit, a push, a publish); a remote or
   mobile session where no browser page can open; and a batch of at most `${user_config.chat}` short questions,
-  each text only (no picture, board, attachment or marks) with 2 to 4 options. A bigger batch, or one with a
-  picture, goes whole on the page. That limit is 0 to 4 (0: no batch in chat); any other value means 4.
+  each text only and not `sensitive` (no picture, board, attachment or marks) with 2 to 4 options. A bigger
+  batch, or one with a picture, goes whole on the page. That limit is 0 to 4 (0: no batch in chat); any other value means 4.
 - Nothing at all when the answer is obvious: do the obvious step and say so.
 - The user's own instructions win: if they would rather answer in chat, or set another threshold, follow that.
 - A todo item that waits on the user gets a marker while the Signoff inbox is on: the `signoff-inbox` skill says how.
