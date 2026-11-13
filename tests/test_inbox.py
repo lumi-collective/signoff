@@ -2705,6 +2705,16 @@ class InboxOrphan(InboxTest):
         self.assertEqual(self.save(page, ANSWER)[0].status, 200)  # an open tab saves on
         self.assertEqual(len(server.groups), 1)
 
+    def test_the_round_page_says_whether_its_rounds_are_orphan(self):
+        e = self.register()
+        self.start()
+        start, page = self.open()
+        self.assertIs(self.view(page + "run/0/")[0]["orphan"], False)
+        self.write(self.home / "runs" / (e["run"] + ".json"), dict(e, ended=signoff.utc_now()))
+        self.view(page)  # the look
+        data = self.view(page + "run/0/")[0]
+        self.assertEqual((data["orphan"], data["held"]), (True, False))
+
     def test_a_live_run_on_other_rounds_ends_the_orphan_group(self):
         self.register(pid=dead_pid())
         server = self.start()

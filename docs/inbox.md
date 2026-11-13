@@ -21,7 +21,8 @@ items an agent marked as waiting on you, under one heading per project; the line
 in how many projects (`3 waiting on you in 2 projects`). Open a round to answer it on the usual page, in the same tab; Done there
 writes the answers file, and the waiting run picks it up and wakes its agent. A project's open round whose run ended
 or died before it was answered (and that has no outcome file) stays there for up to 14 days, counted like the others;
-its answers file is written as usual. A round another Signoff run has open on its own page shows read only. A Claude Code session that waits on you for a permission or an answer to its
+its answers file is written as usual. Its row (**Session ended**) and its page say that the session that asked is
+gone. A round another Signoff run has open on its own page shows read only. A Claude Code session that waits on you for a permission or an answer to its
 question (from about six seconds after it asks) is a row too, with its project and how long it has waited; the
 inbox does not answer it for you. Its row says to go to its terminal, or, for a background session (`claude
 --bg`), gives `claude attach <id>` to copy. **Answered** lists the rounds answered in the last day: *sent*, or *working* once

@@ -791,6 +791,8 @@ body.run.focusing .rp>.item[data-item]:not(.cur),body.run.focusing .rp>h2.group,
       outcome: 'Outcome', logged: 'logged in {log}, {date}', warning: 'Warning', error: 'This file cannot be read.',
       pick: 'Pick a round from the list.',
       inbox: 'Inbox', held: 'This round is open in another Signoff run, so it is shown read only here. Answer it there.',
+      orphan: 'The session that asked this has ended; your answer goes to the project\'s next session.',
+      orphanKind: 'Session ended',
       waitingHead: 'Waiting on you', oldestFirst: 'Oldest first', newestFirst: 'Newest first',
       waitSummary: '{n} waiting on you in {p}', waitSummaryNone: '{n} waiting on you', moreOpen: '{p}: {n} more open', moreOpenOne: '{p}: 1 more open',
       stepsDone: '{n} of {m} steps done', later: 'Later', laterSent: 'Later: sent', laterDone: 'Later: done',
@@ -893,6 +895,8 @@ body.run.focusing .rp>.item[data-item]:not(.cur),body.run.focusing .rp>h2.group,
       outcome: 'Eredmény', logged: 'naplózva: {log}, {date}', warning: 'Figyelem', error: 'Ez a fájl nem olvasható.',
       pick: 'Válassz egy kört a listából.',
       inbox: 'Inbox', held: 'Ez a kör egy másik Signoff-futásban van nyitva, ezért itt csak olvasható. Ott válaszolj rá.',
+      orphan: 'A kérdező munkamenet már nincs; a válaszod a projekt következő munkamenetéhez kerül.',
+      orphanKind: 'A munkamenet véget ért',
       agentRecommends: 'Az ágens javaslata', outline: 'Ebben a körben', itemOf: '{i}. tétel / {n}', roundOf: '{i}. kör / {n}',
       answersN: '{n} válasz', signNote: 'A Kész minden választ elküld az ágensnek.', stChanged: 'módosult',
       kItemShort: 'tétel', kOptionShort: 'lehetőség', kLeave: 'kilépés a Fókuszból vagy az oldalsáv bezárása; vagy ez a lista',
@@ -1847,10 +1851,12 @@ body.run.focusing .rp>.item[data-item]:not(.cur),body.run.focusing .rp>h2.group,
     waiting.forEach(function (w) {
       if (w.kind === 'round') {
         var run = 'run/' + Number(w.group) + '/', tab = w.tab && w.tab !== w.title ? w.tab : '';
-        row(s, w, as(w.held ? {kind: L.heldKind, cls: 'k-t', glyph: '◇'} : Q, {title: w.title, sub: tab,
+        row(s, w, as(w.held ? {kind: L.heldKind, cls: 'k-t', glyph: '◇'}
+          : w.orphan ? {kind: L.orphanKind, cls: 'k-q', glyph: '◆'} : Q, {title: w.title, sub: tab,
           find: function () { return w.items || []; }, stamp: w.since, href: run, fill: function (box) {
             if (tab) box.append(el('p', '', tab));
             if (w.held) box.append(el('p', 'ib-vuln-note', L.held));
+            else if (w.orphan) box.append(el('p', 'ib-vuln-note', L.orphan));
             var go = el('a', 'ib-go', L.openRound);
             go.href = run;
             box.append(go);
@@ -3113,6 +3119,9 @@ body.run.focusing .rp>.item[data-item]:not(.cur),body.run.focusing .rp>h2.group,
       byId('banner').textContent = L.held;
       byId('banner').classList.add('on');
       doneButton.hidden = true;
+    } else if (data.orphan) {
+      byId('banner').textContent = L.orphan;  // the run that asked is gone; the round still takes answers
+      byId('banner').classList.add('on');
     }
   }
   function showHeader(d) {

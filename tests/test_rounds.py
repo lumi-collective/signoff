@@ -672,6 +672,21 @@ class Page(unittest.TestCase):
         self.assertTrue(used and used <= en, used - en)
         self.assertEqual(used - hu, set())
 
+    def test_an_orphan_round_says_its_session_is_gone_in_english_and_hungarian(self):
+        labels = self.page[self.page.index("var LABELS = {"):self.page.index("var data = JSON.parse")]
+        en, hu = labels[:labels.index("hu: {")], labels[labels.index("hu: {"):]
+        self.assertIn("orphan: 'The session that asked this has ended; your answer goes to the project\\'s next "
+                      "session.'", en)
+        self.assertIn("orphan: 'A kérdező munkamenet már nincs; a válaszod a projekt következő munkamenetéhez "
+                      "kerül.'", hu)
+        self.assertIn("orphanKind: 'Session ended'", en)
+        self.assertIn("orphanKind: '", hu)
+        script = self.page[self.page.index("var data = JSON.parse"):]
+        inbox = script[script.index("// ---- The inbox."):script.index("if (data.mode === 'inbox')")]
+        self.assertRegex(inbox, r"\bL\.orphan\b")  # the list's opened row
+        self.assertRegex(inbox, r"\bL\.orphanKind\b")  # the list's row
+        self.assertRegex(script.replace(inbox, ""), r"\bL\.orphan\b")  # the round's page, in the round's language
+
     def test_no_label_is_defined_twice(self):
         # A second key of the same name wins silently, so an inbox label could rename a round page's heading.
         labels = self.page[self.page.index("var LABELS = {"):self.page.index("var data = JSON.parse")]

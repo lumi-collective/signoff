@@ -315,7 +315,9 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   list) and lets go, and a changed round is read again in a new group, also when a live run comes on its rounds,
   so its offers are `gone` and its old tab's saves get 404. Orphan rounds in no group go into one
   group per newest gone run that lists them, locked and saved as a live run's, its Done gate over them; its row
-  in Waiting on you has `orphan: true` and `since` that run's `started`. A live run whose rounds are exactly a
+  in Waiting on you has `orphan: true` and `since` that run's `started`, and its page's data `orphan: true`. The
+  row's kind is `L.orphanKind` (a held round's stays Open elsewhere), the opened row and the round's page (its
+  banner, in the round's language) say `L.orphan`: the session that asked is gone. A live run whose rounds are exactly a
   group's (as `runs/` lists them: the open ones) takes that group on, live, with its number and open tabs; a
   live run that lists any of its rounds otherwise ends it, so its old tab's saves get 404. A page run whose round lock the
   inbox took after the run's own look (the inbox started in between) looks again and is a waiter. Saves go through

@@ -2189,7 +2189,7 @@ class _Group(_Rounds):
 
     def view(self):
         data = _Rounds.view(self)
-        data.update(inbox=True, held=not self.writable)
+        data.update(inbox=True, held=not self.writable, orphan=self.orphan)
         return data
 
 
