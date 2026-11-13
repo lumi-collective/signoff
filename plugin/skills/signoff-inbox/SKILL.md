@@ -27,6 +27,12 @@ inbox shows it with a Copy button, never runs it and never edits the file: tick 
 A command that deletes uses absolute paths and never depends on the current folder (`rm -rf /Users/me/app/build`,
 not `rm -rf build`); the inbox warns on a relative path in `rm`, `rmdir`, `trash`, `del` and `Remove-Item`.
 
+When the project keeps its tasks in an issue tracker, copy into the todo file only the issues that wait on the
+user, each as an item with the issue's link written `<https://…>` (the inbox shows it as a link; a bare URL stays
+text), marked by the rules above. Keep them in step: when an issue changes, change the item's indented lines,
+not its first line, which the user's messages are tied to; tick the item once the issue no longer waits on the
+user. An item the user parked with Later stays open and unmarked. Signoff never contacts the tracker.
+
 ## Messages from the inbox
 
 The user can also send you a message on an open todo item from the inbox. It reaches you as one line, from the

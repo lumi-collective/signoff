@@ -59,7 +59,9 @@ back as it was. The search survives the page's own reload.
 | `?` | lists the shortcuts |
 
 A project's todo file is the first of `_bmad-output/todo.md`, `TODO.md` and `todo.md` under its root (the root the
-hooks noted). The inbox only reads it. An open item is a Markdown task, `- [ ] text`, with its indented lines; an
+hooks noted). The inbox only reads it, and never calls an issue tracker: for a project whose tasks are in one, the
+agent copies into the todo file only the issues that wait on you, each with its link as `<https://…>` (a bare URL
+stays text), and keeps them in step. An open item is a Markdown task, `- [ ] text`, with its indented lines; an
 agent marks one as waiting on you right after the checkbox, in English:
 
 ```markdown
