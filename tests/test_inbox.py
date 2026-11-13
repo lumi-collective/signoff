@@ -590,11 +590,17 @@ class InboxPage(InboxTest):
         self.assertEqual([w["since"] for w in rows], ["2023-11-14T22:13:20Z"])
         self.assertTrue(all(signoff.SAVED_PATTERN.fullmatch(w["since"]) for w in data["waiting"]))
 
-    def test_runs_that_ended_or_died_are_not_waiting(self):
-        self.register(ended=signoff.utc_now())
+    def test_runs_outside_a_project_that_ended_or_died_are_not_waiting(self):
+        # A project run that ended or died leaves orphan rounds instead (InboxOrphan); an old one leaves nothing.
+        def register(**kw):
+            e = entry(self.topic, ["round-01.json", "round-02.json"], **kw)
+            self.write(self.home / "runs" / (e["run"] + ".json"), e)
+            return e
+
+        register(ended=signoff.utc_now())
         dead = subprocess.Popen([sys.executable, "-c", "pass"])
         dead.wait()
-        self.register(pid=dead.pid)
+        register(pid=dead.pid)
         old = self.register()
         stale = self.home / "runs" / (old["run"] + ".json")
         os.utime(str(stale), (time.time() - signoff.RUNS_MAX_AGE - 60,) * 2)
@@ -1206,7 +1212,7 @@ class InboxState(InboxTest):
             self.assertEqual((resp.status, resp.getheader("Content-Type")), (200, "application/json"))
             self.assertEqual(json.loads(body)["waiting"], 3)
             # No page load from here on: the inbox looks by itself.
-            self.write(self.home / "runs" / (e["run"] + ".json"), dict(e, ended=signoff.utc_now()))
+            InboxOffer.end(self, e)
             self.assertEqual(self.wait_state(1)["projects"], [{"id": self.pid, "monogram": "PR", "waiting": 1}])
             with open(str(self.root / "TODO.md"), "a", encoding="utf-8") as f:
                 f.write("- [ ] (waiting on you: sign the release) Release 1.0\n")
@@ -1487,7 +1493,11 @@ class InboxOffer(InboxTest):
         return topic, e
 
     def end(self, e):
+        """The run ends and its agent takes the answers in (an outcome file per round): nothing of it waits now. A
+        run that ends without them leaves orphan rounds (InboxOrphan)."""
         self.write(self.home / "runs" / (e["run"] + ".json"), dict(e, ended=signoff.utc_now()))
+        for n in e["rounds"]:
+            (Path(e["folder"]) / n).with_suffix(".outcome.json").write_text("{}", encoding="utf-8")
 
     def ctl(self, op, **fields):
         return signoff.inbox_request(self.home, op, **fields)
@@ -2525,6 +2535,345 @@ class InboxLife(InboxTest):
         with self.assertRaises(signoff.DecisionsError):
             signoff.InboxServer(self.home)
         self.assertEqual((self.home / "inbox.sock").read_bytes(), b"mine")
+
+
+class InboxOrphan(InboxTest):
+    """An orphan round (AD-24): open, listed by a recent project run that is gone, and by no live run. The inbox
+    shows, counts and writes it as it does a live run's, under one group number for as long as it is orphan."""
+
+    case, ctl = InboxOffer.case, InboxOffer.ctl
+
+    def rounds_waiting(self, page):
+        return [w for w in self.view(page)[0]["waiting"] if w["kind"] == "round"]
+
+    def locked(self, name="round-01.json"):
+        """Whether another open file holds the round's lock (flock is per open file, so this process counts)."""
+        fd = signoff.try_lock(self.topic / (name + ".lock"))
+        if fd is not None:
+            signoff.unlock(fd)
+        return fd is None
+
+    def shown_counted_and_writable(self, e):
+        start, page = self.open()
+        rows = self.rounds_waiting(page)
+        self.assertEqual([(w["title"], w["group"], w["orphan"], w["held"]) for w in rows],
+                         [("Round 1", 0, True, False), ("Round 2", 0, True, False)])
+        self.assertEqual(rows[0]["since"], e["started"])
+        state = json.loads((self.home / "state.json").read_text(encoding="utf-8"))
+        self.assertEqual((state["waiting"], state["projects"]),
+                         (3, [{"id": self.pid, "monogram": "PR", "waiting": 3}]))  # two rounds and the todo item
+        self.assertTrue(self.locked())
+        resp, out = self.save(page, ANSWER)
+        self.assertEqual(resp.status, 200, out)
+        saved = json.loads((self.topic / "round-01.answers.json").read_text(encoding="utf-8"))
+        self.assertEqual(saved["answers"]["layout"]["comment"], "from the inbox")
+        self.stop()
+        self.assertFalse(self.locked())  # the inbox lets go when it stops
+
+    def test_a_dead_project_run_leaves_its_open_rounds_waiting_counted_and_writable(self):
+        e = self.register(pid=dead_pid())
+        self.start()
+        self.shown_counted_and_writable(e)
+
+    def test_an_ended_project_run_leaves_them_too(self):
+        e = self.register(ended=signoff.utc_now())  # Ctrl+C or the idle timeout: the round still waits
+        self.start()
+        self.shown_counted_and_writable(e)
+
+    def test_no_orphan_without_a_project_with_an_outcome_done_old_or_gone(self):
+        def runs(folder, names, **kw):
+            e = entry(folder, names, pid=dead_pid(), **kw)
+            self.write(self.home / "runs" / (e["run"] + ".json"), e)
+            return e
+
+        runs(self.topic, ["round-01.json", "round-02.json"], project=None)  # outside any project
+        (self.topic / "round-01.outcome.json").write_text("{}", encoding="utf-8")
+        runs(self.topic, ["round-01.json"], project=self.pid)  # its outcome is there
+        (self.topic / "round-02.answers.json").write_text(json.dumps(done_record()), encoding="utf-8")
+        runs(self.topic, ["round-02.json"], project=self.pid)  # answered with Done
+        runs(self.root / ".signoff" / "moved-away", ["round-01.json"], project=self.pid)  # its folder is gone
+        old = self.topic.parent / "old"
+        old.mkdir()
+        (old / "round-01.json").write_bytes((self.topic / "round-01.json").read_bytes())
+        stale = runs(old, ["round-01.json"], project=self.pid)
+        os.utime(str(self.home / "runs" / (stale["run"] + ".json")), (time.time() - signoff.RUNS_MAX_AGE - 60,) * 2)
+        err = io.StringIO()
+        with mock.patch.object(sys, "stderr", err):
+            server = self.start()
+            start, page = self.open()
+            for _ in range(3):  # several looks: nothing is made, so no group number is used up
+                self.assertEqual(self.rounds_waiting(page), [])
+        self.assertEqual(server.groups, [])
+        self.assertEqual(err.getvalue(), "")  # a folder that is gone is not said
+        self.assertFalse(self.locked())
+        fd = signoff.try_lock(old / "round-01.json.lock")
+        self.assertIsNotNone(fd)
+        signoff.unlock(fd)
+
+    def test_a_live_run_on_the_same_rounds_keeps_the_group_number(self):
+        (self.topic / "round-01.answers.json").write_text(json.dumps(done_record()), encoding="utf-8")
+        dead = entry(self.topic, ["round-01.json", "round-02.json"], project=self.pid, pid=dead_pid())
+        self.write(self.home / "runs" / (dead["run"] + ".json"), dead)
+        server = self.start()
+        start, page = self.open()
+        self.assertEqual([(w["title"], w["group"], w["orphan"]) for w in self.rounds_waiting(page)],
+                         [("Round 2", 0, True)])
+        # A new run on the folder lists its open rounds only, as register_run does: the orphan group's key.
+        again = entry(self.topic, ["round-02.json"], project=self.pid)
+        self.write(self.home / "runs" / (again["run"] + ".json"), again)
+        self.assertEqual([(w["group"], w["orphan"]) for w in self.rounds_waiting(page)], [(0, False)])
+        self.assertEqual(self.save(page, ANSWER, round_=0)[0].status, 200)  # its one round, round-02
+        self.assertTrue(self.locked("round-02.json"))
+        # That run is gone too: the group goes on as orphan, still number 0.
+        self.write(self.home / "runs" / (again["run"] + ".json"), dict(again, ended=signoff.utc_now()))
+        self.assertEqual([(w["group"], w["orphan"]) for w in self.rounds_waiting(page)], [(0, True)])
+        self.assertEqual(len(server.groups), 1)
+
+    def test_a_round_file_changed_while_orphan_is_read_again(self):
+        e = entry(self.topic, ["round-01.json"], project=self.pid, pid=dead_pid())
+        self.write(self.home / "runs" / (e["run"] + ".json"), e)
+        server = self.start()
+        start, page = self.open()
+        self.assertEqual([(w["title"], w["group"]) for w in self.rounds_waiting(page)], [("Round 1", 0)])
+        data = json.loads((self.topic / "round-01.json").read_text(encoding="utf-8"))
+        data["title"] = "Round 1, asked again"
+        (self.topic / "round-01.json").write_text(json.dumps(data), encoding="utf-8")
+        os.utime(str(self.topic / "round-01.json"), (time.time() + 5,) * 2)  # a new time, however coarse the clock
+        self.assertEqual([(w["title"], w["group"]) for w in self.rounds_waiting(page)], [("Round 1, asked again", 1)])
+        # A re-run on it takes the new group, so a Done there is for the version that run waits on.
+        again = entry(self.topic, ["round-01.json"], project=self.pid)
+        self.write(self.home / "runs" / (again["run"] + ".json"), again)
+        self.assertEqual([(w["group"], w["orphan"]) for w in self.rounds_waiting(page)], [(1, False)])
+        self.assertEqual(self.save(page, dict(ANSWER, done=True), group=1)[0].status, 200)
+        saved = json.loads((self.topic / "round-01.answers.json").read_text(encoding="utf-8"))
+        self.assertEqual(saved["decisions"]["sha256"],
+                         hashlib.sha256((self.topic / "round-01.json").read_bytes()).hexdigest())
+        self.assertEqual(len(server.groups), 2)
+
+    def test_a_round_file_changed_while_orphan_then_rerun_gets_a_fresh_group(self):
+        e = entry(self.topic, ["round-01.json"], project=self.pid, pid=dead_pid())
+        self.write(self.home / "runs" / (e["run"] + ".json"), e)
+        server = self.start()
+        start, page = self.open()
+        self.assertEqual(len(self.rounds_waiting(page)), 1)
+        data = json.loads((self.topic / "round-01.json").read_text(encoding="utf-8"))
+        data["title"] = "Round 1, asked again"
+        (self.topic / "round-01.json").write_text(json.dumps(data), encoding="utf-8")
+        os.utime(str(self.topic / "round-01.json"), (time.time() + 5,) * 2)
+        again = entry(self.topic, ["round-01.json"], project=self.pid)  # no look in between
+        self.write(self.home / "runs" / (again["run"] + ".json"), again)
+        self.assertEqual([(w["title"], w["group"], w["orphan"]) for w in self.rounds_waiting(page)],
+                         [("Round 1, asked again", 1, False)])
+        self.assertEqual(len(server.groups), 2)
+
+    def test_an_offer_on_an_orphan_round_changed_since_is_gone(self):
+        topic, e = self.case([one_round(question("q"))])
+        self.write(self.home / "runs" / (e["run"] + ".json"), dict(e, pid=dead_pid()))
+        self.start()
+        offer = self.ctl("offer")["offer"]["id"]
+        (topic / "round-01.json").write_text(json.dumps(one_round(question("q", rec="b"))), encoding="utf-8")
+        os.utime(str(topic / "round-01.json"), (time.time() + 5,) * 2)
+        self.assertEqual(self.ctl("accept", offer=offer), {"error": "gone"})
+        self.assertFalse((topic / "round-01.answers.json").exists())
+
+    def test_a_round_file_of_another_user_is_no_orphan(self):
+        server = self.start()  # the home is the user's; the round files then count as another's
+        pid = dead_pid()
+        with mock.patch.object(signoff.os, "getuid", return_value=os.getuid() + 1):
+            self.register(pid=pid)
+            server.view()
+        self.assertEqual(server.groups, [])
+        self.assertFalse(self.locked())
+
+    def test_a_listed_name_that_is_a_link_uses_one_number(self):
+        os.symlink("round-01.json", str(self.topic / "round-05.json"))
+        e = entry(self.topic, ["round-05.json"], project=self.pid, pid=dead_pid())
+        self.write(self.home / "runs" / (e["run"] + ".json"), e)
+        server = self.start()
+        start, page = self.open()
+        for _ in range(3):
+            self.assertEqual([w["group"] for w in self.rounds_waiting(page)], [0])
+        self.assertEqual(len(server.groups), 1)
+
+    def test_a_live_group_whose_run_goes_becomes_orphan_with_its_number(self):
+        e = self.register()
+        server = self.start()
+        start, page = self.open()
+        self.assertEqual([(w["group"], w["orphan"]) for w in self.rounds_waiting(page)], [(0, False)] * 2)
+        self.write(self.home / "runs" / (e["run"] + ".json"), dict(e, ended=signoff.utc_now()))
+        self.assertEqual([(w["group"], w["orphan"]) for w in self.rounds_waiting(page)], [(0, True)] * 2)
+        self.assertEqual(self.save(page, ANSWER)[0].status, 200)  # an open tab saves on
+        self.assertEqual(len(server.groups), 1)
+
+    def test_a_live_run_on_other_rounds_ends_the_orphan_group(self):
+        self.register(pid=dead_pid())
+        server = self.start()
+        start, page = self.open()
+        self.assertEqual({w["group"] for w in self.rounds_waiting(page)}, {0})
+        other = entry(self.topic, ["round-02.json"], project=self.pid)
+        self.write(self.home / "runs" / (other["run"] + ".json"), other)
+        rows = self.rounds_waiting(page)
+        # round-02 is the live run's; round-01, still orphan, is a group of its own.
+        self.assertEqual(sorted((w["title"], w["orphan"]) for w in rows), [("Round 1", True), ("Round 2", False)])
+        self.assertNotIn(0, {w["group"] for w in rows})
+        self.assertEqual(self.save(page, ANSWER, group=0)[0].status, 404)  # the old tab reloads
+        for _ in range(3):
+            self.rounds_waiting(page)
+        self.assertEqual(len(server.groups), 3)  # no number used up per look
+
+    def test_an_orphan_round_answered_with_done_leaves_the_list_and_its_lock(self):
+        e = entry(self.topic, ["round-01.json"], project=self.pid, pid=dead_pid())
+        self.write(self.home / "runs" / (e["run"] + ".json"), e)
+        server = self.start()
+        start, page = self.open()
+        self.assertEqual(len(self.rounds_waiting(page)), 1)
+        self.assertTrue(self.locked())
+        self.assertEqual(self.save(page, dict(ANSWER, done=True))[0].status, 200)
+        self.assertEqual(self.rounds_waiting(page), [])
+        self.assertEqual(self.save(page, ANSWER)[0].status, 404)  # the group went with its last open round
+        self.assertEqual([s["title"] for s in self.view(page)[0]["sent"]], ["Round 1"])
+        self.assertFalse(self.locked())
+        for _ in range(3):
+            self.rounds_waiting(page)
+        self.assertEqual(server.groups, [None])
+        self.assertTrue(json.loads((self.topic / "round-01.answers.json").read_text(encoding="utf-8"))["done"])
+        deadline = time.monotonic() + 10
+        while json.loads((self.home / "state.json").read_text(encoding="utf-8"))["waiting"] != 1:
+            self.assertLess(time.monotonic(), deadline, "state.json never counted the round down")
+            time.sleep(0.05)
+
+    def test_a_round_file_that_goes_ends_its_orphan_group(self):
+        self.register(pid=dead_pid())
+        server = self.start()
+        start, page = self.open()
+        self.assertEqual(len(self.rounds_waiting(page)), 2)
+        (self.topic / "round-02.json").rename(self.topic / "moved.json")
+        self.assertEqual([(w["title"], w["group"]) for w in self.rounds_waiting(page)], [("Round 1", 1)])
+        self.assertFalse(self.locked("round-02.json"))
+        for _ in range(3):
+            self.rounds_waiting(page)
+        self.assertEqual(len(server.groups), 2)
+
+    def test_the_newest_gone_run_owns_a_round(self):
+        older = entry(self.topic, ["round-01.json", "round-02.json"], project=self.pid, pid=dead_pid(),
+                      started="2026-01-01T00:00:00Z")
+        newer = entry(self.topic, ["round-01.json"], project=self.pid, pid=dead_pid(), started="2026-01-02T00:00:00Z")
+        for e in (older, newer):
+            self.write(self.home / "runs" / (e["run"] + ".json"), e)
+        self.start()
+        rows = self.rounds_waiting(self.open()[1])
+        self.assertEqual(sorted((w["title"], w["since"]) for w in rows),
+                         [("Round 1", newer["started"]), ("Round 2", older["started"])])
+        self.assertEqual(len({w["group"] for w in rows}), 2)
+
+    def test_a_round_that_cannot_be_read_is_said_once_and_uses_no_number(self):
+        (self.topic / "round-02.json").write_text("{", encoding="utf-8")
+        self.register(pid=dead_pid())
+        err = io.StringIO()
+        with mock.patch.object(sys, "stderr", err):
+            server = self.start()
+            start, page = self.open()
+            for _ in range(3):
+                self.assertEqual(self.rounds_waiting(page), [])
+        self.assertEqual(server.groups, [])
+        self.assertEqual(len(err.getvalue().splitlines()), 1, err.getvalue())
+
+    def test_a_look_after_close_takes_no_orphan_lock(self):
+        self.register(pid=dead_pid())
+        server = self.start()
+        self.stop()
+        server.view()  # a page request still running when the inbox stopped
+        self.assertFalse(self.locked())
+
+    def test_a_run_gone_after_close_gets_no_group_and_no_lock(self):
+        server = self.start()
+        self.stop()
+        self.register(pid=dead_pid())
+        server.view()
+        self.assertFalse(self.locked())
+        self.assertEqual([g for g in server.groups if g], [])
+
+    def test_rows_offer_and_accept_carry_an_orphan_round(self):
+        topic, e = self.case([one_round(question("q"))])
+        self.write(self.home / "runs" / (e["run"] + ".json"), dict(e, pid=dead_pid()))
+        self.start()
+        rows = self.ctl("rows", project=self.pid)
+        self.assertEqual([(r["run"], r["title"]) for r in rows["rounds"]], [(0, "R3")])
+        offer = self.ctl("offer")["offer"]
+        self.assertEqual((offer["round"], offer["answer"]), ("R3", "Alpha"))
+        self.assertEqual(self.ctl("accept", offer=offer["id"]), {"ok": True})
+        saved = json.loads((topic / "round-01.answers.json").read_text(encoding="utf-8"))
+        self.assertEqual((saved["done"], saved["answers"]["q"]["source"]), (True, "notification"))
+        self.assertEqual(self.ctl("rows", project=self.pid)["rounds"], [])
+
+    def test_an_offer_and_a_target_outlive_their_run_while_its_round_is_orphan(self):
+        topic, e = self.case([one_round(question("q"))])
+        self.start()
+        offer = self.ctl("offer")["offer"]["id"]
+        k = self.ctl("rows", project=self.pid)["inbox"]
+        self.write(self.home / "runs" / (e["run"] + ".json"), dict(e, ended=signoff.utc_now()))  # no outcome
+        self.assertEqual([r["run"] for r in self.ctl("rows", project=self.pid)["rounds"]], [0])
+        resp, _ = self.request("GET", self.ctl("open", run=0, round=0, item=0, inbox=k)["link"].split(self.host, 1)[1])
+        self.assertTrue(resp.getheader("Location").endswith("/run/0/#focus=0/q"), resp.getheader("Location"))
+        self.assertEqual(self.ctl("accept", offer=offer), {"ok": True})
+        self.assertTrue(json.loads((topic / "round-01.answers.json").read_text(encoding="utf-8"))["done"])
+
+    def test_the_orphan_row_holds_no_path_link_or_token(self):
+        e = self.register(pid=dead_pid())
+        self.start()
+        start, page = self.open()
+        data, body = self.view(page)
+        for text in (str(self.root), str(self.home), str(self.topic), "round-01.json", e["run"]):
+            self.assertNotIn(text.encode(), body)
+        row = self.rounds_waiting(page)[0]
+        self.assertEqual(sorted(row), ["color", "group", "held", "items", "kind", "mono", "name", "orphan",
+                                       "project", "since", "tab", "title"])
+        state = (self.home / "state.json").read_bytes()
+        for text in (str(self.root), self.topic.name, "Round", e["run"]):
+            self.assertNotIn(text.encode(), state)
+
+    def test_a_run_that_meets_the_inbox_lock_on_its_rounds_becomes_a_waiter(self):
+        # The race: inbox_alive said no inbox, the inbox started, and its orphan group took the round locks.
+        self.register(pid=dead_pid())
+        self.start()
+        self.assertTrue(self.locked())
+        err, waited = io.StringIO(), []
+        with mock.patch.dict(os.environ, {"SIGNOFF_INBOX_HOME": str(self.home)}), \
+                mock.patch.object(signoff, "inbox_alive", side_effect=[False, True]), \
+                mock.patch.object(signoff, "_wait", side_effect=lambda rounds: waited.append(rounds) or "stopped"), \
+                mock.patch.object(sys, "stderr", err):
+            code = signoff.main([str(self.topic), "--no-open"])
+        self.assertEqual((code, len(waited)), (130, 1), err.getvalue())
+        self.assertIn("the inbox is open", err.getvalue())
+        self.assertNotIn("open in another Signoff run", err.getvalue())
+        # With no inbox at the second look either, the refusal stays as it was.
+        err = io.StringIO()
+        with mock.patch.dict(os.environ, {"SIGNOFF_INBOX_HOME": str(self.home)}), \
+                mock.patch.object(signoff, "inbox_alive", side_effect=[False, False]), \
+                mock.patch.object(sys, "stderr", err):
+            code = signoff.main([str(self.topic), "--no-open"])
+        self.assertEqual(code, 1, err.getvalue())
+        self.assertIn("open in another Signoff run or in the inbox", err.getvalue())
+
+    def test_a_rerun_of_the_folder_while_the_inbox_lives_waits_and_takes_the_group(self):
+        self.register(pid=dead_pid())
+        self.start()
+        start, page = self.open()
+        self.assertEqual({(w["group"], w["orphan"]) for w in self.rounds_waiting(page)}, {(0, True)})
+        run = subprocess.Popen([sys.executable, "-I", "-B", SCRIPT, str(self.topic), "--no-open"],
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True,
+                               encoding="utf-8", env=dict(os.environ, SIGNOFF_INBOX_HOME=str(self.home)))
+        self.addCleanup(run.communicate)
+        self.addCleanup(run.kill)
+        self.assertIn("the inbox is open", run.stderr.readline())
+        deadline = time.monotonic() + 20
+        while {(w["group"], w["orphan"]) for w in self.rounds_waiting(page)} != {(0, False)}:
+            self.assertLess(time.monotonic(), deadline, "the re-run never took the group")
+            self.assertIsNone(run.poll())
+            time.sleep(0.1)
+        run.kill()
+        run.wait(10)
+        self.assertEqual({(w["group"], w["orphan"]) for w in self.rounds_waiting(page)}, {(0, True)})
 
 
 @unittest.skipUnless(POSIX, "the control socket is a Unix socket; the inbox does not run on Windows yet")

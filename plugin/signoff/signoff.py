@@ -2161,8 +2161,9 @@ class _RoundLocks:
 class _Group(_Rounds):
     """The rounds of one run (or of several runs on the same rounds) in the inbox, under run/<n>/; Done there waits
     for those rounds only, as on the run's own page. The inbox writes them only while it holds their round locks;
-    another run holding one leaves them shown read only."""
+    another run holding one leaves them shown read only. An orphan group's rounds are listed by no live run (AD-24)."""
     start_reused = False
+    orphan = False
 
     def __init__(self, entry, rounds, name, locks):
         self.entry, self.name, self.locks, self.held = entry, name, locks, []
@@ -2289,6 +2290,7 @@ class InboxServer(_Server):
             self.number = secrets.randbelow(MAX_NUMBER - 1) + 1
             self.app_target = None  # (a rows reply's numbers, monotonic time) the app's next app_open takes, once
             self.uptick_cache = {}  # path -> (stat key, what it parsed to)
+            self.done_cache = {}  # answers path -> (stat key, whether it says done), for the orphan look
             self.round_locks = _RoundLocks()
             self.control = _control_socket(home / "inbox.sock")
             self._listen()
@@ -2428,8 +2430,8 @@ class InboxServer(_Server):
         return None
 
     def rows(self, project):
-        """The mod's panel list for one project id: each open round of its live runs, oldest run first, by its run's
-        number (run/<n>/) and its index there, with the items not decided yet by index. Titles as an offer has them;
+        """The mod's panel list for one project id: each open round of its live runs and orphan groups, oldest run
+        first, by its run's number (run/<n>/) and its index there, with the items not decided yet by index. Titles as an offer has them;
         at most MAX_ROWS rounds and items in all, so the reply fits the control socket's line, and `more` counts the
         rest."""
         rounds, left, more = [], MAX_ROWS, 0
@@ -2463,7 +2465,8 @@ class InboxServer(_Server):
 
     def _offer(self, given, burn=False):
         """A live offer by its id and its run's group, or None; burn takes it out, so its first use is its last.
-        The caller holds scan_lock: the look here lets go of a run that ended since, so its offer is gone."""
+        The caller holds scan_lock: the look here lets go of a group that went since (its run ended and its rounds are
+        no orphan rounds), so its offer is gone."""
         if not isinstance(given, str) or not OFFER_ID.fullmatch(given):
             return None
         with self.lock:
@@ -2885,29 +2888,95 @@ class InboxServer(_Server):
             self.sent[str(r.answers_path)] = dict(_who(g.entry.get("project"), g.name), title=r.decisions["title"],
                                                    saved=r.saved_at)
 
+    def _open_round(self, path):
+        """Whether a round file is there with no outcome file and no answers file that says done: an orphan round
+        needs all three before the inbox reads it in (AD-24)."""
+        try:
+            st = path.stat()
+        except OSError:
+            return False
+        # The user's own file only: a folder gone and made again by another user in a shared place gets no answers.
+        if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid() \
+                or path.with_name(path.stem + ".outcome.json").exists():
+            return False
+        answers = answers_path_for(path)
+        try:
+            st = answers.stat()
+        except OSError:
+            return True
+        # shortcut: the cache keeps every answers path the look met while the inbox lives; prune it if a home
+        # gathers thousands of runs.
+        k = (st.st_mtime_ns, st.st_size)
+        if self.done_cache.get(answers, (None,))[0] != k:
+            data = _json_object(_read_file(answers, MAX_ROUND_BODY))
+            self.done_cache[answers] = (k, bool(data) and data.get("done") is True)
+        return not self.done_cache[answers][1]
+
     def _scan(self):
         """Match the groups to the runs that live now: a new run's rounds are read in (and locked), a run that ended
-        or died lets go of its rounds' locks."""
-        live = {}  # (folder, rounds) -> the live runs on them, oldest first
+        or died lets go of its rounds' locks. Orphan rounds (AD-24: open, listed by a recent project run that is gone
+        and by no live run) stay in the group they were in, else go in a group of the newest gone run listing them."""
+        live, gone = {}, []  # (folder, rounds) -> the live runs on them, oldest first; the project runs gone
         folder = self.home / "runs"
         for path in sorted(folder.glob("[!.]*.json")) if folder.is_dir() else ():
             e = _read_json(path) if _recent(path, RUNS_MAX_AGE) else None
+            if not _entry_ok(e):
+                continue
             # shortcut: a live pid is taken as the run's; a pid reused by another process keeps a killed run listed
             # until its entry is RUNS_MAX_AGE old. Compare `started` with the process's start time if that bites.
-            if _entry_ok(e) and "ended" not in e and _alive(e["pid"]):
+            if "ended" not in e and _alive(e["pid"]):
                 live.setdefault((e["folder"], tuple(e["rounds"])), []).append(e)
+            elif e["project"] is not None:
+                gone.append(e)
         for runs in live.values():
             runs.sort(key=lambda e: e["started"])
+        listed = {(f, n) for f, names in live for n in names}
+        owner = {}  # (folder, round) of each orphan round -> the newest gone run that lists it
+        for e in sorted(gone, key=lambda e: e["started"]):
+            for n in e["rounds"]:
+                if (e["folder"], n) not in listed and self._open_round(Path(e["folder"]) / n):
+                    owner[e["folder"], n] = e
         for key, n in list(self.group_index.items()):
-            if key not in live:
-                g = self.groups[n]
-                for r in g.rounds:
-                    if r.finished:
-                        self._sent(g, r)
-                g.release()
-                self.groups[n] = None
-                del self.group_index[key]
+            g = self.groups[n]
+            # An orphan group outlives its run, so it is read again once a round file changed or went: a Done there
+            # must be for the version on disk, which a new run waits on. shortcut: by the file's time, so an edit
+            # that keeps it (cp -p) is missed; compare the hash Round keeps if that bites.
+            same = tuple(_mtime(Path(key[0]) / k) for k in key[1]) == g.stamp
+            if key in live and (same or not g.orphan):
+                g.orphan = False  # a live run on the same rounds goes on with the group, its number and its tabs
+                continue
+            g.check_disk()
+            left = [k for k, r in zip(key[1], g.rounds) if not r.finished]
+            if same and key not in live and left and all((key[0], k) in owner for k in left):
+                g.orphan = True
+                if not g.writable and not self.closed.is_set():  # a request still running at close() locks nothing
+                    g.take_locks()
+                continue
+            for r in g.rounds:
+                if r.finished:
+                    self._sent(g, r)
+            g.release()
+            self.groups[n] = None
+            del self.group_index[key]
         projects = self._projects()
+
+        def add(key, runs, orphan=False):
+            e, folder = runs[0], Path(key[0])
+            tried = ({x["run"] for x in runs}, tuple(_mtime(folder / n) for n in key[1]))
+            failed = self.failed.get(key)
+            if self.closed.is_set() or (failed and tried[0] <= failed[0] and tried[1] == failed[1]):
+                return  # said once; a new run on these rounds, or a round file changed since, tries again
+            name = (projects.get(e.get("project")) or {}).get("name") or project_name(folder) or folder.name
+            try:
+                g = _Group(e, [Round(folder / n) for n in key[1]], name, self.round_locks)
+            except (DecisionsError, OSError) as err:
+                self.failed[key] = tried
+                print("signoff inbox: cannot show %s: %s" % (folder, err), file=sys.stderr, flush=True)
+                return
+            g.orphan, g.stamp = orphan, tried[1]
+            self.group_index[key] = len(self.groups)
+            self.groups.append(g)
+
         for key, runs in sorted(live.items(), key=lambda kv: kv[1][0]["started"]):
             if key in self.group_index:
                 g = self.groups[self.group_index[key]]
@@ -2915,20 +2984,16 @@ class InboxServer(_Server):
                     g.take_locks()
                 g.check_disk()
                 continue
-            e, folder = runs[0], Path(key[0])
-            tried = ({x["run"] for x in runs}, tuple(_mtime(folder / n) for n in key[1]))
-            failed = self.failed.get(key)
-            if self.closed.is_set() or (failed and tried[0] <= failed[0] and tried[1] == failed[1]):
-                continue  # said once; a new run on these rounds, or a round file changed since, tries again
-            name = (projects.get(e.get("project")) or {}).get("name") or project_name(folder) or folder.name
-            try:
-                g = _Group(e, [Round(folder / n) for n in key[1]], name, self.round_locks)
-            except (DecisionsError, OSError) as err:
-                self.failed[key] = tried
-                print("signoff inbox: cannot show %s: %s" % (folder, err), file=sys.stderr, flush=True)
-                continue
-            self.group_index[key] = len(self.groups)
-            self.groups.append(g)
+            add(key, runs)
+        # A round in a group already joins no other. shortcut: by the folder as runs/ spells it (register_run writes
+        # it resolved), so a folder reached through a link may show a round twice; compare real paths if that bites.
+        claimed = {(k[0], n) for k in self.group_index for n in k[1]}
+        found = {}  # gone run -> its orphan rounds in no group yet
+        for (f, n), e in owner.items():
+            if (f, n) not in claimed:
+                found.setdefault(e["run"], (e, set()))[1].add(n)
+        for e, names in sorted(found.values(), key=lambda x: x[0]["started"]):
+            add((e["folder"], tuple(n for n in e["rounds"] if n in names)), [e], orphan=True)
         return projects
 
     def view(self):
@@ -2949,7 +3014,7 @@ class InboxServer(_Server):
                     else:
                         waiting.append(dict(_who(g.entry.get("project"), g.name), kind="round", group=n,
                                             title=r.decisions["title"], tab=r.decisions.get("tab"),
-                                            since=g.entry["started"], held=not g.writable,
+                                            since=g.entry["started"], held=not g.writable, orphan=g.orphan,
                                             items=[it["title"][:MAX_ROW_TEXT] for it in r.decisions["items"][:MAX_ROW_ITEMS]]))
                         # What a todo item may name to link here: its topic folder and file, in its own project.
                         opened.setdefault((g.entry.get("project"), r.path.parent.name + "/" + r.path.name),
@@ -3662,8 +3727,11 @@ def main(argv=None):
             locks = lock_rounds(rounds)  # held until this run ends, so the inbox only reads these rounds
         except DecisionsError as e:
             server.server_close()
-            print("signoff: %s" % e, file=sys.stderr)
-            return EXIT_ERROR
+            # The inbox may have started since the look above and locked these rounds (orphan rounds): wait on it.
+            waiter = inbox_alive(home)
+            if not waiter:
+                print("signoff: %s" % e, file=sys.stderr)
+                return EXIT_ERROR
     folder = rounds[0].path.parent
     try:
         ensure_gitignore(folder)

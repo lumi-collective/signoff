@@ -207,14 +207,15 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   comment, marks and privacy kept), `accepted` and `done` true, at the offer's `rev`. Every save rule of the page
   holds (`rev`, the file on disk, Done is final, the Done gate, the round lock), and each refusal is one word
   (`changed`, `held`, `done`, `failed`) with nothing written (a `failed` write may leave a new Markdown copy, as a
-  failed save from the page does: the JSON goes last). `accept` and `open` with an offer look at the runs first, so a run that
-  ended since the offer makes it `gone` (and `open`'s link the list's). The client never sends a choice. `open` with an
+  failed save from the page does: the JSON goes last). `accept` and `open` with an offer look at the runs first, so a round
+  that left its group since the offer (its run ended and it is no orphan round, see the round-lock rule) makes it
+  `gone` (and `open`'s link the list's); an orphan round keeps its offer while its round file is unchanged. The client never sends a choice. `open` with an
   offer gives a start link whose first use opens that run's page at that item in Focus (`#focus=<round>/<item>`);
   with an unknown offer, the list's.
 - **The mod's panel list is numbers and one-line titles.** `rows` takes `project`, a project id (16 hex digits;
   anything else gets `{error}`), and answers `{rounds: [{run, round, title, item, items: [{item, title}]}], more,
   inbox}`: each
-  open round of that project's live runs (held ones too), oldest run first, `run` its number (`run/<n>/`),
+  open round of that project's live runs and orphan rounds (held ones too), oldest run first, `run` its number (`run/<n>/`),
   `round` its index in the run, `title` its `tab` or else its `title`, `item` the index its own row opens (its
   first item not yet decided, else its last, whose Focus shows the round's tail with its Accept and Done), and its
   items not yet decided (as for `offer`) by their index in the round. Titles follow the `offer` rule: one line, cut to `MAX_OFFER_TEXT`, the
@@ -228,7 +229,7 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
 - **A panel row opens its item and nothing else.** `open` with `run`, `round`, `item` and `inbox` (all four or
   none; each a whole number from 0 below 2^31, never a bool, and no `offer` beside them; else `{error}`) gives a
   start link whose first use opens `run/<run>/#focus=<round>/<item id>` when `inbox` is this inbox's number, that
-  run is live, that round is open in it (held too) and the item index exists; the server maps the index to the id.
+  run is live or holds orphan rounds, that round is open in it (held too) and the item index exists; the server maps the index to the id.
   Otherwise, the list's link, as an unknown offer gets. It waits for the inbox's look, as `open` with an offer
   does; a plain one never does. `signoff inbox open --run <n> --focus <round>/<item> --inbox <k>` (with `--no-open` or not, each
   once, in any order; plain decimal numbers) asks for it, starting an inbox as `open` does (a new one has another
@@ -257,7 +258,7 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   There is no URL scheme: it would let any web page open the app.
 - **`state.json` counts what waits, with no text.** The inbox alone writes it in the home, atomically, 0600:
   `schema, at, waiting, projects[{id, monogram, waiting}]`. `waiting` is the number of rows in Waiting on you
-  (open rounds of live runs, todo chains whose top item or a step is marked waiting, each once, and live sessions waiting on the
+  (open rounds of live runs, orphan rounds, todo chains whose top item or a step is marked waiting, each once, and live sessions waiting on the
   user; never an Idle session), the same list the page shows; `id` is null for a run
   outside any project. It is written at start and whenever the count changes, from the inbox's own look every
   `STATE_EVERY` seconds; `at` says when. Never a title, path, todo text, link or token. It stays when the inbox
@@ -306,7 +307,18 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   shown read only and saves get 409 (a file system that cannot lock: one stderr line, best effort, as for a
   run). Each run keeps its own page and Done gate, as on its own page; runs on the same rounds share one. It
   lets go at its next look after the run ended or died (it looks every `STATE_EVERY` seconds and at each load
-  of the list). Saves go through
+  of the list), unless they are orphan rounds. An orphan round is open (no answers file with `done: true`), its
+  file is there, a regular file of the user's own, with no `<round>.outcome.json` beside it, a recent `runs/`
+  entry of a project (`project` not null; ended or dead alike) lists it, and no live run does. A group whose run
+  ended or died stays, as orphan, under its number, while it has an open round, each open round is an orphan
+  round and no round file's time changed since the group read it; else it goes (its finished rounds to the sent
+  list) and lets go, and a changed round is read again in a new group, also when a live run comes on its rounds,
+  so its offers are `gone` and its old tab's saves get 404. Orphan rounds in no group go into one
+  group per newest gone run that lists them, locked and saved as a live run's, its Done gate over them; its row
+  in Waiting on you has `orphan: true` and `since` that run's `started`. A live run whose rounds are exactly a
+  group's (as `runs/` lists them: the open ones) takes that group on, live, with its number and open tabs; a
+  live run that lists any of its rounds otherwise ends it, so its old tab's saves get 404. A page run whose round lock the
+  inbox took after the run's own look (the inbox started in between) looks again and is a waiter. Saves go through
   `check_answers` and the run's own writer, so a waiter wakes on the answers file. One inbox per home: it holds `inbox.lock` while it lives, trying for about half a second first (a run's look takes the
   lock for a moment).
 - **The inbox reads a project's todo file and never writes it.** The first of `_bmad-output/todo.md`, `TODO.md`,
@@ -319,7 +331,7 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   the first marked one's hint and its own ref when open, else the first open step's), `park` (Later is offered only
   when that ref is a marked item's), and the requests on every open item's ref of the chain. When its text names a round, `<topic folder> / round-NN` or
   a path ending `<topic folder>/round-NN.json` (at most `MAX_ROUND_LINKS`), that is open in a live run of the same
-  project, the row gets that run's page path (`run/<n>/`), never the round's path. The server turns the Markdown
+  project or is an orphan round of it, the row gets that run's page path (`run/<n>/`), never the round's path. The server turns the Markdown
   into a tree of plain data (`markdown_blocks`), with patterns that stay linear on a hostile line and tables cut at
   `MAX_COLUMNS`, short rows not padded, lists and quotes rendered `MD_DEPTH` deep, and a row's item past
   `MAX_ITEM`, or past what is left of `MAX_TODO` for all rows together, shown by the start of its first line only.
@@ -508,7 +520,8 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   (`inbox_home()`; `SIGNOFF_INBOX_HOME` is for tests), which only the inbox creates; a relative home counts as
   off for runs and hooks, and `signoff inbox home` exits 1 for one. Without it a run is the plain
   run, with no new file. With it, a page run holds an exclusive lock on `<round file>.lock` for each open round until
-  it ends, and exits 1 when another process holds one (a file system that cannot lock: a stderr line, no lock).
+  it ends, and exits 1 when another process holds one, unless a second look finds the inbox alive: it is then a
+  waiter (a file system that cannot lock: a stderr line, no lock).
   While the inbox holds `inbox.lock`, a run is a waiter: no port, no browser, no idle timeout, no lock; it looks
   at its answers files once a second and exits as a run does. Every run and waiter writes `runs/<run>.json`
   (`schema, run, project, folder, rounds, mode, pid, started`; never a token or a link) at start and adds
