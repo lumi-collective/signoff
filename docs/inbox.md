@@ -21,8 +21,9 @@ items an agent marked as waiting on you, under one heading per project; the line
 in how many projects (`3 waiting on you in 2 projects`). Open a round to answer it on the usual page, in the same tab; Done there
 writes the answers file, and the waiting run picks it up and wakes its agent. A project's open round whose run ended
 or died before it was answered (and that has no outcome file) stays there for up to 14 days, counted like the others;
-its answers file is written as usual. Its row (**Session ended**) and its page say that the session that asked is
-gone. A round another Signoff run has open on its own page shows read only. A Claude Code session that waits on you for a permission or an answer to its
+its answers file is written as usual. Its row (**Run ended**) and its page say that the Signoff run that asked has
+ended and the answer goes to the project's sessions: once its rounds are done, the inbox sends the agent a
+message about them (see below). A round another Signoff run has open on its own page shows read only. A Claude Code session that waits on you for a permission or an answer to its
 question (from about six seconds after it asks) is a row too, with its project and how long it has waited; the
 inbox does not answer it for you. Its row says to go to its terminal, or, for a background session (`claude
 --bg`), gives `claude attach <id>` to copy. **Answered** lists the rounds answered in the last day: *sent*, or *working* once
@@ -104,6 +105,14 @@ agent is asked to tell you about them first and act once you say so. `signoff in
 writes an empty `<id>.done` beside the request; a request without one comes back at a later session start. The
 `ref` follows the item through edits to other lines; if you change the item's first line, the request no longer
 shows on it, and the agent still has the text it was sent on.
+
+When the last open round of a run that had ended is finished (Done on its page, Accept & send from a
+notification, or an answers file another program wrote with Done), the inbox writes one more request, of kind
+`answer`, for that run's rounds together: its `ref` is the topic folder and the rounds
+(`2026-11-05-settings / round-01, round-02`), its text the inbox's own, with none of your answers in it.
+It reaches the project's sessions the same way, and asks the agent to tell you first, then read the answers files
+and act on them; the agent marks it done with `signoff inbox done <id>`. A round whose run still waits needs
+none: the run wakes its agent. The request route takes no `answer` from a page.
 
 **Vulnerabilities** shows each project's state from [Uptick](https://github.com/lumi-collective/uptick)'s
 vulnerability scan, when Uptick keeps its scan file (`${XDG_CACHE_HOME:-~/.cache}/uptick/vulns.json`, written once

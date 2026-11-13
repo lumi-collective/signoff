@@ -51,13 +51,13 @@ lock file touched within the last minute); after a tool call, only while some se
 you. It never changes or blocks the session, and without Python it does
 nothing. On Windows it runs in Git Bash; without Git Bash, Claude Code runs it in PowerShell, where it does
 nothing (Claude Code then says once per session that a hook ran in PowerShell; you can ignore it). One
-exception: when a session starts and no other session of that project is open, the hook hands the new session the messages you sent the project from the inbox that are not handled yet.
+exception: when a session starts and no other session of that project is open, the hook hands the new session the messages you sent the project from the inbox, and the inbox's notes on rounds you finished after their run had ended, that are not handled yet.
 
 The plugin also has a monitor: in every interactive Claude Code session, Claude Code keeps one small background
 process running, shown as one monitor in the status line. Until the inbox runs, it is a shell loop that only
 sleeps and checks the inbox's lock file twice a minute; on Windows a loop that only sleeps. Once
 the inbox runs, it is the Python program for the rest of the session, which looks every two seconds for new messages you sent this
-project from the inbox and prints each one for the agent. Claude Code ends it with the session (checked on macOS).
+project from the inbox, and such notes, and prints each one for the agent. Claude Code ends it with the session (checked on macOS).
 
 The plugin also has a mod, where Claude Code runs plugin mods. It is code that runs inside Claude Code in
 interactive sessions, not on Windows. Every five seconds it checks whether the inbox's lock file is there, and
@@ -121,7 +121,8 @@ run does, and in its folder a lock file, a note of its port and socket (no token
 no text), the palette, light or dark, density and list order you kept, the socket itself and a log. Each message you send on a todo item is a small file there (the item's
 first line, your text, the time); the agent marks it handled with an empty file beside it. A finding you hand
 over is the same kind of file (the package and version, and a line the inbox writes from the finding), and so is
-Later (the item's first line and the inbox's fixed line). The inbox
+Later (the item's first line and the inbox's fixed line), and so is the note the inbox writes once every round of a
+run that had ended is finished (the topic folder, the round names and the inbox's fixed text, none of your answers). The inbox
 reads Uptick's scan file (vulns.json in Uptick's cache folder) and Uptick's scan list (scan-repos.json in
 Uptick's config folder). Only when you click Scan this project does it write that list: it adds the project's
 folder path and keeps everything else in it. The monitor writes nothing.

@@ -19,7 +19,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from support import ROOT, Folder, Rounds, Running, done_record, png_bytes, sample_decisions
+from support import ROOT, Folder, Rounds, Running, done_record, png_bytes, sample_decisions, write_outside
 from test_extras import BOARD, HistoryRoot, with_board
 
 import signoff
@@ -795,6 +795,14 @@ class InboxRequests(InboxTest):
         _, html = self.view(page)
         for text in (str(self.home), str(self.root), saved["id"]):
             self.assertNotIn(text.encode(), html)
+
+    def test_only_the_inbox_writes_an_answer_request(self):
+        self.start()
+        page = self.open()[1]
+        for body in ({"kind": "answer", "project": self.pid, "ref": "2026-11-06-inbox / round-01"},
+                     {"kind": "answer", "project": self.pid, "ref": "2026-11-06-inbox / round-01", "text": "x"}):
+            self.assertEqual(self.send(page, body)[0].status, 400, body)
+        self.assertEqual(self.requests(), [])
 
     def test_the_request_route_keeps_todays_rules(self):
         self.register()
@@ -2884,6 +2892,156 @@ class InboxOrphan(InboxTest):
         run.kill()
         run.wait(10)
         self.assertEqual({(w["group"], w["orphan"]) for w in self.rounds_waiting(page)}, {(0, True)})
+
+    # AD-28: once every round of an orphan group is done, one request file hands the answer to the project.
+
+    def answers(self):
+        folder = self.home / "requests" / self.pid
+        return [json.loads(p.read_text(encoding="utf-8")) for p in sorted(folder.glob("*.json"))] \
+            if folder.is_dir() else []
+
+    def one_orphan_round(self):
+        e = entry(self.topic, ["round-01.json"], project=self.pid, pid=dead_pid())
+        self.write(self.home / "runs" / (e["run"] + ".json"), e)
+        self.start()
+        start, page = self.open()
+        self.assertEqual(len(self.rounds_waiting(page)), 1)
+        return page
+
+    def test_done_on_an_orphan_group_hands_its_answer_over_once_before_the_answers_json(self):
+        self.register(pid=dead_pid())
+        self.start()
+        start, page = self.open()
+        self.assertEqual(self.save(page, dict(ANSWER, accepted=True), round_=1)[0].status, 200)
+        self.assertEqual(self.save(page, dict(ANSWER, done=True))[0].status, 200)
+        self.assertEqual(self.answers(), [])  # round-02 is still open
+        order, write = [], signoff.write_atomic
+
+        def spy(path, data):  # the round's files and requests only: the inbox's own look writes state.json too
+            if path.parent.name in (self.topic.name, self.pid):
+                order.append(path.parent.parent.name if path.parent.name == self.pid else path.name)
+            return write(path, data)
+
+        with mock.patch.object(signoff, "write_atomic", spy):
+            self.assertEqual(self.save(page, dict(ANSWER, done=True), round_=1)[0].status, 200)
+        self.assertEqual(order, ["round-02.answers.md", "requests", "round-02.answers.json"])
+        (r,) = self.answers()
+        self.assertEqual(sorted(r), ["at", "id", "kind", "ref", "schema", "text"])
+        self.assertEqual((r["schema"], r["kind"], r["ref"], r["text"]),
+                         (1, "answer", "2026-11-06-inbox / round-01, round-02", signoff.ANSWER_TEXT))
+        path = self.home / "requests" / self.pid / (r["id"] + ".json")
+        self.assertEqual(signoff.read_request(path), r)
+        self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+        for folder in (self.home / "requests", path.parent):
+            self.assertEqual(stat.S_IMODE(folder.stat().st_mode), 0o700)
+        for text in ("from the inbox", str(self.root), str(self.home), "round-01.json", "http"):
+            self.assertNotIn(text, path.read_text(encoding="utf-8"))
+        for _ in range(3):  # later looks hand nothing over again
+            self.assertEqual(self.rounds_waiting(page), [])
+        self.assertEqual(len(self.answers()), 1)
+        # Nothing of it on the page, in the panel's rows or in state.json: the todo item alone waits.
+        data, body = self.view(page)
+        self.assertNotIn(r["id"].encode(), body)
+        self.assertEqual([w["kind"] for w in data["waiting"]], ["todo"])
+        self.assertEqual(self.ctl("rows", project=self.pid)["rounds"], [])
+        deadline = time.monotonic() + 10
+        while json.loads((self.home / "state.json").read_text(encoding="utf-8"))["waiting"] != 1:
+            self.assertLess(time.monotonic(), deadline, "state.json never counted the rounds down")
+            time.sleep(0.05)
+
+    def test_a_folder_name_that_is_not_utf_8_can_be_handed_over(self):
+        # On Linux such a name is a lone surrogate in Python: the request is written ASCII-escaped, so it cannot fail.
+        r = signoff.write_request(self.home, self.pid, "answer", "topic-\udcff / round-01", signoff.ANSWER_TEXT)
+        path = self.home / "requests" / self.pid / (r["id"] + ".json")
+        self.assertEqual(signoff.read_request(path)["ref"], "topic-\udcff / round-01")
+        self.assertNotIn("\n", signoff.request_line(r))
+
+    def test_the_answer_names_the_runs_rounds_also_one_answered_before_the_group(self):
+        # Round 1 was done before this inbox made the group (a restart in between): its answer goes over too.
+        (self.topic / "round-01.answers.json").write_text(json.dumps(done_record()), encoding="utf-8")
+        self.register(pid=dead_pid())
+        self.start()
+        start, page = self.open()
+        self.assertEqual([w["title"] for w in self.rounds_waiting(page)], ["Round 2"])
+        self.assertEqual(self.save(page, dict(ANSWER, done=True))[0].status, 200)
+        self.assertEqual([r["ref"] for r in self.answers()], ["2026-11-06-inbox / round-01, round-02"])
+
+    def test_a_done_just_after_the_run_ended_hands_the_answer_over(self):
+        # The save looks first, so the group's orphan flag is not the one from the last look.
+        e = self.register()
+        self.start()
+        start, page = self.open()
+        self.assertEqual(self.save(page, dict(ANSWER, accepted=True), round_=1)[0].status, 200)
+        self.assertEqual(self.save(page, dict(ANSWER, done=True))[0].status, 200)
+        self.write(self.home / "runs" / (e["run"] + ".json"), dict(e, ended=signoff.utc_now()))
+        self.assertEqual(self.save(page, dict(ANSWER, done=True), round_=1)[0].status, 200)
+        self.assertEqual([r["kind"] for r in self.answers()], ["answer"])
+
+    def test_a_done_whose_look_lets_the_group_go_gets_404_and_writes_nothing(self):
+        e = self.register()
+        self.start()
+        start, page = self.open()
+        self.assertEqual(self.save(page, dict(ANSWER, accepted=True), round_=1)[0].status, 200)
+        InboxOffer.end(self, e)  # the run ended and its agent took the rounds in: nothing of it waits now
+        resp, body = self.save(page, dict(ANSWER, done=True))
+        self.assertEqual((resp.status, body), (404, b"this round is no longer in the inbox; reload the page\n"))
+        self.assertFalse((self.topic / "round-01.answers.json").exists())
+        self.assertFalse((self.home / "requests").exists())
+
+    def test_a_live_runs_done_hands_nothing_over(self):
+        self.register()
+        self.start()
+        start, page = self.open()
+        self.assertEqual(self.save(page, dict(ANSWER, accepted=True), round_=1)[0].status, 200)
+        for n in (0, 1):
+            self.assertEqual(self.save(page, dict(ANSWER, done=True), round_=n)[0].status, 200)
+        self.assertFalse((self.home / "requests").exists())
+
+    def test_accept_from_a_notification_hands_an_orphan_answer_over(self):
+        topic, e = self.case([one_round(question("q"))])
+        self.write(self.home / "runs" / (e["run"] + ".json"), dict(e, pid=dead_pid()))
+        self.start()
+        self.assertEqual(self.ctl("accept", offer=self.ctl("offer")["offer"]["id"]), {"ok": True})
+        self.assertEqual([(r["kind"], r["ref"]) for r in self.answers()], [("answer", topic.name + " / round-01")])
+
+    def test_a_done_file_another_program_wrote_hands_an_orphan_answer_over(self):
+        page = self.one_orphan_round()
+        write_outside(self.topic / "round-01.answers.json", done_record())
+        for _ in range(3):
+            self.assertEqual(self.rounds_waiting(page), [])
+        self.assertEqual([(r["kind"], r["ref"]) for r in self.answers()], [("answer", "2026-11-06-inbox / round-01")])
+
+    def test_a_done_file_from_outside_whose_answer_cannot_be_written_is_said_and_the_list_goes_on(self):
+        page = self.one_orphan_round()
+        (self.home / "requests").write_text("not a folder", encoding="utf-8")
+        err = io.StringIO()
+        with mock.patch.object(sys, "stderr", err):  # before the file: the inbox's own look may take it in first
+            write_outside(self.topic / "round-01.answers.json", done_record())
+            self.assertEqual(self.rounds_waiting(page), [])
+        self.assertIn("cannot hand over", err.getvalue())
+
+    def test_a_done_whose_answer_cannot_be_written_is_not_final(self):
+        page = self.one_orphan_round()
+        (self.home / "requests").write_text("not a folder", encoding="utf-8")
+        self.assertEqual(self.save(page, dict(ANSWER, done=True))[0].status, 500)
+        self.assertFalse((self.topic / "round-01.answers.json").exists())
+        self.assertEqual(len(self.rounds_waiting(page)), 1)
+
+    def test_a_done_whose_answers_json_fails_after_the_request_hands_over_again_on_retry(self):
+        # The first request names a round not done yet: its text tells the agent it then needs nothing.
+        page = self.one_orphan_round()
+        write = signoff.write_atomic
+
+        def no_json(path, data):
+            if path.name.endswith(".answers.json"):
+                raise OSError(28, "No space left on device")
+            return write(path, data)
+
+        with mock.patch.object(signoff, "write_atomic", no_json):
+            self.assertEqual(self.save(page, dict(ANSWER, done=True))[0].status, 500)
+        self.assertEqual(len(self.answers()), 1)
+        self.assertEqual(self.save(page, dict(ANSWER, done=True))[0].status, 200)
+        self.assertEqual(len(self.answers()), 2)
 
 
 @unittest.skipUnless(POSIX, "the control socket is a Unix socket; the inbox does not run on Windows yet")

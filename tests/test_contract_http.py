@@ -738,7 +738,8 @@ class Inbox(unittest.TestCase):
         refused(411, json.dumps(good).encode(), {"Content-Length": None})
         refused(413, b"{}", {"Content-Length": "41943040"})
         for body in (b"{x", b"[]", dict(good, extra=1), dict(good, text=""), dict(good, text="two\nlines"),
-                     dict(good, text="x" * 1001)):
+                     dict(good, text="x" * 1001), dict(good, kind="answer"),
+                     {"kind": "answer", "project": self.pid, "ref": "Ship the release"}):  # only the inbox writes one
             refused(400, body)
         refused(404, dict(good, project="f" * 16))
         refused(409, dict(good, ref="done"))

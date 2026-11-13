@@ -206,8 +206,8 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   writer the saved answers, with the item's `recommended` as its choice and `source: "notification"` (its
   comment, marks and privacy kept), `accepted` and `done` true, at the offer's `rev`. Every save rule of the page
   holds (`rev`, the file on disk, Done is final, the Done gate, the round lock), and each refusal is one word
-  (`changed`, `held`, `done`, `failed`) with nothing written (a `failed` write may leave a new Markdown copy, as a
-  failed save from the page does: the JSON goes last). `accept` and `open` with an offer look at the runs first, so a round
+  (`changed`, `held`, `done`, `failed`) with nothing written (a `failed` write may leave a new Markdown copy, and
+  on an orphan round an answer request, as a failed save from the page does: the JSON goes last). `accept` and `open` with an offer look at the runs first, so a round
   that left its group since the offer (its run ended and it is no orphan round, see the round-lock rule) makes it
   `gone` (and `open`'s link the list's); an orphan round keeps its offer while its round file is unchanged. The client never sends a choice. `open` with an
   offer gives a start link whose first use opens that run's page at that item in Focus (`#focus=<round>/<item>`);
@@ -317,7 +317,9 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   group per newest gone run that lists them, locked and saved as a live run's, its Done gate over them; its row
   in Waiting on you has `orphan: true` and `since` that run's `started`, and its page's data `orphan: true`. The
   row's kind is `L.orphanKind` (a held round's stays Open elsewhere), the opened row and the round's page (its
-  banner, in the round's language) say `L.orphan`: the session that asked is gone. A live run whose rounds are exactly a
+  banner, in the round's language) say `L.orphan`: the run that asked has ended (its session may live on), and the
+  answer goes to the project's sessions; its Done banner is `L.doneOrphan`. Once every round of an orphan group is
+  done, the inbox writes its answer request (see the request rule). A live run whose rounds are exactly a
   group's (as `runs/` lists them: the open ones) takes that group on, live, with its number and open tabs; a
   live run that lists any of its rounds otherwise ends it, so its old tab's saves get 404. A page run whose round lock the
   inbox took after the run's own look (the inbox started in between) looks again and is a waiter. Saves go through
@@ -362,9 +364,20 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   text is the server's own, built from the finding's level, advisory ids and fixed version, each checked against a
   plain pattern; no free text from Uptick's file goes into it. It takes exactly `{kind: "later", project, ref}`
   for Later on a waiting row: `ref` must be an open item marked waiting now (409 otherwise), and the text is the
-  server's own `LATER_TEXT` (park the item: take its marker off, keep it open). The inbox
+  server's own `LATER_TEXT` (park the item: take its marker off, keep it open). The route takes no `kind:
+  "answer"` (400): the inbox alone writes one, once every round of an orphan group is done (by Done, `accept`, or
+  an answers file another program wrote that it takes in), one per group: `ref` `<topic folder> / <round>, <round>`
+  (the group's run's folder and rounds as `runs/` lists them, names without `.json`, so a round done before the
+  group was made is named too; cut to `MAX_REF`), the text the server's own `ANSWER_TEXT` (tell the user first; no
+  answer, path, link or token), the file ASCII-escaped. It writes it after the round's Markdown copy and before
+  its answers JSON, so a request that cannot be written fails the save (500, `failed`) and a JSON that fails
+  after it leaves a request whose text says the round then needs nothing (a retry writes another); one for a file
+  taken in from outside that cannot be written is one stderr line. A live run's Done writes none. A Done save to
+  a group looks at the runs first, as `accept` does, so a run that ended since the last look counts as gone; a
+  group that look lets go refuses it with 404 (`gone` for `accept`), writing nothing. The inbox
   writes `requests/<project>/<id>.json` (`schema, id, kind, ref, text, at`; `id` 16 hex digits, `kind` `todo`,
-  `vuln` or `later`; a `later` reaches the agent as a message on the todo item), atomically, 0600 in 0700 folders. The list page shows each item's and finding's recent
+  `vuln`, `later` or `answer`; a `later` reaches the agent as a message on the todo item, an `answer` as one on
+  the Signoff rounds), atomically, 0600 in 0700 folders. The list page shows each item's and finding's recent
   requests (text, time, done) and never an id or a path. The agent marks one handled with
   `signoff inbox done <id>`, which writes an empty `<id>.done` beside it; nothing else writes there.
 - **The OSV section reads Uptick's files and writes one only on a click.** Uptick's `vulns.json`

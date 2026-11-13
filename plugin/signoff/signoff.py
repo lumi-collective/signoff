@@ -1623,12 +1623,21 @@ class _Rounds:
     def editable_answers(self):
         return [r.answers_path for r in self.rounds if not r.readonly]
 
+    def closing(self):
+        pass  # the last open round is being done, under self.lock: the inbox hands an orphan answer over here
+
     def check_disk(self):
         """Take in answers files written from outside this run; end the run when that leaves no round open."""
         with self.lock:  # with store(), so a file it is writing is never mistaken for an outside one
             for r in self.rounds:
                 _reread(r)
             if all(r.finished for r in self.rounds) and not self.finished.is_set():
+                try:
+                    self.closing()
+                except OSError as e:  # the done file is final already: say so, and go on
+                    print("signoff inbox: cannot hand over the answers of %s (%s)" % (self.folder.name,
+                                                                                     e.strerror or e),
+                          file=sys.stderr, flush=True)
                 self.finished.set()  # another program finished the last open round: nothing is left to answer here
                 self.finish()
 
@@ -1695,6 +1704,8 @@ class _Rounds:
             record.update(meta)
             # The JSON file is the record agents trust, so it goes last: if the Markdown copy fails, nothing is final.
             write_atomic(r.markdown_path, answers_markdown(r.decisions, record))
+            if state["done"] and all(x.finished for x in self.rounds if x is not r):
+                self.closing()  # before the JSON: once that says done, the round is final and no longer orphan
             data = (json.dumps(record, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
             write_atomic(r.answers_path, data)
             r.disk = hashlib.sha256(data).digest()  # the bytes written, not a read-back
@@ -1896,8 +1907,17 @@ MAX_SHOWN_REQUESTS = 200  # recent request files the list page reads per project
 REQUEST_EVERY = 2.0  # seconds between the monitor's looks
 SINCE_MARGIN = 10  # seconds before its session's start from which the monitor prints requests
 MAX_HANDOVER_TEXT = 8000  # characters of request lines a SessionStart hands over
-REQUEST_KINDS = {"todo": "todo item", "vuln": "vulnerability finding", "later": "todo item"}
+REQUEST_KINDS = {"todo": "todo item", "vuln": "vulnerability finding", "later": "todo item",
+                 "answer": "Signoff rounds"}
 LATER_TEXT = "The owner asks to park this item for later: remove its waiting marker and keep it open."
+# AD-28: the text the inbox hands over once an orphan group's rounds are done. It asks the agent to tell the user
+# first, since the monitor's line has no hand-over head and the session may be at other work.
+ANSWER_TEXT = ("These rounds were answered after the Signoff run that asked them had ended (in the Signoff inbox, or "
+               "by another program). Tell the user that the answers came in, and once the user says so, read each "
+               "round's answers file in that topic folder under your decisions folder and act on it as the signoff "
+               "skill says. A round that already has its outcome file (<round>.outcome.json), or whose answers file "
+               "does not say done: true, needs nothing: just mark this done. Do not run Signoff on these rounds "
+               "again.")
 HANDOVER_HEAD = ("Signoff inbox: the user left the messages below for this project in the Signoff inbox, and they are "
                  "not handled yet. Tell the user about them in your first reply, and handle each once the user says "
                  "so.")
@@ -2093,6 +2113,18 @@ def read_request(path):
     return r if ok else None
 
 
+def write_request(home, project, kind, ref, text):
+    """requests/<project>/<id>.json in the home, atomically, 0600 in 0700 folders, for the project's sessions (their
+    monitors, or the next SessionStart hook). Returns the request; raises OSError when it cannot be written."""
+    r = {"schema": 1, "id": secrets.token_hex(8), "kind": kind, "ref": ref, "text": text, "at": utc_now()}
+    folder = home / "requests" / project
+    folder.parent.mkdir(mode=0o700, exist_ok=True)
+    folder.mkdir(mode=0o700, exist_ok=True)
+    # ASCII-escaped: a folder name that is not UTF-8 (a lone surrogate on Linux) cannot fail the write.
+    write_atomic(folder / (r["id"] + ".json"), json.dumps(r, indent=2) + "\n")
+    return r
+
+
 def request_ids(folder):
     """The request ids in a project's requests folder, and the set of those marked done (<id>.done)."""
     try:
@@ -2163,7 +2195,7 @@ class _Group(_Rounds):
     for those rounds only, as on the run's own page. The inbox writes them only while it holds their round locks;
     another run holding one leaves them shown read only. An orphan group's rounds are listed by no live run (AD-24)."""
     start_reused = False
-    orphan = False
+    orphan = gone = False
 
     def __init__(self, entry, rounds, name, locks):
         self.entry, self.name, self.locks, self.held = entry, name, locks, []
@@ -2186,6 +2218,22 @@ class _Group(_Rounds):
 
     def finish(self, now=False):
         pass  # a Done ends the run that waits on it, never the inbox
+
+    def store(self, index, state, rev=None):
+        if state["done"]:
+            self.look()  # whether the group is orphan as of now, not of the last look: a run may have ended since
+            if self.gone:  # that look let the group go, as an old tab's next save would find
+                return 404, "this round is no longer in the inbox; reload the page"
+        return _Rounds.store(self, index, state, rev)
+
+    def closing(self):
+        """No run waits on an orphan group: its answers go to the project's sessions as one request (AD-28), with
+        the topic folder and round names only. The run's rounds as runs/ lists them, so a round answered before
+        this group was made (an inbox restarted in between) is named too."""
+        if self.orphan and self.entry.get("project"):
+            write_request(self.home, self.entry["project"], "answer", ("%s / %s" % (
+                Path(self.entry["folder"]).name, ", ".join(Path(n).stem for n in self.entry["rounds"])))[:MAX_REF],
+                ANSWER_TEXT)
 
     def view(self):
         data = _Rounds.view(self)
@@ -2477,6 +2525,11 @@ class InboxServer(_Server):
         g = self.groups[o["group"]]
         return (o, g) if g else None
 
+    def _look(self):
+        with self.scan_lock:  # an RLock: accept looks under it already
+            if not self.closed.is_set():
+                self._scan()
+
     def open_offer(self, given):
         """A start link: with a live offer, to its item in Focus on its run's page; with any other, the list."""
         found = None
@@ -2538,7 +2591,7 @@ class InboxServer(_Server):
         except (ValueError, OSError):
             return "failed"
         if isinstance(result, tuple):
-            return "done" if r.finished else "held" if not g.writable else "changed"
+            return "done" if r.finished else "gone" if g.gone else "held" if not g.writable else "changed"
         return None
 
     def page_for(self, given):
@@ -2872,13 +2925,8 @@ class InboxServer(_Server):
                 if body["ref"] not in refs:
                     return 409, (b"that todo item no longer waits on you; reload the page\n" if kind == "later"
                                  else b"that todo item is no longer open; reload the page\n")
-            r = {"schema": 1, "id": secrets.token_hex(8), "kind": kind, "ref": body["ref"], "text": text,
-                 "at": utc_now()}
-            folder = self.home / "requests" / p["id"]
             try:
-                folder.parent.mkdir(mode=0o700, exist_ok=True)
-                folder.mkdir(mode=0o700, exist_ok=True)
-                write_atomic(folder / (r["id"] + ".json"), json.dumps(r, indent=2, ensure_ascii=False) + "\n")
+                r = write_request(self.home, p["id"], kind, body["ref"], text)
             except OSError as e:
                 return 500, ("could not write the request (%s)\n" % (e.strerror or type(e).__name__)).encode("utf-8")
         return 200, json.dumps({"ok": True, "id": r["id"], "at": r["at"]}).encode("utf-8")
@@ -2955,6 +3003,7 @@ class InboxServer(_Server):
             for r in g.rounds:
                 if r.finished:
                     self._sent(g, r)
+            g.gone = True
             g.release()
             self.groups[n] = None
             del self.group_index[key]
@@ -2973,7 +3022,7 @@ class InboxServer(_Server):
                 self.failed[key] = tried
                 print("signoff inbox: cannot show %s: %s" % (folder, err), file=sys.stderr, flush=True)
                 return
-            g.orphan, g.stamp = orphan, tried[1]
+            g.orphan, g.stamp, g.home, g.look = orphan, tried[1], self.home, self._look
             self.group_index[key] = len(self.groups)
             self.groups.append(g)
 

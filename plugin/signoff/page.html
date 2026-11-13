@@ -791,8 +791,9 @@ body.run.focusing .rp>.item[data-item]:not(.cur),body.run.focusing .rp>h2.group,
       outcome: 'Outcome', logged: 'logged in {log}, {date}', warning: 'Warning', error: 'This file cannot be read.',
       pick: 'Pick a round from the list.',
       inbox: 'Inbox', held: 'This round is open in another Signoff run, so it is shown read only here. Answer it there.',
-      orphan: 'The session that asked this has ended; your answer goes to the project\'s next session.',
-      orphanKind: 'Session ended',
+      orphan: 'The Signoff run that asked this has ended; your answer goes to the project\'s sessions.',
+      orphanKind: 'Run ended',
+      doneOrphan: 'Done. Your answers are saved. The project\'s open sessions get them now; with none open, the next one gets them when it starts. You can close this tab.',
       waitingHead: 'Waiting on you', oldestFirst: 'Oldest first', newestFirst: 'Newest first',
       waitSummary: '{n} waiting on you in {p}', waitSummaryNone: '{n} waiting on you', moreOpen: '{p}: {n} more open', moreOpenOne: '{p}: 1 more open',
       stepsDone: '{n} of {m} steps done', later: 'Later', laterSent: 'Later: sent', laterDone: 'Later: done',
@@ -895,8 +896,9 @@ body.run.focusing .rp>.item[data-item]:not(.cur),body.run.focusing .rp>h2.group,
       outcome: 'Eredmény', logged: 'naplózva: {log}, {date}', warning: 'Figyelem', error: 'Ez a fájl nem olvasható.',
       pick: 'Válassz egy kört a listából.',
       inbox: 'Inbox', held: 'Ez a kör egy másik Signoff-futásban van nyitva, ezért itt csak olvasható. Ott válaszolj rá.',
-      orphan: 'A kérdező munkamenet már nincs; a válaszod a projekt következő munkamenetéhez kerül.',
-      orphanKind: 'A munkamenet véget ért',
+      orphan: 'Az ezt kérdező Signoff-futás véget ért; a válaszod a projekt munkameneteihez kerül.',
+      orphanKind: 'A futás véget ért',
+      doneOrphan: 'Kész. A válaszaid mentve vannak. A projekt nyitott munkamenetei most megkapják őket; ha nincs nyitott, a következő kapja meg, amikor elindul. Ezt a lapot bezárhatod.',
       agentRecommends: 'Az ágens javaslata', outline: 'Ebben a körben', itemOf: '{i}. tétel / {n}', roundOf: '{i}. kör / {n}',
       answersN: '{n} válasz', signNote: 'A Kész minden választ elküld az ágensnek.', stChanged: 'módosult',
       kItemShort: 'tétel', kOptionShort: 'lehetőség', kLeave: 'kilépés a Fókuszból vagy az oldalsáv bezárása; vagy ez a lista',
@@ -3662,7 +3664,7 @@ body.run.focusing .rp>.item[data-item]:not(.cur),body.run.focusing .rp>h2.group,
       Array.prototype.forEach.call(document.querySelectorAll('main input, main textarea, .mark-tools button, .mark-row button'), function (i) { i.disabled = true; });
       status.textContent = L.done;
       var banner = byId('banner');
-      banner.textContent = L.doneBanner;
+      banner.textContent = data.orphan ? L.doneOrphan : L.doneBanner;
       banner.classList.add('on');
       mainEl.scrollTop = 0;
     });

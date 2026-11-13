@@ -43,6 +43,9 @@ as `<folder>/round-02.answers.json`. Read every line, not only the last:
   untouched items show your recommendation, which the user has not confirmed. If stdout is empty, nothing was
   answered. Either way, ask the user whether to reopen it; running the same command again
   resumes from the saved answers.
+- After exit code 1 once the page was open, 2, or 130 (Ctrl+C), a project's rounds still open show in the
+  user's Signoff inbox, whenever it runs, for up to 14 days. An answer given there comes to the project's
+  sessions as a `Signoff inbox:` line on the Signoff rounds; the `signoff-inbox` skill says what to do with it.
 - `choice` is an option id, `null` when nothing is picked (`"one"`), or a list (`"many"`). `_other` means the
   user picked Other and wrote `other`; `_skip` means the user skipped the item. Read an `other` text as the
   user's own answer.
