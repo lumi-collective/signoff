@@ -19,6 +19,7 @@ import json
 import os
 import re
 import secrets
+import signal
 import socket
 import socketserver
 import stat
@@ -1998,7 +1999,8 @@ def _recent(path, max_age):
 
 
 def _alive(pid):
-    """Whether a run's process is still there. A killed run leaves no ended in its entry."""
+    """Whether a run's process is still there. A run killed some other way than Ctrl+C, SIGTERM or SIGHUP leaves no
+    ended in its entry."""
     if sys.platform == "win32":
         return True  # os.kill would end the process there; the inbox does not run on Windows yet
     try:
@@ -3280,10 +3282,32 @@ def _wait(rounds):
     return "done"
 
 
+def _stop_on_signals():
+    """Make SIGTERM and SIGHUP stop this run as Ctrl+C does (on macOS and Linux: Windows stops a process with no
+    signal it can catch), so a closed terminal, for one, still gets its entry ended, its locks freed and exit code
+    130. Returns the handlers to put back, and a list: once it holds anything, the handler does nothing (the cleanup
+    has begun). A signal already ignored (nohup) stays ignored; off
+    the main thread (main() called by another program) nothing changes, as Python allows none."""
+    stopping = []
+    if threading.current_thread() is not threading.main_thread():
+        return {}, stopping
+
+    def stop(signum, frame):
+        # Only the first of SIGTERM and SIGHUP raises, so a second (SIGHUP, then SIGTERM) does not cut the cleanup
+        # short; a second Ctrl+C still does, as before.
+        if not stopping:
+            stopping.append(signum)
+            raise KeyboardInterrupt
+
+    sigs = [s for s in (signal.SIGTERM, getattr(signal, "SIGHUP", None))
+            if s is not None and signal.getsignal(s) == signal.SIG_DFL]
+    return {s: signal.signal(s, stop) for s in sigs}, stopping
+
+
 def register_run(home, rounds, mode):
     """Write runs/<run>.json in the Signoff home, so the inbox knows which rounds this run waits on, and whether on
     its own page or as a waiter. Returns a function that marks the entry ended. A failed write is said on stderr and
-    changes nothing else. A run that is killed leaves no ended: a reader checks pid and started."""
+    changes nothing else. A run killed some other way leaves no ended: a reader checks pid and started."""
     folder = rounds[0].path.parent
     root = project_root(folder)
     entry = {"schema": 1, "run": secrets.token_hex(8), "project": project_id(root) if root else None,
@@ -3647,6 +3671,7 @@ def main(argv=None):
         print("signoff: could not write .gitignore (%s); keep *.answers.json, *.answers.md and *.json.lock in %s "
               "out of git" % (e, folder), file=sys.stderr)
     end = register_run(home, rounds, "waiter" if waiter else "page") if inbox else (lambda: None)
+    previous, stopping = _stop_on_signals()
     try:
         if waiter:
             print("signoff: the inbox is open, so the questions are there; waiting for the answers in %s (Ctrl+C "
@@ -3659,10 +3684,17 @@ def main(argv=None):
 
             threading.Thread(target=poll, daemon=True).start()
             result = _serve(server, args, "answers go to %s" % folder)
+    except KeyboardInterrupt:  # one that came before _serve's or _wait's own loop
+        result = "stopped"
     finally:
+        stopping.append(None)
         end()
+        if locks:
+            server.lock.acquire()  # kept until exit: a save in flight ends, and none starts, before the inbox may write
         for fd in locks:
             unlock(fd)
+        for s, handler in previous.items():
+            signal.signal(s, handler)
     if result == "stopped":
         print("signoff: stopped; the answers so far are kept", file=sys.stderr)
         return 130

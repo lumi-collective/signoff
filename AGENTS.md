@@ -79,7 +79,7 @@ Instructions for coding agents working on Signoff. The README says what it does 
   `http://` start link on stderr, and honour `SIGNOFF_INBOX_HOME` (and `XDG_CACHE_HOME`, `XDG_CONFIG_HOME` for
   Uptick's files). Its inbox must touch `inbox.lock` at each look, as the mod reads that time. It must be the
   server process itself (a
-  launcher that execs, as `plugin/bin/signoff` does): the suite stops it with kill and SIGINT. Its `Inbox` class
+  launcher that execs, as `plugin/bin/signoff` does): the suite stops it with kill, SIGINT, SIGTERM and SIGHUP. Its `Inbox` class
   starts `<command> inbox serve` and takes start links from the control socket; its `InboxOffer` class starts
   another for a `runs/` entry it writes by hand (a waiter with the suite's own pid) and asks it for `offer`,
   `open` with the offer and `accept`; its `InboxRows` class starts a third for a project's `runs/` entry and asks
@@ -512,8 +512,8 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   While the inbox holds `inbox.lock`, a run is a waiter: no port, no browser, no idle timeout, no lock; it looks
   at its answers files once a second and exits as a run does. Every run and waiter writes `runs/<run>.json`
   (`schema, run, project, folder, rounds, mode, pid, started`; never a token or a link) at start and adds
-  `ended` when it exits by itself or on Ctrl+C; a killed one leaves none, so readers check `pid` and `started`,
-  and skip `.tmp-*` files.
+  `ended` when it exits by itself, on Ctrl+C, SIGTERM or SIGHUP; one killed some other way leaves none, so readers check
+  `pid` and `started`, and skip `.tmp-*` files.
 - **The hooks cost a session nothing.** They run in every Claude Code session of everyone who installs the
   plugin, so `inbox hook` always exits 0 (exit 2 would block a prompt or a stop), prints nothing (SessionStart and
   UserPromptSubmit stdout goes into the model's context) but the hand-over below, and writes nothing while
@@ -622,8 +622,11 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
 - **Exit codes are a contract:** 0 Done, 1 invalid input (a usage error, every round already done, a round
   locked by another run, the start link used twice, or a Python older than 3.9: one stderr line, from the first
   lines of `main()`; `inbox hook` then exits 0 silently and `inbox monitor` sleeps while its parent lives; the
-  file must keep compiling on 3.7 for that, which a test checks), 2 idle timeout (never for a waiter), 130 Ctrl+C.
-  `signoff inbox home` exits 0, or 1 for a relative home; `signoff inbox hook` always exits 0. `signoff inbox
+  file must keep compiling on 3.7 for that, which a test checks), 2 idle timeout (never for a waiter), 130 Ctrl+C,
+  SIGTERM or SIGHUP (a run and a waiter, on macOS and Linux: they stop as on Ctrl+C; a signal ignored at start
+  stays ignored; on Windows a stopped process gets no signal it can catch; `--history` and the `inbox` commands
+  keep the default for both). `signoff inbox home` exits 0, or 1 for a relative home; `signoff inbox hook` always
+  exits 0. `signoff inbox
   serve` exits 0 when stopped, 1 when it cannot start (another inbox, no Unix sockets), 130 on Ctrl+C; `open`
   and `stop` exit 0, or 1 when no inbox answers; `open` with a target also exits 1 for a malformed target, and
   `open --app` exits 1 for one, off macOS, for a relative home, when no app is found where the mod looks, or

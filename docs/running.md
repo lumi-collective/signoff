@@ -19,7 +19,7 @@ write `py -3` for `python3`.
 | 0 | Done: `done` is `true` in every round that was open, from the page or from another program | each open round's answers file, one absolute path per line, in tab order |
 | 1 | invalid input (stderr names the file, the item and the field), every round already done, a round open in another Signoff run (once the inbox has run), the start link used twice, or a Python older than 3.9 | nothing |
 | 2 | the idle timeout passed; the answers so far are kept with `done: false` | the answers files written so far, one per line, or nothing |
-| 130 | stopped with Ctrl+C; the answers so far are kept | nothing |
+| 130 | stopped with Ctrl+C, or with SIGTERM or SIGHUP on macOS and Linux (a signal ignored at the start, as under `nohup`, stays ignored); the answers so far are kept | nothing |
 
 With `--history`, stdout stays empty: 2 after the idle timeout, 130 after Ctrl+C, 1 for a bad root or a start
 link used twice.
@@ -30,7 +30,7 @@ Once the inbox has run on this machine, its lock file `inbox.lock` is in the Sig
 run locks each open round (an empty `round-NN.json.lock`, or `<file name>.lock` for a single file, beside it),
 so a second run on the same round exits 1, and notes itself in `runs/` in the home: the topic folder, a hash of the project
 folder's path, the round file names, page or waiter, its process id, when it started and, unless it was
-killed, when it ended. No token or link goes there. The lock files stay. A `.gitignore` that Signoff 0.3.0 or
+killed some other way, when it ended. No token or link goes there. The lock files stay. A `.gitignore` that Signoff 0.3.0 or
 later writes covers them; where the topic folder already had its own (one an older Signoff wrote too), they show up
 in git as untracked files until you add `*.json.lock` to it. While the
 inbox is open, a run opens no page and starts no server: it

@@ -464,16 +464,18 @@ class Exits(unittest.TestCase):
                 self.assertEqual(run.proc.returncode, 2, err)
                 self.assertEqual(out, "%s\n" % folder.answers if saved else "")
 
-    @unittest.skipIf(sys.platform == "win32", "Ctrl+C is sent as SIGINT, which is POSIX only")
-    def test_ctrl_c_exits_130(self):
-        folder = Folder()
-        self.addCleanup(folder.cleanup)
-        run = Run(folder.target)
-        self.addCleanup(run.stop)
-        run.open()  # a round trip: the process is serving, past its start, when the signal comes
-        run.proc.send_signal(signal.SIGINT)
-        out, err = run.finish()
-        self.assertEqual((run.proc.returncode, out), (130, ""), err)
+    @unittest.skipIf(sys.platform == "win32", "Ctrl+C is sent as SIGINT, SIGHUP is POSIX only")
+    def test_ctrl_c_sigterm_and_sighup_exit_130(self):
+        for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+            with self.subTest(sig=sig):
+                folder = Folder()
+                self.addCleanup(folder.cleanup)
+                run = Run(folder.target)
+                self.addCleanup(run.stop)
+                run.open()  # a round trip: the process is serving, past its start, when the signal comes
+                run.proc.send_signal(sig)
+                out, err = run.finish()
+                self.assertEqual((run.proc.returncode, out), (130, ""), err)
 
 
 class History(unittest.TestCase):

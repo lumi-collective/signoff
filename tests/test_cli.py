@@ -8,6 +8,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import types
 import unittest
@@ -512,19 +513,89 @@ class CliInbox(unittest.TestCase):
         self.assertIn("ended", self.entry_of(proc))
 
     @unittest.skipIf(sys.platform == "win32", "Ctrl+C is sent as SIGINT, which is POSIX only")
-    def test_ctrl_c_closes_the_entry_in_both_modes(self):
+    def test_ctrl_c_sigterm_and_sighup_close_the_entry_in_both_modes(self):
+        # A hangup may be followed by a SIGTERM: the second must not cut the first one's cleanup short.
         for waiter in (False, True):
-            with self.subTest(waiter=waiter):
-                if waiter:
-                    self.hold(self.home / "inbox.lock")
-                proc = self.start()
-                proc.stderr.readline()
-                time.sleep(0.5)  # into the serve or wait loop
-                proc.send_signal(signal.SIGINT)
-                out, err = self.finish(proc)
-                self.assertEqual(proc.returncode, 130, err)
-                self.assertEqual(out, "")
-                self.assertIn("ended", self.entry_of(proc))
+            if waiter:
+                self.hold(self.home / "inbox.lock")
+            for sigs in ((signal.SIGINT,), (signal.SIGTERM,), (signal.SIGHUP,), (signal.SIGHUP, signal.SIGTERM)):
+                with self.subTest(waiter=waiter, sigs=sigs):
+                    proc = self.start()
+                    proc.stderr.readline()
+                    time.sleep(0.5)  # into the serve or wait loop
+                    for s in sigs:
+                        proc.send_signal(s)
+                    out, err = self.finish(proc)
+                    self.assertEqual(proc.returncode, 130, err)
+                    self.assertEqual(out, "")
+                    self.assertIn("stopped", err)
+                    self.assertNotIn("Traceback", err)
+                    self.assertIn("ended", self.entry_of(proc))
+
+    @unittest.skipIf(sys.platform == "win32", "SIGHUP is POSIX only")
+    def test_a_run_started_with_sighup_ignored_keeps_ignoring_it(self):
+        # nohup signoff ...: a hangup did not stop it before, and still does not.
+        proc = track(subprocess.Popen(
+            [sys.executable, "-I", "-B", "-c", "import signal, sys, runpy; signal.signal(signal.SIGHUP, "
+             "signal.SIG_IGN); sys.argv = sys.argv[1:]; runpy.run_path(sys.argv[0], run_name='__main__')",
+             SCRIPT, str(self.rounds.target), "--no-open"], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            universal_newlines=True, encoding="utf-8", env=self.env))
+        proc.stderr.readline()
+        time.sleep(0.5)
+        proc.send_signal(signal.SIGHUP)
+        time.sleep(0.5)
+        self.assertIsNone(proc.poll())
+        proc.send_signal(signal.SIGTERM)
+        out, err = self.finish(proc)
+        self.assertEqual((proc.returncode, out), (130, ""), err)
+        self.assertIn("ended", self.entry_of(proc))
+
+    @unittest.skipIf(sys.platform == "win32", "os.kill with SIGTERM ends the process there")
+    def test_a_signal_during_the_cleanup_of_a_run_that_ended_by_itself_changes_nothing(self):
+        real = signoff.register_run
+
+        def register(*args):
+            end = real(*args)
+
+            def ending():
+                os.kill(os.getpid(), signal.SIGTERM)  # a SIGTERM just as the run ends by itself
+                end()
+            return ending
+
+        self.assertEqual(signal.getsignal(signal.SIGTERM), signal.SIG_DFL)  # not one an earlier test left behind
+        with mock.patch.dict(os.environ, {"SIGNOFF_INBOX_HOME": str(self.home)}), \
+                mock.patch.object(signoff, "register_run", register), \
+                mock.patch.object(sys, "stdout", io.StringIO()), mock.patch.object(sys, "stderr", io.StringIO()):
+            code = signoff.main([str(self.rounds.target), "--no-open", "--timeout", "0.002"])
+        self.assertEqual(code, signoff.EXIT_TIMEOUT)
+        self.assertIn("ended", self.entries()[0])
+        self.assertEqual(signal.getsignal(signal.SIGTERM), signal.SIG_DFL)
+
+    @unittest.skipIf(sys.platform == "win32", "os.kill with SIGTERM ends the process there")
+    def test_a_signal_before_the_serve_loop_still_stops_the_run(self):
+        def browser(url):
+            os.kill(os.getpid(), signal.SIGTERM)  # while the browser starts, before serve_forever
+            return True
+
+        self.assertEqual(signal.getsignal(signal.SIGTERM), signal.SIG_DFL)  # not one an earlier test left behind
+        with mock.patch.dict(os.environ, {"SIGNOFF_INBOX_HOME": str(self.home)}), \
+                mock.patch.object(signoff, "_open_browser", browser), \
+                mock.patch.object(sys, "stdout", io.StringIO()) as out, mock.patch.object(sys, "stderr", io.StringIO()):
+            code = signoff.main([str(self.rounds.target)])
+        self.assertEqual((code, out.getvalue()), (130, ""))
+        self.assertIn("ended", self.entries()[0])
+        self.assertEqual(signal.getsignal(signal.SIGTERM), signal.SIG_DFL)
+
+    def test_main_off_the_main_thread_still_runs(self):
+        # Python sets signal handlers only on the main thread; a program calling main() from another gets none.
+        codes = []
+        with mock.patch.dict(os.environ, {"SIGNOFF_INBOX_HOME": str(self.home)}), \
+                mock.patch.object(sys, "stdout", io.StringIO()), mock.patch.object(sys, "stderr", io.StringIO()):
+            t = threading.Thread(target=lambda: codes.append(
+                signoff.main([str(self.rounds.target), "--no-open", "--timeout", "0.002"])))
+            t.start()
+            t.join(30)
+        self.assertEqual(codes, [signoff.EXIT_TIMEOUT])
 
 
 class CliRounds(unittest.TestCase):
