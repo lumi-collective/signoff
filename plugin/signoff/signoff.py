@@ -232,7 +232,9 @@ def _number_item(item, where):
     if not _on_grid(rng, item["recommended"]):
         raise DecisionsError("%s: 'recommended' must be a number from %s to %s, on a step of %s"
                              % (where, rng["min"], rng["max"], rng["step"]))
-    item["recommended"] = _snap(rng, item["recommended"])  # what the page's slider saves for it
+    snapped = _snap(rng, item["recommended"])  # what the page's slider saves for it
+    if _on_grid(rng, snapped):  # past a max that is off the grid it is not: the value stays as written
+        item["recommended"] = snapped
 
 
 def _box_ok(box):

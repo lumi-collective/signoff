@@ -707,6 +707,18 @@ class NumberItem(unittest.TestCase):
             self.assertEqual(item["recommended"], want, rng)
             self.assertIs(type(item["recommended"]), type(want), rng)
 
+    def test_a_recommendation_whose_grid_point_is_out_of_range_is_kept_as_written(self):
+        # A max off the grid: the nearest grid point lies past it, so the snap would make an answer that
+        # check_answers refuses (an Accept from a notification would end as failed).
+        for rng, rec in (({"min": 0, "max": 9.9999999999}, 9.9999999999),
+                         ({"min": 0.1, "max": 0.2999999999999999, "step": 0.1}, 0.2999999999999999)):
+            item = self.load(number_item(range=rng, recommended=rec))
+            self.assertEqual(item["recommended"], rec, rng)
+            decisions = {"items": [item]}
+            state = {"answers": {"budget": {"choice": item["recommended"], "source": "notification"}},
+                     "free_text": "", "done": True, "accepted": True}
+            self.assertEqual(signoff.check_answers(state, decisions)["answers"]["budget"]["choice"], rec, rng)
+
 
 class NumberAnswers(unittest.TestCase):
     def setUp(self):
@@ -776,6 +788,11 @@ class NumberAnswers(unittest.TestCase):
         for choice in (9e307, -9e307, 1.7e308, 10 ** 308):
             with self.assertRaises(ValueError):
                 self.check(choice, key="share")
+        # Inside the value bound, a hand-built range can still break the arithmetic (a step of 0): the guard in
+        # _on_grid turns that into a refusal too.
+        self.decisions["items"][3]["range"] = {"min": 0, "max": 10, "step": 0}
+        with self.assertRaises(ValueError):
+            self.check(5, key="share")
 
     def test_a_saved_body_with_nan_from_json_is_refused(self):
         # json.loads reads NaN and Infinity, which JSON itself does not have.
