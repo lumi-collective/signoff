@@ -3161,7 +3161,7 @@ def _inbox_serve():
 
 def _inbox_open_args(args):
     """`inbox open [--no-open] [--run <n> --focus <round>/<item> --inbox <k>]`, each once, in any order: the
-    numbers of a rows reply, or none of them; `--app` in place of `--no-open` takes them, for the macOS app."""
+    numbers of a rows reply, or none of them; `--app` in place of `--no-open` takes them or none, for the macOS app."""
     no_open, app, given, args = False, False, {}, list(args)
     while args:
         arg = args.pop(0)
@@ -3176,6 +3176,8 @@ def _inbox_open_args(args):
             break
     if given == {} and not app:
         return _inbox_open(no_open)
+    if given == {} and not no_open:
+        return _inbox_open_app(None)
     number = r"(0|[1-9][0-9]{0,9})"
     found = given and len(given) == 3 and [re.fullmatch(number, given["--run"]),
                                            re.fullmatch(number + "/" + number, given["--focus"]),
@@ -3184,7 +3186,7 @@ def _inbox_open_args(args):
                                        int(found[2].group(1))]
     if not target or max(target) >= MAX_NUMBER or (app and no_open):
         print("signoff: usage: signoff inbox open [--no-open] [--run <n> --focus <round>/<item> --inbox <k>], or "
-              "signoff inbox open --app --run <n> --focus <round>/<item> --inbox <k>", file=sys.stderr)
+              "signoff inbox open --app [--run <n> --focus <round>/<item> --inbox <k>]", file=sys.stderr)
         return EXIT_ERROR
     if app:
         return _inbox_open_app(dict(zip(TARGET, target)))
@@ -3215,6 +3217,7 @@ def _inbox_open_app(target):
     """Keep a rows reply's numbers in the running inbox as the app's pending target, then open the macOS app found
     where the mod looks (_app_path): when it comes up it asks the inbox for that target's link (app_open). With no
     inbox to keep it (none runs, or one from before app targets) the app opens all the same, on what it shows today.
+    With no target (the panel's All projects row) it takes a waiting one back instead, so the app shows what it shows.
     Neither the command line nor the app's arguments ever hold a link."""
     if sys.platform != "darwin":
         print("signoff: the Signoff app is for macOS only", file=sys.stderr)
@@ -3228,9 +3231,12 @@ def _inbox_open_app(target):
         print("signoff: the Signoff app did not open; is it installed?", file=sys.stderr)
         return EXIT_ERROR
     try:
-        kept = "ok" in inbox_request(home, "app_target", **target)
-        if not kept:
-            print("signoff: the running inbox keeps no target for the app; restart it", file=sys.stderr)
+        if target is None:  # an earlier row's App press is not this one's: its link is dropped, never printed
+            inbox_request(home, "app_open")
+        else:
+            kept = "ok" in inbox_request(home, "app_target", **target)
+            if not kept:
+                print("signoff: the running inbox keeps no target for the app; restart it", file=sys.stderr)
     except OSError:  # no inbox: the app starts one and shows its list
         pass
     try:

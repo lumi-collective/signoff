@@ -82,6 +82,7 @@ On macOS, when the optional Signoff app is in an Applications folder (the mod re
 opens), each round and question row also has an App button. It runs the signoff command's inbox open with --app,
 which leaves that question with the running inbox, in memory only, and runs open -a with the path of the app copy
 it checked in those folders. The app, as it comes up, asks the inbox for the question and opens it in its window.
+The row for all projects has an App button too, which leaves no question and brings the app up as it is.
 
 The Waiting hint setting in /config moves the number to the status line, or turns the mod off. Then the mod reads
 nothing but what the command reads when you still open the panel (the rows, the app's Info.plist). It writes

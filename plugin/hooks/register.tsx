@@ -174,7 +174,8 @@ type Target = { run: number; round: number; item: number; inbox: number }
 
 // `signoff inbox open` starts the inbox when needed and opens a fresh start link in the browser (with a target:
 // that item, or the list when it is gone). Its stderr may hold that link (no browser opened), so the mod reads
-// neither stream: only the exit code. With isApp, `--app` keeps the target for the macOS app and opens the app.
+// neither stream: only the exit code. With isApp, `--app` keeps the target (none: drops a waiting one) for the macOS
+// app and opens the app.
 async function openInbox($: Engine, target?: Target, isApp = false): Promise<string> {
   if (look.isWindows || (await $.env.get('OS')) === 'Windows_NT') return 'Signoff: the inbox does not run on Windows yet'
   const to = target ? ['--run', `${target.run}`, '--focus', `${target.round}/${target.item}`, '--inbox', `${target.inbox}`] : []
@@ -350,6 +351,7 @@ async function drawPanel($: Engine, e: DrawInput, isBand: boolean) {
       {list}
       <Box marginTop={1} gap={3} flexWrap="wrap">
         <Button key="all" plain {...(isBand ? {} : { hotkey: 'a' })} label={rows?.isFailed ? 'Open the inbox' : 'All projects in the inbox'} onPress={go} />
+        {hasApp ? <Button key="app:all" plain dimColor label="App" onPress={() => goInbox($, undefined, true)} /> : null}
         {isBand ? null : <Button key="close" plain hotkey="q" role="dismiss" label="Close" onPress={() => closePanel($)} />}
       </Box>
     </Box>

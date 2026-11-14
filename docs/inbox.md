@@ -184,7 +184,8 @@ link and opens that in its window; the inbox's links to other sites open in your
 nothing. Close the window and the app stays,
 with its badge; click its Dock icon to bring the window back with a fresh link. A row's App button in the plugin's
 panel (`signoff inbox open --app`) leaves its question with the inbox and brings the app up. The app's window then
-opens that question in Focus (the list when it is gone). The menu bar panel never takes it. Click its menu bar icon for the
+opens that question in Focus (the list when it is gone). The App button of the panel's all-projects row brings the
+app up with no question, and takes back one an earlier press left. The menu bar panel never takes it. Click its menu bar icon for the
 inbox in a panel under it (a link of its own, the page's narrow layout; a round opens and can be answered there); it hides when
 you click elsewhere. A right click on the icon offers Open Signoff and Quit Signoff. With many menu bar icons,
 macOS may tuck it away with the others it hides. Quitting the app leaves the inbox running (`signoff inbox

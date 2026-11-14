@@ -48,7 +48,9 @@ same two folders for the app (a real folder, not a link, owned by you or root, w
 bundle id). It leaves the numbers in the inbox's memory (one target, for at most a minute of awake time, used once
 by the app's next start or reopen, and taken back when the app does not open) and runs `open -a` with that app's
 path. So it starts the copy it checked, and no link is in any process argument. There is no URL scheme, which would
-let any web page open the app.
+let any web page open the app. The all-projects row's App button runs `signoff inbox open --app` with no numbers:
+it checks the app the same way, takes back a target an earlier press left (the link is dropped, never printed),
+keeps none, and runs the same `open -a`.
 
 The inbox, when you start it, is one more Python process that runs until you stop it. It touches `inbox.lock` every
 two seconds, the mod's sign that it lives. The optional macOS app ([described here](inbox.md#the-macos-app)) is one more process while it runs. It runs

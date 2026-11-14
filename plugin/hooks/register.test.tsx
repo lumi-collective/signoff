@@ -347,6 +347,11 @@ test('a rows command that fails or prints another shape still gives the panel, w
   await openCommand($)
   expect((await paneButtons($)).texts[0]).toBe('Signoff · no open rounds here')
   expect(rowsRuns(w)).toHaveLength(bad.length + 1)
+  // With the app, Open the inbox has its App button too.
+  w.files[PLIST] = { text: plist(), mtimeMs: NOW }
+  w.rowsOut = { stdout: '', exitCode: 1 }
+  await openCommand($)
+  expect((await paneButtons($)).buttons.map(b => [b.key, b.text])).toEqual([['all', 'Open the inbox'], ['app:all', 'App'], ['close', 'Close']])
 })
 
 const PLIST = `${HOME}/Applications/Signoff.app/Contents/Info.plist`
@@ -372,21 +377,23 @@ test('with the app installed each row has an App button, no hotkey, that opens i
     { key: 'round:5/1', text: 'Second round', hotkey: '4' },
     { key: 'app:round:5/1', text: 'App', hotkey: undefined },
     { key: 'all', text: 'All projects in the inbox', hotkey: 'a' },
+    { key: 'app:all', text: 'App', hotkey: undefined },
     { key: 'close', text: 'Close', hotkey: 'q' },
   ])
   const panel = await $.ui.mount({ ...pane(), surface: 'terminal' })
-  // A round's row opens the item the inbox named for it, as in the browser.
+  // A round's row opens the item the inbox named for it, as in the browser; All projects' App the app, no target.
   const pressed = [
     ['app:item:3/0/1', inApp(3, '0/1')],
     ['app:round:3/0', inApp(3, '0/2')],
     ['app:round:5/1', inApp(5, '1/0')],
     ['round:3/0', target(3, '0/2')],
+    ['app:all', [SIGNOFF, 'inbox', 'open', '--app']],
   ] as const
   for (const [key, argv] of pressed) {
     await panel.press({ key })
     expect(w.ran.at(-1)).toEqual(argv)
   }
-  expect(w.toasts).toEqual([APP_OPENED, APP_OPENED, APP_OPENED, OPENED]) // not "the question is open": an older app shows the list
+  expect(w.toasts).toEqual([APP_OPENED, APP_OPENED, APP_OPENED, OPENED, APP_OPENED]) // not "the question is open": an older app shows the list
   w.openExit = 1
   await panel.press({ key: 'app:item:3/0/2' })
   expect(w.toasts.at(-1)).toBe('Signoff: the app did not open; run signoff inbox open in a terminal to see the inbox')
@@ -413,7 +420,21 @@ test('no App button without the app bundle or with another bundle id', async ($,
   expect(await appButtons()).toBe(0)
   w.files['/Applications/Signoff.app/Contents/Info.plist'] = { text: plist(), mtimeMs: NOW }
   await openCommand($)
-  expect(await appButtons()).toBe(4) // the system's Applications folder counts too
+  expect(await appButtons()).toBe(5) // the system's Applications folder counts too: four rows and All projects
+})
+
+test('in the band, All projects has an App button with no hotkey, which opens the app with no target', async ($, on) => {
+  const { w } = world(on, { isPlaced: false })
+  w.files[PLIST] = { text: plist(), mtimeMs: NOW }
+  await start($)
+  await openCommand($)
+  const ui = await $.ui.mount({ ...band(), surface: 'terminal' })
+  const buttons = await ui.findAll({ type: 'Button' })
+  expect(buttons.map(b => b.key).slice(-2)).toEqual(['all', 'app:all'])
+  for (const button of buttons) expect(button.props.hotkey).toBeUndefined()
+  await ui.press({ key: 'app:all' })
+  await ui.unmount()
+  expect([w.ran.at(-1), w.toasts]).toEqual([[SIGNOFF, 'inbox', 'open', '--app'], [APP_OPENED]])
 })
 
 test('no rounds while the band counts some: the panel says the rest waits in the inbox', async ($, on) => {

@@ -255,6 +255,9 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   mod's (which follows a link and checks no owner), so a linked or another user's copy gets an App button whose
   press says the app did not open. With no inbox answering, or one
   from before these ops, it opens the app all the same, which shows what it showed. It never starts an inbox.
+  `signoff inbox open --app` with no target (macOS only; not with `--no-open`) finds the app the same way, asks a
+  live inbox for `app_open` and drops the link (so a target an earlier press kept is not used; no inbox answering
+  is ignored), keeps nothing, and runs the same `open -a`; the app then shows what it showed.
   There is no URL scheme: it would let any web page open the app.
 - **`state.json` counts what waits, with no text.** The inbox alone writes it in the home, atomically, 0600:
   `schema, at, waiting, projects[{id, monogram, waiting}]`. `waiting` is the number of rows in Waiting on you
@@ -294,7 +297,8 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   rule) and All projects the plain one. When the opening found the app (`Signoff.app` in `/Applications` or
   `~/Applications` whose `Info.plist` names the bundle id, read through `$.fs`, never on a look), each round
   and item row ends in an App button with no hotkey (Tab and Enter, or a click),
-  which runs `signoff inbox open --app` with the row's target. All of these run one at a time (a
+  which runs `signoff inbox open --app` with the row's target, and so does All projects (or Open the inbox),
+  whose App button runs it with no target. All of these run one at a time (a
   press while one runs does nothing), and read only its exit code, never its stdout or
   stderr (a start link may be there), and an error only by its name; the command's line goes to a toast, not the
   conversation (the command's output row would go into the model's requests). For origin `sdk`, as with
@@ -675,7 +679,7 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   exits 0. `signoff inbox
   serve` exits 0 when stopped, 1 when it cannot start (another inbox, no Unix sockets), 130 on Ctrl+C; `open`
   and `stop` exit 0, or 1 when no inbox answers; `open` with a target also exits 1 for a malformed target, and
-  `open --app` exits 1 for one, off macOS, for a relative home, when no app is found where the mod looks, or
+  `open --app` (with a target or none) exits 1 for a malformed one, off macOS, for a relative home, when no app is found where the mod looks, or
   when `open -a` fails, else 0. `signoff inbox done <id>` exits 0 (also when marked before), or
   1 when there is no such request. `signoff inbox rows <folder>` exits 0 with its line (outside any project
   without asking an inbox, which need not run), or 1 with nothing on

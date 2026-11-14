@@ -2068,6 +2068,43 @@ class InboxAppTarget(InboxTest):
         with mock.patch.object(signoff, "inbox_request", return_value={"error": "unknown request"}):
             self.assertEqual(cli("--app", *target), (0, ""))
 
+    def test_open_app_without_a_target_drops_a_waiting_target_and_opens_the_app(self):
+        self.case([one_round(question("q"))])
+        self.start()
+        k = self.ctl("rows", project=self.pid)["inbox"]
+        record_to = Path(self._tmp.name) / "opened.json"
+        app = fake_app(Path(self._tmp.name) / "Applications")
+        # Never the real `open`, as above.
+        fake = [sys.executable, "-I", "-c", "import json, sys; json.dump(sys.argv[1:], open(sys.argv[1], 'w'))",
+                str(record_to)]
+
+        def cli(home=self.home, opener=fake):
+            out, err = io.StringIO(), io.StringIO()
+            with mock.patch.object(signoff, "APP_OPEN", opener), mock.patch.object(signoff.sys, "platform", "darwin"), \
+                    mock.patch.object(signoff, "APP_DIRS", (str(app.parent),)), \
+                    mock.patch.dict(os.environ, SIGNOFF_INBOX_HOME=str(home)), \
+                    contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = signoff.main(["inbox", "open", "--app"])
+            for text in (out.getvalue(), err.getvalue()):
+                self.assertNotIn("127.0.0.1", text)
+                self.assertNotIn("/b/", text)
+            return code, out.getvalue()
+
+        # A target an earlier App press kept is not this press's: dropped, so the app shows what it shows.
+        self.assertEqual(self.ctl("app_target", run=0, round=0, item=0, inbox=k), {"ok": True})
+        self.assertEqual(cli(), (0, ""))
+        self.assertEqual(json.loads(record_to.read_text(encoding="utf-8")), [str(record_to), str(app)])
+        self.assertEqual(self.ctl("app_open"), {"link": None})
+        self.assertEqual(cli(), (0, ""))  # none waiting: the same
+        self.assertEqual(self.ctl("app_open"), {"link": None})  # and none kept
+        failing = [sys.executable, "-I", "-c", "raise SystemExit(1)"]
+        self.assertEqual(cli(opener=failing), (1, ""))
+        record_to.unlink()
+        none = Path(self._tmp.name) / "none"
+        self.assertEqual(cli(home=none), (0, ""))  # no inbox: the app opens all the same
+        self.assertTrue(record_to.exists())
+        self.assertFalse(none.exists())  # nor is an inbox started for it
+
 
 def fake_app(folder, bundle_id=signoff.APP_ID, fmt=None):
     """A Signoff.app in folder whose Info.plist names bundle_id: only what `inbox open --app` checks."""
@@ -3334,7 +3371,8 @@ class InboxCli(unittest.TestCase):
                 "signoff.APP_DIRS = (%r,); sys.exit(signoff.main(sys.argv[1:]))"
                 % (os.path.dirname(SCRIPT), "open(%r, 'w')" % str(record_to), str(apps)))
         target = ["--run", "0", "--focus", "0/0", "--inbox", "1"]
-        for bad in (["--app"], ["--app", "--no-open"] + target, ["--app", "--app"] + target,
+        # A bare --app is valid (the panel's All projects row); with --no-open or twice it is not.
+        for bad in (["--app", "--no-open"], ["--app", "--app"], ["--app", "--no-open"] + target, ["--app", "--app"] + target,
                     ["--app", "--run", "0", "--focus", "0/0"], ["--app", "--run", "x", "--focus", "0/0", "--inbox", "1"],
                     ["--app", "--run", "0", "--focus", "0/0", "--inbox", "2147483648"], ["--app=1"] + target):
             got = subprocess.run([sys.executable, "-I", "-B", "-c", code, "inbox", "open"] + bad, stdout=subprocess.PIPE,
