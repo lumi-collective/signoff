@@ -86,8 +86,10 @@ Instructions for coding agents working on Signoff. The README says what it does 
   it for `rows`, on the socket and through `<command> inbox rows <folder>`, and for `open` with a row's target,
   on the socket and through `<command> inbox open --run <n> --focus <round>/<item> --inbox <k>`, and for
   `app_target` and `app_open` on the socket only (`--app` runs `open -a`, and an app started that way gets none
-  of the suite's environment). `test_inbox.py` covers the
-  inbox in process: the `todo.md` reader and Markdown tree, routes, pairs, locks, the waiter it wakes, messages,
+  of the suite's environment); its `InboxTodoPath` class starts a fourth for projects whose `todo` key names a
+  file inside the root, or one out of it (`..`, an absolute path, a link), too big or not a file, and checks the
+  list page and messages. `test_inbox.py` covers the
+  inbox in process: the `todo.md` reader and the `todo` key, the Markdown tree, routes, pairs, locks, the waiter it wakes, messages,
   the OSV section, the theme it keeps, the answer from a notification, the panel's rows and their targets, and
   `inbox open --app` with its app opener (`APP_OPEN`) swapped for a stand-in and its app folders (`APP_DIRS`)
   for temporary ones: no test runs the real `open` or finds an installed app.
