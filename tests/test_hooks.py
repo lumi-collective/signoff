@@ -513,6 +513,11 @@ class HandOver(HookBase):
         self.assertEqual([parse_line(x) for x in self.lines(out)], [("Signoff rounds", ref, signoff.ANSWER_TEXT, r["id"])])
         # The line asks to tell the user first, as the monitor's has no hand-over head.
         self.assertIn("Tell the user that the answers came in, and once the user says so", signoff.ANSWER_TEXT)
+        # True also when the run stopped after the answers came in (a waiter stopped just after a Done).
+        self.assertTrue(signoff.ANSWER_TEXT.startswith(
+            "These rounds are answered, but the Signoff run that asked them ended before it could hand the answers "
+            "over (they came in the Signoff inbox, or from another program). Tell the user"), signoff.ANSWER_TEXT)
+        self.assertLessEqual(len(signoff.ANSWER_TEXT), signoff.MAX_REQUEST_TEXT)  # request_line() cuts nothing
         for text in (str(self.home), str(self.project)):
             self.assertNotIn(text, out)
         p = subprocess.run([sys.executable, "-I", "-B", SCRIPT, "inbox", "done", r["id"]], capture_output=True,

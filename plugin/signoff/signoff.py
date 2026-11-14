@@ -1910,10 +1910,12 @@ MAX_HANDOVER_TEXT = 8000  # characters of request lines a SessionStart hands ove
 REQUEST_KINDS = {"todo": "todo item", "vuln": "vulnerability finding", "later": "todo item",
                  "answer": "Signoff rounds"}
 LATER_TEXT = "The owner asks to park this item for later: remove its waiting marker and keep it open."
-# AD-28: the text the inbox hands over once an orphan group's rounds are done. It asks the agent to tell the user
-# first, since the monitor's line has no hand-over head and the session may be at other work.
-ANSWER_TEXT = ("These rounds were answered after the Signoff run that asked them had ended (in the Signoff inbox, or "
-               "by another program). Tell the user that the answers came in, and once the user says so, read each "
+# AD-28: the text the inbox hands over once an orphan group's rounds are done, or when it lets go of a group whose
+# newest run stopped before handing them over. It asks the agent to tell the user first, since the monitor's line
+# has no hand-over head and the session may be at other work.
+ANSWER_TEXT = ("These rounds are answered, but the Signoff run that asked them ended before it could hand the answers "
+               "over (they came in the Signoff inbox, or from another program). Tell the user that the answers came "
+               "in, and once the user says so, read each "
                "round's answers file in that topic folder under your decisions folder and act on it as the signoff "
                "skill says. A round that already has its outcome file (<round>.outcome.json), or whose answers file "
                "does not say done: true, needs nothing: just mark this done. Do not run Signoff on these rounds "
