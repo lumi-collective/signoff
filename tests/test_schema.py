@@ -1055,15 +1055,16 @@ class MarkdownLanguage(unittest.TestCase):
             self.assertEqual(md.count(hidden), 3, lang)
             self.assertIn("notes/cut.md", md)
 
-    def test_every_field_goes_through_the_escape(self):
+    def test_comment_goes_through_md_text(self):
         md = self.md("see &#x202e; ~~x~~ https://a.example \u202eabc")
         self.assertIn("- Comment: see \\&#x202e; \\~\\~x\\~\\~ https\\://a.example U+202Eabc\n", md)
         self.assertNotIn("\u202e", md)
 
 
 class MarkdownEscape(unittest.TestCase):
-    """md_text's output, pinned: in a GFM viewer it shows the source's characters and renders nothing. The strings
-    were checked against GitHub's renderer (gh api /markdown, mode gfm) when this table was written."""
+    """md_text's output, pinned: a GFM viewer shows the source's characters and renders nothing of the GFM spec,
+    but for an email link; GitHub's own extensions ($math$, :emoji:, @mention) no escape stops. The strings were
+    checked against GitHub's renderer (gh api /markdown, mode gfm) when this table was written."""
 
     CASES = [
         # Inline markup and HTML, as before.
@@ -1080,6 +1081,11 @@ class MarkdownEscape(unittest.TestCase):
         ("at 10:30, a:/b, mailto:x", "at 10:30, a:/b, mailto:x"),
         # Known limit: no Markdown escape stops a GFM viewer linking an email address; the link text is the address.
         ("a@b.example", "a@b.example"),
+        # Obsidian's comment: %% hides every line up to the next %%. A % after a % is escaped.
+        ("for %%f in (*) do echo %%f", "for %\\%f in (\\*) do echo %\\%f"),
+        ("printf '%%d %%%'", "printf '%\\%d %\\%\\%'"),
+        ("%%\nhidden\n%%", "%\\%  \n  hidden  \n  %\\%"),
+        ("50% of %PATH% and 5 % 3", "50% of %PATH% and 5 % 3"),
         # Format and control characters: visible as U+XXXX, so nothing reorders or hides the line.
         ("a\u202eb", "aU+202Eb"),
         ("\u2066x\u2069 \u200b \ufeff \u00ad", "U+2066xU+2069 U+200B U+FEFF U+00AD"),

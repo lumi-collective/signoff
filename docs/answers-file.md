@@ -40,11 +40,13 @@ Beside each round, `round-NN.answers.json`, from the first change on the page:
 - `decisions` names the round file the answers belong to and its SHA-256 when they were saved.
 
 Every save from the page also writes `round-NN.answers.md`, the same answers as Markdown for people, all text
-escaped; an answers file another program wrote has no fresh copy. A GFM viewer shows each text as written: no
-formatting, HTML, character reference (`&amp;`) or link from a bare URL, with one exception: it still links an
-email address. A control character (but tab), a format character (a bidi override, a zero-width mark, also the
-joiner inside an emoji sequence and a soft hyphen) and a lone surrogate show as their code, such as `U+202E`, so
-nothing reverses or hides the rest of a line. Viewers' own extras, such as Obsidian's, were not checked. Its
+escaped; an answers file another program wrote has no fresh copy. A GFM viewer shows each text as written: none
+of the GFM spec's formatting, HTML, character references (`&amp;`) or links from a bare URL, but for one: it
+still links an email address. No Markdown escape stops that, nor GitHub's own extensions (`$math$`, `:+1:`
+emoji, `@user` mentions). A control character (but tab), a format character (a bidi override, a zero-width mark,
+also the joiner inside an emoji sequence and a soft hyphen) and a lone surrogate show as their code, such as
+`U+202E`, so nothing reverses or hides the rest of a line. Of viewers' own extras only Obsidian's `%%` comment
+is handled (checked in Obsidian 1.15.1): a `%` after a `%` is escaped. The others were not checked. Its
 labels follow the round's `lang` (`en` or `hu`; anything else gets English), and an empty comment leaves no
 line. An item's commands get a line each, for reading, not for pasting: the copy drops their indentation and
 blank lines. Agents read the JSON.

@@ -667,8 +667,10 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   home made for it does not turn the inbox on (`inbox.lock` does).
 - **The Markdown copy escapes everything.** Agent and user text go through `md_text`; nothing in it may render
   as Markdown or HTML (GFM: no element, link, strikethrough or character reference), and a control (but tab),
-  format or lone surrogate character shows as `U+XXXX`. Known limit: a GFM viewer still links an email address,
-  which no Markdown escape stops. Its test pins the output, checked against GitHub's renderer in `gfm` mode.
+  format or lone surrogate character shows as `U+XXXX`; a `%` after a `%` is escaped (Obsidian's comment). Known
+  limits, which no Markdown escape stops: a GFM viewer still links an email address, and GitHub's own extensions
+  (`$math$`, `:+1:`, `@user`) still render. Its test pins the output, checked against GitHub's renderer in `gfm`
+  mode.
 - **The app is a client of the inbox and nothing more.** It binds no Go method to the webview: no Wails service,
   raw message handler or transport of its own (`nobind_test.go` parses the source). What Wails keeps is its
   `external` message handler, which takes only drag, resize and ready messages, and from the main frame only; its
