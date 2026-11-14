@@ -1406,6 +1406,19 @@ def run_inbox(work):
         wait_for("the list again", lambda: browser.js("document.title === '(2) Inbox' && "
                                                       "!!document.querySelector('h2.ib-head .ib-gtoggle')"))
         check(browser.js(answered)[1:] == ["false", 1, False], "a fresh load starts closed: %r" % browser.js(answered))
+        # A project filter opens Answered, as it opens that project's To do group; another project's leaves it out,
+        # and the list without a filter has it closed again.
+        browser.js("Array.prototype.forEach.call(document.querySelectorAll('.nav'), function (b) {"
+                   " var n = b.querySelector('.nl'); if (n) b.setAttribute('data-e2e', n.textContent); })")
+        browser.click(".nav[data-e2e=inbox-project]")
+        check(browser.js(answered)[1:] == ["true", 1, True], "the project's filter opens Answered: %r" % browser.js(answered))
+        browser.click(".nav[data-e2e=inbox-other]")
+        check(not browser.js("document.querySelector('h2.ib-head .ib-gtoggle').checkVisibility()"),
+              "another project's filter leaves Answered out")
+        browser.click(".nav[data-e2e=inbox-project]")
+        check(browser.js(answered)[1:] == ["true", 1, True], "back on the project, Answered open: %r" % browser.js(answered))
+        browser.click(".nav[data-e2e=inbox-project]")  # a second click shows everything again
+        check(browser.js(answered)[1:] == ["false", 1, False], "no filter, Answered closed again: %r" % browser.js(answered))
         # The OSV section: projects off Uptick's scan list share one collapsed row, each with its own Scan button;
         # a click adds that project to the list.
         osv = "section.ib:last-of-type "
@@ -2107,7 +2120,7 @@ def main():
              "j/k and Enter, Focus with f and Esc; at 390 px the sheet and the drawer, Esc and focus back; "
              "the round answered from the inbox wakes the waiting "
              "run, exit 0, then shows as sent in Answered, closed behind its count row (out of j, k and Focus), "
-             "opened by a click or a match inside, kept open by the page's own reload; Scan this project adds it to Uptick's list and counts Not scanned down "
+             "opened by a click, a match inside or its project's filter, kept open by the page's own reload; Scan this project adds it to Uptick's list and counts Not scanned down "
              "to 0 without a reload, a finding handed to the agent is a vuln request and not counted; "
              "live sessions: two waiting ones counted, the background one's claude attach copied exactly, the "
              "interactive one pointed to its terminal, an idle one dimmer in Idle and counted nowhere, a third "

@@ -1364,8 +1364,8 @@ body.run.focusing .rp>.item[data-item]:not(.cur),body.run.focusing .rp>h2.group,
     brand.append(logo, 'Signoff');
     nav.append(brand);
     // The search: one field in the header, over every view. A query shows the rows that match (case and accents
-    // ignored, every word somewhere in the row) and opens the To do groups that hold one; an empty field gives the
-    // list back as the sidebar left it.
+    // ignored, every word somewhere in the row) and opens the To do groups and Answered that hold one; an empty
+    // field gives the list back as the sidebar left it.
     var form = el('form', 'ib-search'), box = el('input'), boxLabel = el('label', 'visually-hidden', L.findLabel);
     var found = el('span', 'ib-search-count'), clear = el('button', '', L.clearSearch), none = el('p', 'hint ib-nomatch');
     var mac = shortcut[0] === '⌘';
@@ -1480,7 +1480,8 @@ body.run.focusing .rp>.item[data-item]:not(.cur),body.run.focusing .rp>h2.group,
     }, 5000);
 
     // Moving the open item, and the narrow layouts: the drawer and the sheet keep the rest inert while open.
-    // A closed project's rows are out of j and k and out of Focus too: both walk only what the list shows.
+    // A closed group's rows (a project's To do, or Answered) are out of j and k and out of Focus too: both walk only
+    // what the list shows.
     function shown() {
       return rows.filter(function (r) { return !r.li.hidden && !r.sec.el.hidden && !(r.grp && r.grp.ul.hidden); });
     }
@@ -1610,7 +1611,7 @@ body.run.focusing .rp>.item[data-item]:not(.cur),body.run.focusing .rp>h2.group,
       b.append.apply(b, label);
       b.addEventListener('click', function () {
         if (terms.length) return;  // a search holds every group with a match open
-        g.open = g.ul.hidden;  // a project filter keeps its own project's group open (paint)
+        g.open = g.ul.hidden;  // a project filter keeps its own project's group and Answered open (paint)
         paint(g);
         if (g.ul.hidden && current && current.grp === g) select(null);  // no open row out of sight; focus stays here
         bars();
@@ -1622,7 +1623,10 @@ body.run.focusing .rp>.item[data-item]:not(.cur),body.run.focusing .rp>h2.group,
     function closable() {
       return [].concat.apply([], sections.map(function (x) { return x.groups || []; })).filter(function (g) { return g.toggle; });
     }
-    function forced(g) { return terms.length > 0 || !!(filter && filter.project && g.key === filter.project); }
+    // A project filter opens its own To do group and Answered, which then holds only that project's rows.
+    function forced(g) {
+      return terms.length > 0 || !!(filter && filter.project && (g.key === filter.project || g.key === 'answered'));
+    }
     function paint(g) {  // a group: its rows open or closed, hidden when the filter leaves none of them
       var open = g.open || forced(g);
       g.ul.hidden = !open;

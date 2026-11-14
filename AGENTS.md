@@ -482,7 +482,8 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   reads as oldest first), the order only changes on screen (j and k follow it). To do shows each project's rows
   behind one count row (a button with `aria-expanded`), closed until clicked; a project's filter opens its own.
   Answered (the rounds answered, under Waiting on you) is one such group: its heading is the count row, closed
-  until clicked, and no filter opens it. No `prefs.json` key keeps any of them.
+  until clicked, and a project's filter opens it (with that project's rows only). No `prefs.json` key keeps any
+  of them.
   j, k and Focus walk only the rows shown, never a closed group's. **The search** is a `role=search` field in the
   header (a phone gets it on a second line), live as you type, over every view and past the sidebar's filter: a
   row matches when each word of the query (split on spaces, folded with NFD, combining marks dropped, lower case)

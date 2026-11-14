@@ -28,7 +28,8 @@ question (from about six seconds after it asks) is a row too, with its project a
 inbox does not answer it for you. Its row says to go to its terminal, or, for a background session (`claude
 --bg`), gives `claude attach <id>` to copy. **Answered** lists the rounds answered in the last day: *sent*, or *working* once
 that project's Claude Code session reported a new turn after your answer. It is closed until you click its
-heading, and a search opens it while a match is in it. **Idle**, dimmer, lists the open
+heading; a search opens it while a match is in it, and picking a project in the sidebar opens it with that
+project's rounds. **Idle**, dimmer, lists the open
 sessions idle for a minute or more, waiting for your next prompt; they do not count as waiting on
 you. **To do** holds every project's other open items behind one row per project (`docs-site: 12 more open`), closed
 until you click it; picking a project in the sidebar opens its own. The tab title shows how many rows wait on you, as `(3) Inbox`, and keeps that count current.
