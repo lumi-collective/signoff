@@ -2090,8 +2090,16 @@ class InboxAppTarget(InboxTest):
                 self.assertNotIn("/b/", text)
             return code, out.getvalue()
 
-        # A target an earlier App press kept is not this press's: dropped, so the app shows what it shows.
+        # A target an earlier App press kept is not this press's: dropped before the app opens, as a starting app
+        # asks for it at once. This stand-in asks, as the app does, the moment it is run.
+        asked_to = Path(self._tmp.name) / "asked.json"
+        asking = [sys.executable, "-I", "-c",
+                  "import json, sys; from pathlib import Path; sys.path.insert(0, sys.argv[2]); import signoff; "
+                  "json.dump(signoff.inbox_request(Path(sys.argv[3]), 'app_open'), open(sys.argv[1], 'w'))",
+                  str(asked_to), os.path.dirname(SCRIPT), str(self.home)]
         self.assertEqual(self.ctl("app_target", run=0, round=0, item=0, inbox=k), {"ok": True})
+        self.assertEqual(cli(opener=asking), (0, ""))
+        self.assertEqual(json.loads(asked_to.read_text(encoding="utf-8")), {"link": None})
         self.assertEqual(cli(), (0, ""))
         self.assertEqual(json.loads(record_to.read_text(encoding="utf-8")), [str(record_to), str(app)])
         self.assertEqual(self.ctl("app_open"), {"link": None})
