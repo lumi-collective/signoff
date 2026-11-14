@@ -59,13 +59,16 @@ JSON, one file per round. [`plugin/signoff/schema.json`](../plugin/signoff/schem
 | `criteria` | item | no | what the options are compared on: a list of `id` and `label`, in row order. Adds the facts as chips on the cards and a **Cards / Table** toggle |
 | `facts` | option | no | the option's value per criterion, keyed by criterion `id`: `text`, and optional `tone` `good`, `mid` or `bad` (shown as ▲, ● or ▼ with the text); only the item's own criteria; a missing one shows "–" in the table |
 | `attachments` | item | no | text files shown under the options, each in a box that starts closed: `src` (inside the round's folder; `.md` or `.txt`, UTF-8, up to 256 KiB) and optional `caption`; up to 20 an item. Read at start and shown as plain text; the Markdown copy names them only |
-| `commands` | item | no | commands for the user to run before deciding, 1 to 10: each `text`, optional `lang` (shown in the block's bar: letters, digits and `+#._-`, up to 20) and `caption` (a line above it). Shown under the description as wrapped code blocks with Copy; Signoff never runs them. The text on screen must be all that runs, so a round fails to load when a `text` starts or ends with a space or line break, has two blank lines in a row or more than 16 spaces or tabs in a row, or when any of the three holds an invisible character (see below) |
+| `commands` | item | no | commands for the user to run before deciding, 1 to 10: each `text`, optional `lang` (shown in the block's bar: letters, digits and `+#._-`, up to 20) and `caption` (a line above it). Shown under the description as wrapped code blocks with Copy; Signoff never runs them. A round fails to load when a `text` starts or ends with a space or line break (a trailing one runs on paste), has more than 4000 characters or 60 lines, or when any of the three holds a known invisible or blank character (see below) |
 
 Unknown keys are refused, so a typo shows up at once instead of being ignored. Text is plain: no Markdown, links
 or HTML. `commands` needs Signoff 0.5.0 or newer; an older one refuses the round, and so does an inbox still
 running from an older plugin: after updating, restart the inbox (`signoff inbox stop`, then open it again).
 
-An invisible character in a command is a control character other than tab and newline; a format, line or
-paragraph separator, surrogate, private-use or unassigned one; or one of Unicode's default-ignorable code points
-(a bidi override, a zero-width mark, a variation selector, a Hangul filler, a tag). "Unassigned" is as the Python
-running Signoff knows it, so an older Python refuses a character that a newer Unicode assigned.
+An invisible or blank character in a command is a control character other than tab and newline; a format, line
+or paragraph separator, surrogate, private-use or unassigned one; one of Unicode's default-ignorable code points
+(a bidi override, a zero-width mark, a variation selector, a Hangul filler, a tag); or U+2800 (the Braille blank)
+or U+FFFC, which draw nothing. A `caption` may hold an emoji: U+FE0F and U+200D are allowed there. "Unassigned"
+is as the Python running Signoff knows it, so an older Python refuses a character that a newer Unicode assigned.
+These checks catch the known tricks, not every one: the block wraps and is capped, and the user should read a
+command before running it.

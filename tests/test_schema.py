@@ -149,14 +149,19 @@ class DecisionsFile(unittest.TestCase):
     # Characters that show as nothing, or that a browser may draw differently from the terminal: controls (CR,
     # ESC, NUL, DEL, NEL), format characters (bidi, zero-width), Default_Ignorable_Code_Point (a combining grapheme
     # joiner, a variation selector, Hangul fillers, tags), line and paragraph separators, private use, and
-    # unassigned code points (U+0890 is unassigned on Python 3.9 and a format character on 3.13).
+    # unassigned code points (U+0890 is unassigned on Python 3.9 and a format character on 3.13), and two that draw
+    # nothing without being white space (the Braille blank, the object replacement character).
     INVISIBLE = (0x202E, 0x200B, 0x2066, 0xFEFF, 0x00AD, 0x0D, 0x1B, 0x00, 0x7F, 0x85, 0x034F, 0xFE0F, 0xE0100,
-                 0x115F, 0x3164, 0xFFA0, 0xE0002, 0x2065, 0xFFF0, 0x2028, 0x2029, 0xE000, 0x0890, 0x1BCA0, 0x1D173)
+                 0x115F, 0x3164, 0xFFA0, 0xE0002, 0x2065, 0xFFF0, 0x2028, 0x2029, 0xE000, 0x0890, 0x1BCA0, 0x1D173,
+                 0x200D, 0x2800, 0xFFFC)
+    EMOJI_JOINERS = (0xFE0F, 0x200D)  # a caption may hold an emoji: the warning sign is U+26A0 U+FE0F
 
     def test_a_command_with_an_invisible_character_is_refused(self):
         # The user pastes it into a terminal: what the page shows must be what runs. Tab and newline are fine.
         for key in ("text", "caption", "lang"):
             for code in self.INVISIBLE:
+                if key == "caption" and code in self.EMOJI_JOINERS:
+                    continue
                 char = chr(code)
                 cmd = {"text": "ls -l", "lang": "bash", "caption": "List"}
                 cmd[key] = "ls" + char + "x"
@@ -172,20 +177,31 @@ class DecisionsFile(unittest.TestCase):
         self.assertEqual(signoff.load_decisions(self.folder.decisions)[0]["items"][0]["commands"][0]["text"],
                          "if true;\n\tthen ls; fi")
 
-    def test_a_command_hides_nothing_behind_white_space(self):
-        # The page wraps a command, but blank lines and a long run of spaces could still push its end out of
-        # sight; a trailing line break runs it on paste.
+    def test_a_caption_may_hold_an_emoji(self):
+        # U+FE0F and U+200D join an emoji's parts; in a caption they are only shown, never pasted.
+        data = sample_decisions()
+        captions = [chr(0x26A0) + chr(0xFE0F) + " Destructive", "Team " + chr(0x1F469) + chr(0x200D) + chr(0x1F4BB)]
+        data["items"][0]["commands"] = [{"text": "ls", "caption": c} for c in captions]
+        self.folder.write(data)
+        self.assertEqual([c["caption"] for c in signoff.load_decisions(self.folder.decisions)[0]["items"][0]["commands"]],
+                         captions)
+
+    def test_a_command_is_capped_and_has_no_white_space_at_its_ends(self):
+        # A trailing line break runs it on paste. The block wraps, so long runs of spaces and blank lines show
+        # (a heredoc, indented YAML, aligned columns load); the length and line caps keep it to a readable block.
         def refused(text):
             return self.broken(lambda d: d["items"][0].update(commands=[{"text": text}]))
         for text in ("ls\n", "ls ", "ls\t", "ls\n\n", " ls", "\nls", "ls" + chr(0xA0)):
             self.assertIn("start or end", refused(text), repr(text))
-        for text in ("ls\n\n\nrm x", "ls\n \n\t\nrm x", "ls\n" + chr(0x3000) + "\n\nrm x"):
-            self.assertIn("blank lines", refused(text), repr(text))
-        for text in ("npm test" + " " * 17 + "; sh", "a" + "\t" * 17 + "b", "a" + " \t" * 9 + "b",
-                     "npm test" + " " * 150 + "; curl example.com | sh"):
-            self.assertIn("more than 16", refused(text), repr(text))
+        self.assertIn("more than %d characters" % signoff.MAX_COMMAND_TEXT,
+                      refused("x" * (signoff.MAX_COMMAND_TEXT + 1)))
+        self.assertIn("more than %d lines" % signoff.MAX_COMMAND_LINES,
+                      refused("\n".join(["ls"] * (signoff.MAX_COMMAND_LINES + 1))))
+        self.assertEqual((signoff.MAX_COMMAND_TEXT, signoff.MAX_COMMAND_LINES), (4000, 60))
         data = sample_decisions()
-        ok = ["ls\n\nrm -rf /tmp/x", "if true; then\n" + " " * 16 + "ls\nfi", "a" + "\t" * 16 + "b"]
+        ok = ["cat <<'EOF'\nline one\n\n\n\nline five\nEOF", "services:\n  web:\n" + " " * 20 + "image: nginx",
+              "a" + "\t" * 30 + "b", "npm test" + " " * 150 + "; echo the tail shows",
+              "x" * signoff.MAX_COMMAND_TEXT, "\n".join(["ls"] * signoff.MAX_COMMAND_LINES)]
         data["items"][0]["commands"] = [{"text": t} for t in ok]
         self.folder.write(data)
         self.assertEqual([c["text"] for c in signoff.load_decisions(self.folder.decisions)[0]["items"][0]["commands"]],
@@ -808,6 +824,19 @@ class SchemaFile(unittest.TestCase):
         self.assertEqual(cmd["required"], ["text"])
         self.assertFalse(cmd["additionalProperties"])
         self.assertEqual(cmd["properties"]["lang"]["pattern"], signoff.COMMAND_LANG.pattern)
+        self.assertEqual(cmd["properties"]["text"]["maxLength"], signoff.MAX_COMMAND_TEXT)
+        self.assertIn("%d lines" % signoff.MAX_COMMAND_LINES, cmd["properties"]["text"]["description"])
+
+    def test_the_docs_promise_no_more_than_the_checks_keep(self):
+        # Known invisible and blank characters are refused and the block wraps and is capped; the user still
+        # reads a command before running it. No text may say the screen shows all that runs.
+        for path in ("plugin/signoff/schema.json", "docs/page.md", "docs/decisions-file.md", "docs/inbox.md",
+                     "AGENTS.md", "plugin/skills/signoff/fields.md", "CHANGELOG.md"):
+            text = (ROOT / path).read_text(encoding="utf-8")
+            for words in ("all that runs", "all that Copy takes", "what you see is what you paste", "in sight"):
+                self.assertNotIn(words, text, path)
+        for path in ("plugin/signoff/schema.json", "docs/page.md", "plugin/skills/signoff/fields.md", "CHANGELOG.md"):
+            self.assertIn("before running", (ROOT / path).read_text(encoding="utf-8"), path)
         listed = self.defs["item"]["properties"]["commands"]
         self.assertEqual(listed["items"], {"$ref": "#/$defs/command"})
         self.assertEqual((listed["minItems"], listed["maxItems"]), (1, signoff.MAX_ITEM_COMMANDS))

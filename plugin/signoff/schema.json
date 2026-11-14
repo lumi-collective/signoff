@@ -53,7 +53,7 @@
         "sensitive": { "type": "boolean", "default": false, "description": "The answer may hold personal data: the item starts marked Private. It only acts on an item with a text field (comment, other or marks). The user can untick it, or tick it on any item. A private answer is recorded with \"private\": true; its text stays in the answers file, and the Markdown copy hides its comment, Other text and mark comments." },
         "criteria": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/criterion" }, "description": "What the options are compared on, in row order. With it, each option's facts show as chips on its card, and a Cards / Table toggle shows the options side by side, a row per criterion. The choice is the same in both views; the view is not saved." },
         "attachments": { "type": "array", "maxItems": 20, "items": { "$ref": "#/$defs/attachment" }, "description": "Text files read when Signoff starts and shown under the options, each in a collapsed box as plain text: nothing in them is rendered. At most 20 an item and 200 a round. The Markdown copy names them only. Not changed by sensitive: the text is yours, not the user's." },
-        "commands": { "type": "array", "minItems": 1, "maxItems": 10, "items": { "$ref": "#/$defs/command" }, "description": "Commands for the user to run before deciding, each shown under the description as a wrapped code block with a Copy button that copies the text exactly, and a hint under one that deletes a relative path, whatever its lang. Signoff never runs them. The Markdown copy gives each as one line. Needs Signoff 0.5.0 or newer." }
+        "commands": { "type": "array", "minItems": 1, "maxItems": 10, "items": { "$ref": "#/$defs/command" }, "description": "Commands for the user to run before deciding, each shown under the description as a wrapped code block with a Copy button that copies the text exactly, and a hint under one that deletes a relative path, whatever its lang. Signoff never runs them, and the user should read one before running it. The Markdown copy gives each as one line. Needs Signoff 0.5.0 or newer." }
       }
     },
     "command": {
@@ -61,9 +61,9 @@
       "required": ["text"],
       "additionalProperties": false,
       "properties": {
-        "text": { "type": "string", "minLength": 1, "description": "The command as the user pastes it, so the text on screen must be all that runs. Line breaks and tabs are kept. Refused: a start or end with a space or line break, two blank lines in a row, more than 16 spaces or tabs in a row, and an invisible character (as for caption and lang: a control character but tab and newline; a format, separator, surrogate, private-use or unassigned one; or a Default_Ignorable_Code_Point, such as a bidi override, a zero-width mark or a variation selector)." },
+        "text": { "type": "string", "minLength": 1, "maxLength": 4000, "description": "The command as the user pastes it, at most 4000 characters and 60 lines. Line breaks and tabs are kept. Refused: a start or end with a space or line break (a trailing one runs on paste), and the known invisible and blank characters (as for caption and lang: a control character but tab and newline; a format, separator, surrogate, private-use or unassigned one; a Default_Ignorable_Code_Point, such as a bidi override, a zero-width mark or a variation selector; the Braille blank U+2800 and U+FFFC). The block wraps; the user should still read it before running it." },
         "lang": { "type": "string", "pattern": "^[A-Za-z0-9+#._-]{1,20}$", "description": "The language shown in the block's bar, such as bash. Default: code." },
-        "caption": { "type": "string", "description": "One line of plain text above the block, also the Copy button's name." }
+        "caption": { "type": "string", "description": "One line of plain text above the block, also the Copy button's name. Unlike text and lang it may hold an emoji: U+FE0F and U+200D are allowed here." }
       }
     },
     "attachment": {

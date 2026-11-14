@@ -51,11 +51,14 @@ MAX_ATTACHMENTS = 2 * 1024 * 1024  # one round's together
 MAX_ITEM_ATTACHMENTS = 20
 MAX_ROUND_ATTACHMENTS = 200  # each one is a file read at start
 MAX_ITEM_COMMANDS = 10
-MAX_COMMAND_SPACES = 16  # in a row in a command: more could push its tail out of sight, even wrapped
+MAX_COMMAND_TEXT = 4000  # characters; with the lines cap, a block the user can read before running it
+MAX_COMMAND_LINES = 60
 COMMAND_LANG = re.compile(r"^[A-Za-z0-9+#._-]{1,20}$")
-BLANK_LINES = re.compile(r"\n[^\S\n]*\n[^\S\n]*\n")  # two blank lines in a row
-LONG_SPACE = re.compile(r"[^\S\n]{%d,}" % (MAX_COMMAND_SPACES + 1))
 HIDDEN_CATEGORIES = ("Cc", "Cf", "Zl", "Zp", "Cs", "Co", "Cn")
+BLANK_CHARS = (0x2800, 0xFFFC)  # draw nothing, yet are not white space: the Braille blank, the object replacement
+# Variation selector 16 and the zero-width joiner build an emoji (the warning sign is U+26A0 U+FE0F). They are
+# allowed in a caption only, which is shown and never pasted.
+EMOJI_JOINERS = (chr(0xFE0F), chr(0x200D))
 # Default_Ignorable_Code_Point from https://www.unicode.org/Public/16.0.0/ucd/DerivedCoreProperties.txt: drawn as
 # nothing, yet still in the text (a combining grapheme joiner, variation selectors, Hangul fillers, tags).
 # unicodedata has no such property.
@@ -345,26 +348,28 @@ def _item(item, n, folder, images, used, lenient=False):
             _command(cmd, "%s, command %d" % (where, k))
 
 
-def _hidden(text):
+def _hidden(text, allowed=()):
     """The first character of text that may show as nothing, or not as it runs: a control character but tab and
-    newline, a format, separator, surrogate, private-use or unassigned one, or a default-ignorable one. Unassigned
-    is as this Python's Unicode knows it, so an older Python refuses a character a newer Unicode assigned."""
+    newline, a format, separator, surrogate, private-use or unassigned one, a default-ignorable one, or a blank
+    one. Unassigned is as this Python's Unicode knows it, so an older Python refuses a character a newer Unicode
+    assigned. allowed: characters let through all the same."""
     for c in text:
-        if c in "\t\n":
+        if c in "\t\n" or c in allowed:
             continue
         n = ord(c)
-        if unicodedata.category(c) in HIDDEN_CATEGORIES or any(lo <= n <= hi for lo, hi in DEFAULT_IGNORABLE):
+        if (unicodedata.category(c) in HIDDEN_CATEGORIES or n in BLANK_CHARS
+                or any(lo <= n <= hi for lo, hi in DEFAULT_IGNORABLE)):
             return c
     return None
 
 
 def _command(cmd, where):
-    """A command the user pastes into a terminal: what the page shows must be all that runs. The page wraps it;
-    what wrapping cannot bring into sight is refused here."""
+    """A command the user pastes into a terminal. The page wraps it; the known invisible and blank characters are
+    refused here, and its size is capped, so the user can read it before running it."""
     _keys(cmd, COMMAND_KEYS, ("text",), where)
     for key in COMMAND_KEYS:
         _text(cmd, key, where)
-        hidden = _hidden(cmd.get(key, ""))
+        hidden = _hidden(cmd.get(key, ""), EMOJI_JOINERS if key == "caption" else ())
         if hidden is not None:
             raise DecisionsError("%s: %r holds an invisible character, U+%04X" % (where, key, ord(hidden)))
     text = cmd["text"]
@@ -372,10 +377,10 @@ def _command(cmd, where):
         raise DecisionsError("%s: 'text' is empty" % where)
     if text != text.strip():  # a trailing line break would run it on paste
         raise DecisionsError("%s: 'text' must not start or end with a space or line break" % where)
-    if BLANK_LINES.search(text):
-        raise DecisionsError("%s: 'text' has two blank lines in a row" % where)
-    if LONG_SPACE.search(text):
-        raise DecisionsError("%s: 'text' has more than %d spaces or tabs in a row" % (where, MAX_COMMAND_SPACES))
+    if len(text) > MAX_COMMAND_TEXT:
+        raise DecisionsError("%s: 'text' has more than %d characters" % (where, MAX_COMMAND_TEXT))
+    if text.count("\n") >= MAX_COMMAND_LINES:
+        raise DecisionsError("%s: 'text' has more than %d lines" % (where, MAX_COMMAND_LINES))
     if "lang" in cmd and not COMMAND_LANG.fullmatch(cmd["lang"]):
         raise DecisionsError("%s: 'lang' must match %s" % (where, COMMAND_LANG.pattern))
 

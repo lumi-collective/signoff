@@ -1254,7 +1254,7 @@ body.run.focusing .rp>.item[data-item]:not(.cur),body.run.focusing .rp>h2.group,
   }
 
   // A code block: a todo item's in the inbox, an item's command on a round's page. Its Copy is named by the caption
-  // (a command's), else the language. It wraps, so every character Copy takes is in sight. command: a round's
+  // (a command's), else the language. It wraps, so a long line cannot run past the edge. command: a round's
   // command, which goes to a terminal whatever its lang, so the delete hint does not depend on it.
   function codeBlock(b, command) {
     var box = el('div', 'md-code'), bar = el('div', 'md-bar'), lang = String(b.lang || ''), text = String(b.text);

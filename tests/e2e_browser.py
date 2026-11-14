@@ -933,8 +933,21 @@ def clipboard_text(browser):
     return clip.replace("\r\n", "\n") if WINDOWS and isinstance(clip, str) else clip
 
 
+def copy_with(browser, button):
+    """Press a Copy button and return the clipboard. A placeholder goes on the clipboard first and the button must
+    say Copied, so text left there by an earlier step cannot pass for this Copy."""
+    put = browser.call("Runtime.evaluate", expression="navigator.clipboard.writeText('(placeholder)')",
+                       awaitPromise=True, returnByValue=True)
+    check("exceptionDetails" not in put and clipboard_text(browser) == "(placeholder)",
+          "the placeholder should be on the clipboard: %r" % put)
+    browser.click(button)
+    said = browser.js("document.querySelector(%s).textContent" % json.dumps(button))
+    check(said == "Copied", "the button should say it copied: %r" % said)
+    return clipboard_text(browser)
+
+
 # Each command block under the item: where it sits, its caption, bar, Copy's name, the text and its warning, and
-# whether all of it is in sight (no line runs past the block's edge).
+# whether no line runs past the block's edge.
 COMMAND_BLOCKS = """(function () {
   var q = document.querySelector('.rp:not([hidden]) .item .q'), kids = Array.prototype.slice.call(q.children);
   var cmds = q.querySelector('.cmds'), at = kids.indexOf(cmds);
@@ -984,11 +997,8 @@ def run_commands(work):
                      "text": COMMANDS[2]["text"], "children": 0, "tab": 0, "warn": warn, "warnBox": True, "wraps": True}]
             check(got["blocks"] == want, "the command blocks (%s): %r" % (lang, got["blocks"]))
             if lang == "en":
-                browser.click(".cmds .md-code .md-bar button")
-                clip = clipboard_text(browser)
+                clip = copy_with(browser, ".cmds .md-code .md-bar button")
                 check(clip == COMMANDS[0]["text"], "Copy should put the command on the clipboard exactly: %r" % clip)
-                check(browser.js("document.querySelector('.cmds .md-bar button').textContent") == "Copied",
-                      "the button should say it copied")
             browser.click("#done")
             finished(server, out, err, [topic / "decisions.answers.json"])
             md = (topic / "decisions.answers.md").read_text(encoding="utf-8")
@@ -1041,9 +1051,9 @@ def run_commands_elsewhere(work):
             texts = browser.js("Array.prototype.map.call(document.querySelectorAll(%s), function (c) { "
                                "return c.querySelector('pre').textContent; })" % json.dumps(block))
             check(texts == [c["text"] for c in COMMANDS], "%s should show the commands: %r" % (where, texts))
-            browser.click(block + " .md-bar button")
-            clip = clipboard_text(browser)
-            check(clip == COMMANDS[0]["text"], "Copy on %s should put the command on the clipboard exactly: %r"
+            k = 2 if history else 1  # each view copies a command of its own
+            clip = copy_with(browser, ".rp:not([hidden]) .cmds > div.md-code:nth-of-type(%d) .md-bar button" % k)
+            check(clip == COMMANDS[k - 1]["text"], "Copy on %s should put the command on the clipboard exactly: %r"
                   % (where, clip))
         except E2EError:
             sys.stderr.write("--- Signoff stderr ---\n" + "".join(err))
@@ -1262,10 +1272,6 @@ def run_inbox(work):
               "the opened item should start with the line after the title, its link working: %r" % plain)
         # Inline code gets a Copy button (the span's text exactly) and the whole item a Copy text. A command that
         # deletes with a relative path gets a warning line, in a block and inline; an absolute path none.
-        def clipboard():
-            got = browser.call("Runtime.evaluate", expression="navigator.clipboard.readText()", awaitPromise=True,
-                               returnByValue=True)
-            return got.get("result", {}).get("value")
         marks = browser.js(
             "(function () { var b = document.querySelector('#ib-detail .ib-body'); return {"
             "spans: Array.prototype.map.call(b.querySelectorAll('code.ic'), function (c) { return c.textContent; }),"
@@ -1283,20 +1289,16 @@ def run_inbox(work):
                          "{ return getComputedStyle(p).whiteSpace === 'pre-wrap'; })"), "a todo's code block should wrap")
         check(browser.js("document.querySelectorAll('#ib-detail .ib-body a button, #ib-detail .ib-body a .ic-warn').length")
               == 0, "no Copy or warning inside a link")
-        browser.click("#ib-detail button.ic-copy")
-        check(clipboard() == "rm -rf build", "the inline Copy should put the span's text on the clipboard: %r" % clipboard())
-        browser.click("#ib-detail .ib-copytext")
+        got = copy_with(browser, "#ib-detail button.ic-copy")
+        check(got == "rm -rf build", "the inline Copy should put the span's text on the clipboard: %r" % got)
         text = ("A plain todo item\n\nSee the draft (https://example.com/draft).\n\nClean up with rm -rf build, not "
                 "rm -rf /tmp/build.\n\nrm -rf build && ls\n\nrm -rf /tmp/build\n\nAlso rm x (https://example.com/rm).\n\n"
                 "del cache")
-        check(clipboard() == text, "Copy text should put the whole item on the clipboard: %r" % clipboard())
+        got = copy_with(browser, "#ib-detail .ib-copytext")
+        check(got == text, "Copy text should put the whole item on the clipboard: %r" % got)
         browser.click(todo)  # back to the waiting item: its view kept as it was
-        browser.click("#ib-detail .md-bar button")
-        got = browser.call("Runtime.evaluate", expression="navigator.clipboard.readText()", awaitPromise=True,
-                           returnByValue=True)
-        check(got.get("result", {}).get("value") == command, "Copy should put the block's text on the clipboard: %r" % got)
-        check(browser.js("document.querySelector('#ib-detail .md-bar button').textContent") == "Copied",
-              "the button should say it copied")
+        got = copy_with(browser, "#ib-detail .md-bar button")
+        check(got == command, "Copy should put the block's text on the clipboard: %r" % got)
         # A message on the item: typed into its box and sent, it is a request file for the project's session.
         browser.click("#ib-detail .ib-form input")
         check(browser.js("document.querySelector('#ib-detail .ib-lab').textContent") == "Message inbox-project's agent",
@@ -1974,11 +1976,8 @@ def run_live(work):
                             "Array.prototype.map.call(b.querySelectorAll('pre code'), function (c) { return c.textContent; }),"
                             " b.querySelectorAll('a, input, form').length]; })()")
         check(detail == [["claude attach 8d4e0402"], 0], "the background session's attach command: %r" % detail)
-        browser.click("#ib-detail .md-bar button")
-        got = browser.call("Runtime.evaluate", expression="navigator.clipboard.readText()", awaitPromise=True,
-                           returnByValue=True)
-        check(got.get("result", {}).get("value") == "claude attach 8d4e0402",
-              "Copy should put the attach command on the clipboard: %r" % got)
+        got = copy_with(browser, "#ib-detail .md-bar button")
+        check(got == "claude attach 8d4e0402", "Copy should put the attach command on the clipboard: %r" % got)
         browser.js("document.querySelectorAll('#panels button.ib-main')[1].setAttribute('data-e2e', 'term')")
         browser.click("button.ib-main[data-e2e=term]")
         detail = browser.js("(function () { var b = document.querySelector('#ib-detail .ib-body'); return b && ["

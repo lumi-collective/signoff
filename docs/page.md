@@ -40,8 +40,9 @@
   options in a box that starts closed, as plain text. Nothing in it is rendered as Markdown or HTML.
 - **Commands.** A command the agent asks you to run before you decide shows under the item's text as a code
   block, as in the inbox: its language, a **Copy** button that copies it exactly, and a hint under one that
-  deletes with a relative path, whatever its language. A long line wraps, so all that Copy takes is in sight.
-  Signoff never runs it.
+  deletes with a relative path, whatever its language. A long line wraps, a command is at most 4000 characters
+  and 60 lines, and the known invisible and blank characters are refused. Signoff never runs it: read a command
+  before running it.
 - **Private** beside a comment marks what you write on that item as private: the agent is asked not to
   repeat it, and the Markdown copy and the Summary hide it. The agent ticks it in advance where an answer may
   hold personal data; you can tick or untick it on any item. It is a request to the agent, not encryption.

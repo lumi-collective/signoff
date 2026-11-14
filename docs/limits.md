@@ -5,8 +5,8 @@
 - Attachments: up to 256 KiB each, 20 an item and 200 a round. A round's attachments together take up to 2 MiB of the page
   and the past-decisions page holds up to 16 MiB of them, both counted as sent, where `<`, `>` and `&` take
   6 bytes each; past that an attachment is not shown.
-- Commands: up to 10 an item. A command's text may not start or end with a space or line break, nor hold two
-  blank lines in a row or more than 16 spaces or tabs in a row; its `lang` is up to 20 letters, digits or `+#._-`.
+- Commands: up to 10 an item, each at most 4000 characters and 60 lines. A command's text may not start or end
+  with a space or line break; its `lang` is up to 20 letters, digits or `+#._-`.
 - A drive-relative or network path in a decisions file (`C:foo`, `\\host`, `//host`) is refused, on every OS.
   Attachments take only relative paths; a picture or board may still use an absolute path inside the folder.
 - Pictures, boards and attachments are read at start; changing a round's files while the page is open needs a restart.
