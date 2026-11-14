@@ -27,6 +27,12 @@
       "title": "Questions in chat",
       "description": "A batch of up to this many short questions, each text only (no picture, board, attachment or marks) with 2 to 4 options, the agent asks in the terminal instead of on the page; a bigger batch goes on the page. 0 to 4; 0: no batch in the terminal. Any other value is 4.",
       "default": "4"
+    },
+    "notes": {
+      "type": "string",
+      "title": "Notes folder",
+      "description": "An absolute path to a folder of your own, such as a notes vault. At Done, each round's Markdown copy also goes there, private answers left out; a file already there is never replaced. Empty: off. Not on Windows yet.",
+      "default": ""
     }
   }
 }

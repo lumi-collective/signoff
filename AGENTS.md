@@ -574,7 +574,13 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   `prefs.json` (see the theme rule), and
   `logs/inbox.log` when `signoff inbox open` or the app starts it (the app makes the home and `logs/` for it,
   0700, when absent); `signoff inbox done` writes `<id>.done`. Outside the
-  home, on the user's click only, the inbox writes Uptick's `scan-repos.json` (see the OSV rule). The one thing Signoff removes is a
+  home, on the user's click only, the inbox writes Uptick's `scan-repos.json` (see the OSV rule). On the user's
+  setting only (`--notes`, the Notes folder setting; POSIX), a run that exits 0 creates one note per round open at
+  its start in that folder (`write_notes`): the folder an absolute path, not a link itself, the user's own, not
+  writable by group or others, outside the decisions folder and the home, checked on the descriptor the note is
+  created through; the note `O_CREAT | O_EXCL | O_NOFOLLOW`, 0600, never over a file or link already at its name
+  (one stderr line, nothing replaced), its private answers left out (`answers_markdown(..., hide_private=True)`).
+  The inbox never writes one. The one thing Signoff removes is a
   dead `inbox.sock`: only when it is a socket in the inbox's own home, the starting inbox holds `inbox.lock`, and
   a connect to it is refused. Anything else at that path stops the inbox with an error. A test checks both.
 - **One writer per round, once an inbox has run.** The switch is `inbox.lock` in the Signoff home
@@ -690,7 +696,8 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   today's behaviour. The menu bar panel, its menu and a banner never take the target.
   The app never sends a choice. Quitting the app leaves the inbox running.
 - **stdout is answers paths and nothing else**, one per line, in tab order. Agents parse it. Messages go to
-  stderr. The exceptions: `signoff inbox home` prints the Signoff home (`inbox_home()`, never creating it),
+  stderr (`--notes` too: its notes print nothing on stdout, and each refusal or failure is one stderr line starting
+  `signoff: notes:` that changes neither stdout nor the exit code). The exceptions: `signoff inbox home` prints the Signoff home (`inbox_home()`, never creating it),
   `signoff inbox hook` prints nothing but the SessionStart hand-over, `signoff inbox monitor` prints request
   lines only, and `signoff inbox rows <folder>` prints one JSON line, the `rows` reply (for a folder outside any
   project `{"rounds": [], "more": 0}`), for the mod. `signoff inbox serve|open|stop|done` print nothing on stdout

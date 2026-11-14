@@ -30,7 +30,9 @@ as `<folder>/round-02.answers.json`. Read every line, not only the last:
 ```
 
 - Exit code 0: the user pressed Done, or another program finished the answers files with Done; `done` is
-  `true` in every file listed.
+  `true` in every file listed. A stderr line that starts `signoff: notes:` says a round's copy did not go to
+  the user's notes folder, and why: tell the user what it says (the user never sees stderr). The answers are
+  as usual.
 - With several rounds open, the user accepts each one before Done (the page has a Summary, a sign-off sheet of every answer). You are still
   woken only once, at Done. Each answers file then has `accepted: true` and `accepted_at`;
   `changed_after_accept: true` only shows up in a file you read before Done, after a timeout.

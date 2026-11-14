@@ -101,9 +101,9 @@ python3 -I "${CLAUDE_PLUGIN_ROOT}/signoff/signoff.py" "<folder>"
 It serves every `round-NN.json` in the folder. On Windows write `py -3` for `python3`. Signoff opens the browser
 itself, with a link that works once. Add `--no-open` when there is no browser on this machine (an SSH
 session); the link is on stderr then, and the user forwards the same port number.
+Add `--notes "${user_config.notes}"` to every run command.
 
-A background command started by a subagent ends when that subagent ends, so the page would die with it. A
-subagent may write the round files and hand back; the main session runs Signoff.
+A subagent's background command dies with it: a subagent may write the round files; the main session runs Signoff.
 
 If stderr says the inbox is open, no page opens: the questions wait in the user's Signoff inbox, with no idle
 timeout, and you are woken the same way. The `signoff-inbox` skill covers the inbox.

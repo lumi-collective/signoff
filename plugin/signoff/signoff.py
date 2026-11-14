@@ -879,9 +879,10 @@ def md_text(text, none="(none)"):
     return "  \n  ".join(out) or none
 
 
-def answers_markdown(decisions, record):
+def answers_markdown(decisions, record, hide_private=False):
     """The answers as a Markdown page for people, its labels in the round's language; the JSON stays the source of
-    truth. Agent text is never translated."""
+    truth. Agent text is never translated. hide_private: a private answer's item gets its title and (private) only
+    (the notes folder's copy, which may be synced elsewhere)."""
     lb = md_labels(decisions)
     out = ["# " + md_text(decisions["title"].replace("\n", " ")), ""]
     group = None
@@ -896,6 +897,9 @@ def answers_markdown(decisions, record):
         rec = rec if isinstance(rec, list) else [rec]
         # A private answer keeps its text in the JSON for the agent; this copy for people only says it is there.
         private = ans.get("private") is True
+        if private and hide_private:
+            out += ["### %d. %s" % (n, md_text(item["title"].replace("\n", " "))), "", lb["private"], ""]
+            continue
 
         def text(value):
             return lb["private"] if private and value.strip() else md_text(value, lb["none"])
@@ -937,6 +941,81 @@ def _accepted_text(record, lb):
     if record.get("changed_after_accept"):
         return lb["changed"]
     return lb["no"]
+
+
+NOTE_NAME_MAX = 200  # bytes before ".md", well within the 255 of a file name
+
+
+def note_name(round_path):
+    """A round's file name in the notes folder: `<project> - <topic folder> - <round stem>.md`, plain characters only,
+    so it is the same name on every file system and holds no separator."""
+    folder = Path(round_path).parent
+    parts = [p for p in (project_name(folder), folder.name, Path(round_path).stem) if p]
+    name = re.sub(r"[^A-Za-z0-9 ._-]", "_", " - ".join(parts))[:NOTE_NAME_MAX]
+    return ("_" + name[1:] if name.startswith(".") else name) + ".md"  # not a hidden file
+
+
+def write_notes(notes, rounds, home):
+    """At a run's Done: each round's Markdown copy, private answers left out, in the user's notes folder (the Notes
+    folder setting). The folder must be the user's own, not a link, closed to others, and outside the decisions
+    folder and the Signoff home. A note is only ever created: a file already at its name is left as it is. Every
+    failure is one stderr line; the run's answers, stdout and exit code stay as they are."""
+    def say(text):
+        print("signoff: notes: %s" % text, file=sys.stderr, flush=True)
+
+    if sys.platform == "win32":  # no owner or mode to check
+        return say("not supported on Windows yet; no note written")
+    if not os.path.isabs(notes):
+        return say("%s is not an absolute path; no note written" % notes)
+    notes = notes.rstrip(os.sep) or os.sep  # a trailing slash would make lstat and O_NOFOLLOW follow a link
+    try:
+        if stat.S_ISLNK(os.lstat(notes).st_mode):
+            return say("%s is a link; set the folder it points to. No note written" % notes)
+        # The checks look at the folder this descriptor holds, and the notes go into it: a swap after them lands
+        # nowhere else.
+        fd = os.open(notes, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        return say("%s is missing; no note written" % notes)
+    except OSError as e:
+        return say("cannot open %s (%s); no note written" % (notes, e.strerror or e))
+    try:
+        st = os.fstat(fd)
+        if st.st_uid != os.getuid():
+            return say("%s is not your own folder; no note written" % notes)
+        if st.st_mode & 0o022:
+            return say("%s can be written by other users; no note written" % notes)
+        real = Path(os.path.realpath(notes))
+        ups = [os.stat(str(p)) for p in [real] + list(real.parents)]
+        for base in (rounds[0].path.parent, home):
+            try:
+                at = os.stat(str(base)) if os.path.isabs(str(base)) else None
+            except OSError:
+                at = None  # a home not made yet holds nothing
+            # By file identity, not text: macOS folders ignore case, so a path can name one in another spelling.
+            if at and any(os.path.samestat(at, up) for up in ups):
+                return say("%s is inside %s; no note written" % (notes, base))
+        for r in rounds:
+            name = note_name(r.path)
+            try:
+                stored = json.loads(read_regular(r.answers_path, MAX_ROUND_BODY).decode("utf-8"))
+                check_answers(stored, r.decisions, stored=True)
+                data = answers_markdown(r.decisions, stored, hide_private=True).encode("utf-8")
+                # O_EXCL: never over a file (or through a link) already there, the user's or an earlier run's.
+                out = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=fd)
+            except FileExistsError:
+                say("%s is already there; not replaced" % os.path.join(notes, name))
+                continue
+            except (OSError, ValueError, RecursionError) as e:
+                say("could not write %s (%s)" % (os.path.join(notes, name), getattr(e, "strerror", None) or e))
+                continue
+            try:
+                with os.fdopen(out, "wb") as f:
+                    f.write(data)
+                    os.fsync(f.fileno())
+            except OSError as e:
+                say("could not finish %s (%s); it may be incomplete" % (os.path.join(notes, name), e.strerror or e))
+    finally:
+        os.close(fd)
 
 
 def _script_json(obj, compact=False):
@@ -3993,6 +4072,9 @@ def main(argv=None):
                         "or absolute (default %s)" % DEFAULT_FOLDER)
     parser.add_argument("--since", type=_date, metavar="YYYY-MM-DD", help="with --history: only topics from this date")
     parser.add_argument("--no-open", action="store_true", help="print the start link but do not open a browser")
+    parser.add_argument("--notes", metavar="FOLDER", default="", help="at Done, also put each round's Markdown copy, "
+                        "private answers left out, in this folder of yours (an absolute path; never replaces a file; "
+                        "empty: off; not on Windows)")
     parser.add_argument("--timeout", type=_minutes, default=120.0, metavar="MINUTES",
                         help="stop after this many idle minutes, exit code 2 (default 120; 0 = never)")
     args = parser.parse_args(argv)
@@ -4078,6 +4160,14 @@ def main(argv=None):
             print(path, flush=True)
         # Not before: a stdout nobody reads (BrokenPipeError) leaves no ended, as a killed run, so the inbox tells.
         end(EXIT_DONE)
+        if args.notes:
+            try:  # a copy for the user: whatever happens to it, the answers are handed over and Done stays 0
+                write_notes(args.notes, [r for r in rounds if not r.readonly], home)
+            except Exception as e:
+                try:
+                    print("signoff: notes: no note written (%s)" % e, file=sys.stderr, flush=True)
+                except Exception:
+                    pass
         return EXIT_DONE
     paths = [p for p in paths if p.exists()]
     print("signoff: timed out after %g idle minutes; %s" % (args.timeout, "the answers so far are kept" if paths

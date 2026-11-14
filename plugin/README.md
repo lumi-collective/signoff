@@ -107,7 +107,10 @@ It reads the decisions files and the pictures, live mockups and text attachments
 folder, and the palette and light or dark the inbox kept, when there is one.
 It writes your answers next to them, as JSON and as Markdown, and a .gitignore in that folder if there is
 none. An answer you mark Private stays in the JSON for the agent, which is asked not to repeat it; the
-Markdown copy leaves it out. It is not encrypted. The past-decisions view reads the decisions folder you
+Markdown copy leaves it out. It is not encrypted. With the Notes folder setting in /config set to a folder of
+your own (an absolute path; empty, the default, is off; not on Windows yet), a run that ends with Done also
+puts each round's Markdown copy there, with only (private) for a private answer, and never replaces a file
+there. If another app syncs that folder, the copy leaves your machine through that app, not Signoff. The past-decisions view reads the decisions folder you
 set (the Decisions folder setting; by default `.signoff` in the project) and writes nothing. Once the inbox has run on
 your computer, a run also writes an empty lock file beside each open round, and a short note of the run in the
 inbox's folder: the topic folder, a hash of the project folder's path, the round file names, its process id and

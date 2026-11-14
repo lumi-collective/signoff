@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -225,6 +226,173 @@ class Cli(unittest.TestCase):
                               universal_newlines=True, timeout=20)
         self.assertEqual(proc.returncode, 0)
         self.assertIn("--timeout", proc.stdout)
+
+
+DONE = {"answers": {"layout": {"choice": "one", "comment": "a secret reason"}}, "free_text": "", "done": True}
+
+
+@unittest.skipIf(sys.platform == "win32", "the notes folder is POSIX only (its checks need owners and modes)")
+class CliNotes(unittest.TestCase):
+    """--notes: at Done, each round's Markdown copy goes to the user's notes folder, never over a file there."""
+
+    def setUp(self):
+        self.folder = Folder()
+        self._tmp = tempfile.TemporaryDirectory()
+        self.notes = Path(self._tmp.name) / "vault"  # under /var on macOS, a link: only the folder itself counts
+        self.notes.mkdir(mode=0o700)
+        self.name = "%s - decisions.md" % self.folder.path.name  # outside a project: topic folder and round stem
+
+    def tearDown(self):
+        stop_all()
+        self.folder.cleanup()
+        self._tmp.cleanup()
+
+    def run_done(self, notes, body=DONE, env=None):
+        proc = start(self.folder, "--notes", str(notes), env=env)
+        self.assertEqual(post(url_of(proc), body), 200)
+        out, err = proc.communicate(timeout=20)
+        self.assertEqual(proc.returncode, 0, err)  # a note never changes the exit code
+        self.assertEqual(out, str(self.folder.answers) + "\n")  # nor stdout
+        return err
+
+    def refused(self, notes, why, home=None):
+        """write_notes at a run's Done, in process (each run waits DONE_GRACE): one line, nothing written."""
+        before = sorted(p.name for p in self.notes.iterdir())
+        if not self.folder.answers.exists():
+            write_outside(self.folder.answers, done_record())
+        err = io.StringIO()
+        with mock.patch.object(sys, "stderr", err):
+            signoff.write_notes(str(notes), [signoff.Round(self.folder.decisions)], home or signoff.inbox_home())
+        lines = err.getvalue().splitlines()
+        self.assertEqual(len(lines), 1, err.getvalue())
+        self.assertIn("signoff: notes: ", lines[0])
+        self.assertIn(why, lines[0])
+        self.assertEqual(sorted(p.name for p in self.notes.iterdir()), before)
+
+    def test_a_refused_folder_changes_nothing_of_the_run(self):
+        err = self.run_done(self.notes / "missing")
+        self.assertEqual([line for line in err.splitlines() if "notes:" in line],
+                         ["signoff: notes: %s is missing; no note written" % (self.notes / "missing")])
+        self.assertEqual(list(self.notes.iterdir()), [])
+
+    def test_a_done_run_writes_one_note(self):
+        err = self.run_done(self.notes)
+        self.assertNotIn("notes:", err)
+        [note] = self.notes.iterdir()
+        self.assertEqual(note.name, self.name)
+        self.assertEqual(stat.S_IMODE(note.stat().st_mode), 0o600)
+        beside = self.folder.path / "decisions.answers.md"
+        self.assertEqual(note.read_text(encoding="utf-8"), beside.read_text(encoding="utf-8"))  # nothing private
+
+    def test_a_private_answer_shows_only_private_there(self):
+        body = {"answers": {"layout": {"choice": "one", "comment": "a secret reason", "private": True}},
+                "free_text": "", "done": True}
+        self.run_done(self.notes, body)
+        note = (self.notes / self.name).read_text(encoding="utf-8")
+        item = note.split("Two columns or one?")[1].split("###")[0]
+        self.assertEqual(item.split(), ["(private)"])
+        self.assertIn("Which filters?", note)  # the other items as usual
+        beside = (self.folder.path / "decisions.answers.md").read_text(encoding="utf-8")
+        self.assertIn("Keep one", beside)  # the copy beside the round as before
+        self.assertNotIn("secret", beside)
+
+    def test_an_empty_setting_writes_nothing(self):
+        err = self.run_done("")
+        self.assertNotIn("notes:", err)
+        self.assertEqual(list(self.notes.iterdir()), [])
+
+    def test_a_relative_path_is_refused(self):
+        self.refused("vault", "absolute")
+
+    def test_a_missing_folder_is_refused(self):
+        self.refused(self.notes / "missing", "missing")
+
+    def test_a_linked_folder_is_refused(self):
+        link = Path(self._tmp.name) / "link"
+        link.symlink_to(self.notes)
+        self.refused(link, "link")
+        self.refused(str(link) + "/", "link")  # a trailing slash makes the system follow it
+
+    def test_a_folder_others_can_write_is_refused(self):
+        self.notes.chmod(0o777)
+        self.refused(self.notes, "other users")
+        self.notes.chmod(0o770)
+        self.refused(self.notes, "other users")
+
+    @unittest.skipIf(hasattr(os, "getuid") and os.getuid() == 0, "root owns the folder used here")
+    def test_another_users_folder_is_refused(self):
+        self.refused("/", "not your own")
+
+    def test_a_folder_inside_the_decisions_folder_or_the_home_is_refused(self):
+        inside = self.folder.path / "notes"
+        inside.mkdir(mode=0o700)
+        self.refused(inside, "inside")
+        self.refused(self.folder.path, "inside")
+        if os.path.isdir(str(inside).upper()):  # a file system that ignores case (macOS): another spelling, same folder
+            self.refused(str(inside).upper(), "inside")
+        self.assertEqual(list(inside.iterdir()), [])
+        self.refused(self.notes, "inside", home=Path(self._tmp.name))
+
+    def test_a_note_already_there_is_never_replaced(self):
+        mine = self.notes / self.name
+        mine.write_bytes(b"my own note\n")
+        mine.chmod(0o644)
+        self.refused(self.notes, "already there; not replaced")
+        self.assertEqual(mine.read_bytes(), b"my own note\n")
+        self.assertEqual(stat.S_IMODE(mine.stat().st_mode), 0o644)
+
+    def test_a_link_at_the_name_is_never_followed(self):
+        target = Path(self._tmp.name) / "elsewhere.md"
+        (self.notes / self.name).symlink_to(target)
+        self.refused(self.notes, "already there")
+        self.assertFalse(os.path.lexists(str(target)))
+
+    def test_a_run_that_does_not_end_with_done_writes_no_note(self):
+        proc = start(self.folder, "--notes", str(self.notes), "--timeout", "0.02")
+        post(url_of(proc), dict(DONE, done=False))
+        out, err = proc.communicate(timeout=20)
+        self.assertEqual(proc.returncode, 2, err)
+        proc = start(self.folder, "--notes", str(self.notes))
+        post(url_of(proc), dict(DONE, done=False))
+        proc.send_signal(signal.SIGINT)
+        out, err = proc.communicate(timeout=20)
+        self.assertEqual(proc.returncode, 130, err)
+        self.assertEqual(list(self.notes.iterdir()), [])
+
+    def test_a_later_folder_run_writes_only_its_own_rounds(self):
+        rounds = Rounds(1)
+        self.addCleanup(rounds.cleanup)
+        empty = {"answers": {}, "free_text": "", "done": True}
+        for n in (1, 2):
+            if n == 2:
+                rounds.write(2, sample_decisions())
+            proc = start(rounds, "--notes", str(self.notes))
+            self.assertEqual(post(url_of(proc), empty, n - 1), 200)  # round 1 shows read only in the second run
+            out, err = proc.communicate(timeout=20)
+            self.assertEqual(proc.returncode, 0, err)
+            self.assertEqual(out, "%s\n" % rounds.answers(n))
+            self.assertNotIn("notes:", err)
+        self.assertEqual(sorted(p.name for p in self.notes.iterdir()),
+                         ["%s - round-%02d.md" % (rounds.path.name, n) for n in (1, 2)])
+
+    def test_the_name_is_project_topic_and_round_in_plain_characters(self):
+        project = Path(self._tmp.name) / "my project"
+        topic = project / ".signoff" / "2026-11-14-ünnep*?"
+        topic.mkdir(parents=True)
+        (project / ".git").mkdir()
+        self.assertEqual(signoff.note_name(topic / "round-03.json"), "my project - 2026-11-14-_nnep__ - round-03.md")
+        self.assertEqual(signoff.note_name(Path(self._tmp.name) / ".hidden" / "round-01.json"),
+                         "_hidden - round-01.md")
+        long = signoff.note_name(Path(self._tmp.name) / ("ő" * 120) / ("x" * 250 + ".json"))
+        self.assertEqual(long, "_" * 120 + " - " + "x" * 77 + ".md")  # 200 bytes, then .md
+
+    def test_on_windows_it_says_so_and_writes_nothing(self):
+        rounds = [signoff.Round(self.folder.decisions)]
+        err = io.StringIO()
+        with mock.patch.object(sys, "platform", "win32"), mock.patch.object(sys, "stderr", err):
+            signoff.write_notes(str(self.notes), rounds, Path(self._tmp.name) / "home")
+        self.assertIn("not supported on Windows yet", err.getvalue())
+        self.assertEqual(list(self.notes.iterdir()), [])
 
 
 

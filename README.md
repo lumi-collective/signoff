@@ -126,6 +126,12 @@ and once every round is done Signoff says so and exits.
 
 You can also ask for it directly: "put these on a Signoff page".
 
+**A copy in your notes:** set the plugin's Notes folder option in `/config` to an absolute path of a folder of your
+own, such as an Obsidian vault, and each round that ends with Done also lands there as Markdown,
+`<project> - <topic folder> - <round>.md`, with a private answer shown only as `(private)`. Signoff never replaces a
+file there and sends nothing anywhere; if another app syncs the folder, the copy goes where that app sends it. Not on
+Windows yet. Details: [docs/running.md](docs/running.md#notes-folder).
+
 **Look back** at earlier decisions of a project, from a clone of this repository:
 
 ```

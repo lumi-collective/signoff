@@ -3628,7 +3628,9 @@ class InboxCli(unittest.TestCase):
         self.serve()
         rounds = Rounds(1)
         self.addCleanup(rounds.cleanup)
-        waiter = self.popen(str(rounds.target), "--no-open")
+        notes = Path(self._tmp.name).resolve() / "notes"
+        notes.mkdir(mode=0o700)
+        waiter = self.popen(str(rounds.target), "--no-open", "--notes", str(notes))  # the waiter writes the note
         self.assertIn("inbox is open", waiter.stderr.readline())
         link = signoff.inbox_request(self.home, "open")["link"]
         origin, start = link.split("/b/")
@@ -3653,6 +3655,8 @@ class InboxCli(unittest.TestCase):
         self.assertEqual(resp.status, 200, body)
         out, err = waiter.communicate(timeout=20)
         self.assertEqual((waiter.returncode, out), (0, "%s\n" % rounds.answers(1)), err)
+        self.assertNotIn("notes:", err)
+        self.assertEqual([p.name for p in notes.iterdir()], ["%s - round-01.md" % rounds.path.name])
 
     def test_an_accept_from_the_control_socket_wakes_the_waiting_run(self):
         self.serve()

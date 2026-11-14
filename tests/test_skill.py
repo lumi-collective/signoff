@@ -27,6 +27,13 @@ class SkillTest(unittest.TestCase):
         self.assertIn("${user_config.chat}", skill)
         self.assertIn("any other value means %s." % SETTINGS["chat"]["default"], skill)
 
+    def test_every_run_passes_the_notes_setting(self):
+        # Off by default: an empty value writes no note. The skill passes it on every run command, the per-round
+        # form too, so the agent never has to choose.
+        self.assertEqual((SETTINGS["notes"]["type"], SETTINGS["notes"]["default"]), ("string", ""))
+        skill = " ".join((SKILL / "SKILL.md").read_text(encoding="utf-8").split())
+        self.assertIn('Add `--notes "${user_config.notes}"` to every run', skill)
+
     def test_every_setting_is_in_the_listing(self):
         # The directory listing's text says what the plugin does, so it names each setting by its title.
         listing = " ".join((ROOT / "plugin" / "README.md").read_text(encoding="utf-8").split())
