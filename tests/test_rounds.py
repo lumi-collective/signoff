@@ -682,11 +682,15 @@ class Page(unittest.TestCase):
                       "kerül.'", hu)
         self.assertIn("orphanKind: 'Run ended'", en)
         self.assertIn("orphanKind: 'A futás véget ért'", hu)
-        # Its Done banner does not say the agent has the answers: a session gets them through the inbox.
-        self.assertIn("doneOrphan: 'Done. Your answers are saved. The project\\'s open sessions get them now; with "
-                      "none open, the next one gets them when it starts. You can close this tab.'", en)
-        self.assertIn("doneOrphan: 'Kész. A válaszaid mentve vannak. A projekt nyitott munkamenetei most megkapják "
-                      "őket; ha nincs nyitott, a következő kapja meg, amikor elindul. Ezt a lapot bezárhatod.'", hu)
+        # Its Done banner does not say the sessions get the answers: they get a note, and read them on the user's word.
+        self.assertIn("doneOrphan: 'Done. Your answers are saved. The project\\'s open sessions, or the next one to "
+                      "start, get a note that the answers are in, not the answers themselves; the agent reads them "
+                      "once you say so. You can close this tab.'", en)
+        self.assertIn("doneOrphan: 'Kész. A válaszaid mentve vannak. A projekt nyitott munkamenetei, vagy ha nincs "
+                      "ilyen, a következő, csak egy jelzést kapnak, hogy megjöttek a válaszok; az ágens akkor "
+                      "olvassa el őket, amikor szólsz neki. Ezt a lapot bezárhatod.'", hu)
+        self.assertNotIn("get them now", en)
+        self.assertNotIn("megkapják őket", hu)
         script = self.page[self.page.index("var data = JSON.parse"):]
         inbox = script[script.index("// ---- The inbox."):script.index("if (data.mode === 'inbox')")]
         self.assertRegex(inbox, r"\bL\.orphan\b")  # the list's opened row
