@@ -7,8 +7,7 @@ description: Put your open decisions on a local web page for the user - mockups,
 
 Signoff turns JSON files of decisions into a page on `127.0.0.1`, its rounds in a sidebar. The user answers in the
 browser; every change is saved to an answers file beside each decisions file. On **Done**, Signoff exits and
-prints the answers files' absolute paths. You run it in the background, so the exit wakes you. Rounds answered
-earlier stay on the page, read only.
+prints the answers files' absolute paths. You run it in the background, so the exit wakes you.
 
 ## When to use it
 
@@ -17,7 +16,7 @@ earlier stay on the page, read only.
 - **AskUserQuestion:** a gate that blocks your next step (go or skip on a commit, a push, a publish); a remote or
   mobile session where no browser page can open; and a batch of at most `${user_config.chat}` short questions,
   each text only and not `sensitive` (no picture, board, attachment or marks) with 2 to 4 options. A bigger
-  batch, or one with a picture, goes whole on the page. The limit is 0 to 4 (0: none in chat); any other value means 4.
+  batch, or one with a picture, goes whole on the page. The limit is 0 to 4 (0: no batch in chat); any other value means 4.
 - Nothing at all when the answer is obvious: do the obvious step and say so.
 - The user's own instructions win: if they would rather answer in chat, or set another threshold, follow that.
 - A todo item that waits on the user gets a marker while the Signoff inbox is on: the `signoff-inbox` skill says how.
@@ -25,7 +24,7 @@ earlier stay on the page, read only.
 ## 1. Write the round
 
 Keep one folder per topic, `<decisions folder>/<YYYY-MM-DD>-<slug>/`, with the start date and a short English
-slug. The decisions folder is `${user_config.folder}`, from the plugin's settings; when that is empty or not
+slug. The decisions folder is `${user_config.folder}`; when that is empty or not
 a path, it is `.signoff`. It is relative to the project root unless it is an absolute path.
 
 Each round of questions is one file in that folder: `round-01.json`, `round-02.json` and so on. Put every image
@@ -38,8 +37,9 @@ How to batch:
   most 3 open rounds per run, about 12 items each.
 - To act on a round before the others are answered, run each alone, all at once in the background:
   `signoff <folder>/round-NN.json`. Each wakes you at its own Done.
-- A round that depends on another's answers is a new run after that one finished (same folder, next number);
-  finished rounds show read only.
+- A round that depends on another's answers is a new run after that one finished (next number).
+  While other rounds of the folder are open, run it alone too: a folder run exits 1. A folder run shows
+  finished rounds read only.
 - Never edit a round that is done (its answers file says `done: true`); ask again in a new round.
 
 ```json
