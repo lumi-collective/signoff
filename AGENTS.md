@@ -577,7 +577,8 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   home, on the user's click only, the inbox writes Uptick's `scan-repos.json` (see the OSV rule). With `--notes`
   (POSIX), a run that exits 0 creates one note per round open at its start in that folder (`write_notes`). The
   agent writes that argument: the skill takes it from the Notes folder setting, but nothing binds the two, so the
-  checks are what keep a misled agent's note out of the user's tool and project folders. The folder: an absolute
+  checks keep a misled agent's note out of dot folders and the rounds' own project only (another project's folder
+  is accepted). The folder: an absolute
   path, normalised (`normpath`) before it is looked at, not a link itself, no part of it or of its real path
   starting with a dot, the user's own, not writable by group or others, outside the rounds' project root (else
   their topic folder) and the home, its real path checked against the descriptor the note is created through. A

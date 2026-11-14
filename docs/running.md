@@ -29,7 +29,8 @@ link used twice.
 
 The plugin's Notes folder setting (`/config`; empty by default) is passed as `--notes`: the skill has the agent add
 it to the run command when it is an absolute path. Nothing binds the argument to the setting, so the checks below
-also keep a misled agent's note out of your tool and project folders. A value that is still the setting's
+keep a misled agent's note out of dot folders (such as `.claude`) and out of the rounds' own project; another
+project's folder is not refused. A value that is still the setting's
 `${user_config.…}` placeholder is off, as an empty one, with no message. When a run exits 0, after
 its answers paths are on stdout, it writes one note for each round that was open when it started, from the round's
 answers file: the [Markdown copy](answers-file.md), except that a private answer's item has only its title and
