@@ -3005,11 +3005,13 @@ class InboxServer(_Server):
                 if not g.writable and not self.closed.is_set():  # a request still running at close() locks nothing
                     g.take_locks()
                 continue
-            ran = [e for e in gone if (e["folder"], tuple(e["rounds"])) == key]
-            # Every round done and no run of them handed the answers over (a waiter stopped just after a Done here,
-            # rounds finished from outside after the run ended): the inbox does, once. An orphan group had closing().
-            if not left and not g.orphan and not g.handed and key not in live and ran and all(
-                    "ended" not in e or e.get("exit") not in (None, 0) for e in ran):
+            ran = max((e for e in gone if (e["folder"], tuple(e["rounds"])) == key), key=lambda e: e["started"],
+                      default=None)
+            # Every round done and the newest run of them stopped without handing the answers over (a waiter stopped
+            # just after a Done here, rounds finished from outside after the run ended or timed out): the inbox does,
+            # once. Exit 1 never: a reused start link's answers are for the agent to doubt, not to act on.
+            if not left and not g.handed and ran and ("ended" not in ran or (
+                    type(ran.get("exit")) is int and ran["exit"] in (EXIT_TIMEOUT, 130))):
                 try:
                     g.hand_over()
                 except OSError as err:
@@ -3436,9 +3438,9 @@ def _stop_on_signals():
 
 def register_run(home, rounds, mode):
     """Write runs/<run>.json in the Signoff home, so the inbox knows which rounds this run waits on, and whether on
-    its own page or as a waiter. Returns a function that marks the entry ended, with the exit code when given (0: it
-    handed the answers over). A failed write is said on stderr and changes nothing else. A run killed some other way
-    leaves no ended: a reader checks pid and started."""
+    its own page or as a waiter. Returns a function that marks the entry ended, with the exit code when given (0: its
+    answers paths are on stdout). A failed write is said on stderr and changes nothing else. A run killed some other
+    way, or whose paths could not reach stdout, leaves no ended: a reader checks pid and started."""
     folder = rounds[0].path.parent
     root = project_root(folder)
     entry = {"schema": 1, "run": secrets.token_hex(8), "project": project_id(root) if root else None,
@@ -3825,7 +3827,8 @@ def main(argv=None):
         result = "stopped"
     finally:
         stopping.append(None)
-        end({"done": EXIT_DONE, "reused": EXIT_ERROR, "timeout": EXIT_TIMEOUT, "stopped": 130}.get(result))
+        if result != "done":  # a Done ends the entry only once its paths are out, below
+            end({"reused": EXIT_ERROR, "timeout": EXIT_TIMEOUT, "stopped": 130}.get(result))
         if locks:
             server.lock.acquire()  # kept until exit: a save in flight ends, and none starts, before the inbox may write
         for fd in locks:
@@ -3844,6 +3847,8 @@ def main(argv=None):
     if result == "done":
         for path in paths:
             print(path, flush=True)
+        # Not before: a stdout nobody reads (BrokenPipeError) leaves no ended, as a killed run, so the inbox tells.
+        end(EXIT_DONE)
         return EXIT_DONE
     paths = [p for p in paths if p.exists()]
     print("signoff: timed out after %g idle minutes; %s" % (args.timeout, "the answers so far are kept" if paths

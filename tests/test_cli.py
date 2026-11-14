@@ -590,6 +590,21 @@ class CliInbox(unittest.TestCase):
         self.assertIn("ended", entry)
         self.assertNotIn("exit", entry)
 
+    @unittest.skipIf(sys.platform == "win32", "the inbox, which reads the entry, does not run on Windows")
+    def test_a_waiter_whose_paths_cannot_reach_stdout_never_says_it_handed_over(self):
+        # nohup'd, its session gone: nobody reads the paths, so its entry must not say exit 0 (the inbox then tells).
+        self.hold(self.home / "inbox.lock")
+        proc = self.start()
+        self.assertIn("inbox", proc.stderr.readline())
+        proc.stdout.close()
+        self.finish_outside()
+        proc.wait(timeout=20)
+        err = proc.stderr.read()
+        self.assertNotEqual(proc.returncode, 0, err)
+        entry = self.entry_of(proc)
+        self.assertNotEqual(entry.get("exit"), 0, entry)
+        self.assertNotIn("ended", entry)  # as a killed run: its pid is gone, so the inbox takes it as stopped
+
     @unittest.skipIf(sys.platform == "win32", "os.kill with SIGTERM ends the process there")
     def test_a_signal_before_the_serve_loop_still_stops_the_run(self):
         def browser(url):

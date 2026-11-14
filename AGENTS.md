@@ -320,7 +320,7 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   banner, in the round's language) say `L.orphan`: the run that asked has ended (its session may live on), and the
   answer goes to the project's sessions; its Done banner is `L.doneOrphan`. Once every round of an orphan group is
   done, the inbox writes its answer request (see the request rule), and so it does when it lets go of a group with
-  every round done that no run handed over. A live run whose rounds are exactly a
+  every round done whose newest run stopped without handing over. A live run whose rounds are exactly a
   group's (as `runs/` lists them: the open ones) takes that group on, live, with its number and open tabs; a
   live run that lists any of its rounds otherwise ends it, so its old tab's saves get 404. A page run whose round lock the
   inbox took after the run's own look (the inbox started in between) looks again and is a waiter. Saves go through
@@ -368,16 +368,19 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   server's own `LATER_TEXT` (park the item: take its marker off, keep it open). The route takes no `kind:
   "answer"` (400): the inbox alone writes one, once every round of an orphan group is done (by Done, `accept`, or
   an answers file another program wrote that it takes in), one per group; and at a look that lets go of a group
-  that is not orphan, has every round done and handed over none yet, no live run on its rounds, and at least one
-  gone `runs/` entry listing exactly its rounds, none of which `ended` with `exit` 0 or with no `exit` (a dead pid
-  without `ended` counts as stopped): a waiter stopped just after a Done in the inbox, or rounds finished from
-  outside after the run ended, before that look. One that cannot be written there is one stderr line. `ref` `<topic folder> / <round>, <round>`
+  that has every round done and handed over none yet (orphan or not), when the newest (by `started`) gone
+  `runs/` entry listing exactly its rounds stopped: a dead pid without `ended`, or `ended` with `exit` 2 or 130,
+  never 1 (a reused start link: its stderr tells the agent to doubt the answers), 0, another value or none. That
+  is a waiter stopped just after a Done in the inbox, rounds finished from outside after the run stopped or timed
+  out, before that look, or a Done that ran just before that look made the group orphan. One that cannot be
+  written there is one stderr line. `ref` `<topic folder> / <round>, <round>`
   (the group's run's folder and rounds as `runs/` lists them, names without `.json`, so a round done before the
   group was made is named too; cut to `MAX_REF`), the text the server's own `ANSWER_TEXT` (tell the user first; no
   answer, path, link or token), the file ASCII-escaped. It writes it after the round's Markdown copy and before
   its answers JSON, so a request that cannot be written fails the save (500, `failed`) and a JSON that fails
   after it leaves a request whose text says the round then needs nothing (a retry writes another); one for a file
-  taken in from outside that cannot be written is one stderr line. A live run's Done writes none (its run hands
+  taken in from outside that cannot be written is one stderr line, and the let-go of its group tries once more
+  (one more line when that fails too). A live run's Done writes none (its run hands
   over, unless it stops first: then the let-go look above does). A Done save to
   a group looks at the runs first, as `accept` does, so a run that ended since the last look counts as gone; a
   group that look lets go refuses it with 404 (`gone` for `accept`), writing nothing. The inbox
@@ -549,9 +552,10 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   While the inbox holds `inbox.lock`, a run is a waiter: no port, no browser, no idle timeout, no lock; it looks
   at its answers files once a second and exits as a run does. Every run and waiter writes `runs/<run>.json`
   (`schema, run, project, folder, rounds, mode, pid, started`; never a token or a link) at start and adds
-  `ended` when it exits by itself, on Ctrl+C, SIGTERM or SIGHUP, with `exit`, its exit code (0 Done: it handed the
-  answers over; 1 start link reused; 2 timeout; 130 stopped), unless an unexpected error ended it; an entry
-  without `exit` (that, or an older plugin) counts as handed over. One killed some other way leaves none, so readers check
+  `ended` when it exits by itself, on Ctrl+C, SIGTERM or SIGHUP, with `exit`, its exit code (1 start link reused;
+  2 timeout; 130 stopped; 0 Done, written only once its answers paths are on stdout), unless an unexpected error
+  ended it; an entry without `exit` (that, or an older plugin) counts as handed over. One killed some other way,
+  or whose paths could not reach stdout (no reader: `BrokenPipeError`), leaves none, so readers check
   `pid` and `started`, and skip `.tmp-*` files.
 - **The hooks cost a session nothing.** They run in every Claude Code session of everyone who installs the
   plugin, so `inbox hook` always exits 0 (exit 2 would block a prompt or a stop), prints nothing (SessionStart and

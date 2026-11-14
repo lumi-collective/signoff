@@ -2997,15 +2997,19 @@ class InboxOrphan(InboxTest):
             self.assertEqual(self.save(page, dict(ANSWER, done=True), round_=n)[0].status, 200)
         self.assertFalse((self.home / "requests").exists())
 
-    def done_then(self, **left):
-        """Done on both rounds while the waiter lives, then its entry as the run left it (left: the keys it got)."""
+    def done_then(self, then=None, **left):
+        """Done on both rounds while the waiter lives, then its entry as the run left it (left: the keys it got;
+        then: what else happens to the entry before the inbox's next look)."""
         e = self.register()
         self.start()
         start, page = self.open()
         self.assertEqual(self.save(page, dict(ANSWER, accepted=True), round_=1)[0].status, 200)
         for n in (0, 1):
             self.assertEqual(self.save(page, dict(ANSWER, done=True), round_=n)[0].status, 200)
-        self.write(self.home / "runs" / (e["run"] + ".json"), dict(e, **left))
+        with self.server.scan_lock:  # no look in between, from the inbox's own thread either
+            self.write(self.home / "runs" / (e["run"] + ".json"), dict(e, **left))
+            if then:
+                then(self.home / "runs" / (e["run"] + ".json"))
         for _ in range(3):  # later looks write nothing more
             self.assertEqual(self.rounds_waiting(page), [])
         return page
@@ -3081,6 +3085,80 @@ class InboxOrphan(InboxTest):
                 self.assertEqual(self.rounds_waiting(page), [])
         self.assertEqual(err.getvalue().count("cannot hand over"), 1, err.getvalue())
 
+    def test_a_reused_start_link_hands_nothing_over(self):
+        # Exit 1 after a Done within DONE_GRACE: the run's stderr tells its agent to doubt the answers. A request
+        # would tell it to act on them.
+        self.done_then(ended=signoff.utc_now(), exit=1)
+        self.assertFalse((self.home / "requests").exists())
+
+    def test_an_exit_code_of_no_known_stop_hands_nothing_over(self):
+        self.done_then(ended=signoff.utc_now(), exit=120)  # only 2 and 130 say the run stopped without its answers
+        self.assertFalse((self.home / "requests").exists())
+
+    def test_an_exit_code_that_is_not_a_number_hands_nothing_over(self):
+        self.done_then(ended=signoff.utc_now(), exit="130")
+        self.assertFalse((self.home / "requests").exists())
+
+    def test_the_newest_run_on_the_rounds_decides(self):
+        # An older plugin's run on the same rounds ended with no exit code; the run of today stopped with 130.
+        older = entry(self.topic, ["round-01.json", "round-02.json"], project=self.pid, started=stamp(120),
+                      ended=stamp(100))
+        self.write(self.home / "runs" / (older["run"] + ".json"), older)
+        self.done_then(ended=signoff.utc_now(), exit=130)
+        self.assert_one_answer()
+
+    def test_a_newer_run_that_handed_over_wins_over_an_older_stopped_one(self):
+        older = entry(self.topic, ["round-01.json", "round-02.json"], project=self.pid, started=stamp(120),
+                      ended=stamp(100), exit=130)
+        self.write(self.home / "runs" / (older["run"] + ".json"), older)
+        self.done_then(ended=signoff.utc_now(), exit=0)
+        self.assertFalse((self.home / "requests").exists())
+
+    def test_a_stopped_run_let_go_with_a_round_still_open_hands_nothing_over(self):
+        e = self.register()
+        self.start()
+        start, page = self.open()
+        self.assertEqual(self.save(page, dict(ANSWER, accepted=True), round_=1)[0].status, 200)
+        self.assertEqual(self.save(page, dict(ANSWER, done=True))[0].status, 200)  # round-02 stays open
+        (self.topic / "round-02.outcome.json").write_text("{}", encoding="utf-8")  # so it is no orphan round
+        self.write(self.home / "runs" / (e["run"] + ".json"), dict(e, ended=signoff.utc_now(), exit=130))
+        for _ in range(3):
+            self.assertEqual(self.rounds_waiting(page), [])
+        self.assertEqual(self.server.groups, [None])  # let go
+        self.assertFalse((self.home / "requests").exists())
+
+    def test_an_expired_entry_hands_nothing_over(self):
+        old = time.time() - signoff.RUNS_MAX_AGE - 60
+        self.done_then(ended=signoff.utc_now(), exit=130, then=lambda path: os.utime(str(path), (old, old)))
+        self.assertEqual(self.server.groups, [None])
+        self.assertFalse((self.home / "requests").exists())
+
+    def test_an_invalid_entry_hands_nothing_over(self):
+        self.done_then(ended=signoff.utc_now(), exit=130, pid="not a pid")
+        self.assertEqual(self.server.groups, [None])
+        self.assertFalse((self.home / "requests").exists())
+
+    def test_a_done_that_lands_while_a_look_makes_the_group_orphan_is_handed_over_at_the_let_go(self):
+        # The look finds round-02 open and makes the group orphan; a Done there ran closing() just before, while
+        # the group was not orphan yet, so closing() wrote nothing. The let-go still hands it over, once.
+        e = self.register()
+        server = self.start()
+        start, page = self.open()
+        self.assertEqual(self.save(page, dict(ANSWER, accepted=True), round_=1)[0].status, 200)
+        self.assertEqual(self.save(page, dict(ANSWER, done=True))[0].status, 200)
+        with server.scan_lock:
+            self.write(self.home / "runs" / (e["run"] + ".json"), dict(e, ended=signoff.utc_now(), exit=130))
+            server._scan()  # round-02 still open: orphan now
+            g = server.groups[0]
+            self.assertTrue(g.orphan)
+            g.orphan = False  # the store as it ran: before the look set the flag
+            self.assertIsInstance(signoff._Rounds.store(g, 1, dict(ANSWER, done=True, accepted=True)), int)
+            g.orphan = True
+            self.assertFalse((self.home / "requests").exists())
+        for _ in range(3):
+            self.assertEqual(self.rounds_waiting(page), [])
+        self.assert_one_answer()
+
     def test_accept_from_a_notification_hands_an_orphan_answer_over(self):
         topic, e = self.case([one_round(question("q"))])
         self.write(self.home / "runs" / (e["run"] + ".json"), dict(e, pid=dead_pid()))
@@ -3102,7 +3180,8 @@ class InboxOrphan(InboxTest):
         with mock.patch.object(sys, "stderr", err):  # before the file: the inbox's own look may take it in first
             write_outside(self.topic / "round-01.answers.json", done_record())
             self.assertEqual(self.rounds_waiting(page), [])
-        self.assertEqual(err.getvalue().count("cannot hand over"), 1, err.getvalue())  # not tried again on letting go
+        # Said at the take-in, and once more when the let-go of the group tries again; then the group is gone.
+        self.assertEqual(err.getvalue().count("cannot hand over"), 2, err.getvalue())
 
     def test_a_done_whose_answer_cannot_be_written_is_not_final(self):
         page = self.one_orphan_round()

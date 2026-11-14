@@ -30,7 +30,7 @@ Once the inbox has run on this machine, its lock file `inbox.lock` is in the Sig
 run locks each open round (an empty `round-NN.json.lock`, or `<file name>.lock` for a single file, beside it),
 so a second run on the same round exits 1, and notes itself in `runs/` in the home: the topic folder, a hash of the project
 folder's path, the round file names, page or waiter, its process id, when it started and, unless it was
-killed some other way, when it ended and with which exit code. No token or link goes there. The lock files stay. A `.gitignore` that Signoff 0.3.0 or
+killed some other way or could not print its answers paths, when it ended and with which exit code. No token or link goes there. The lock files stay. A `.gitignore` that Signoff 0.3.0 or
 later writes covers them; where the topic folder already had its own (one an older Signoff wrote too), they show up
 in git as untracked files until you add `*.json.lock` to it. While the
 inbox is open, a run opens no page and starts no server: it

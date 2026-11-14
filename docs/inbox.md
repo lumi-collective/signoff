@@ -115,8 +115,9 @@ notification, or an answers file another program wrote with Done), the inbox wri
 It reaches the project's sessions the same way, and asks the agent to tell you first, then read the answers files
 and act on them; the agent marks it done with `signoff inbox done <id>`. A round whose run still waits needs
 none: the run wakes its agent. If that run stops before it hands the answers over (a closed terminal right
-after your Done, say), or another program finishes its rounds just after it ended, the inbox writes the same
-request at its next look, once. The request route takes no `answer` from a page.
+after your Done, say), or another program finishes its rounds just after it stopped or timed out, the inbox
+writes the same request at its next look, once. A run whose start link was used twice gets none: it tells its
+agent to check the answers first. The request route takes no `answer` from a page.
 
 **Vulnerabilities** shows each project's state from [Uptick](https://github.com/lumi-collective/uptick)'s
 vulnerability scan, when Uptick keeps its scan file (`${XDG_CACHE_HOME:-~/.cache}/uptick/vulns.json`, written once
