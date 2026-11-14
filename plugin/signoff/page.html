@@ -125,6 +125,7 @@ textarea{display:block;width:100%;min-height:52px;background:var(--field);color:
 .banner.on{display:block}
 .visually-hidden{position:absolute!important;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .readonly-note{margin:16px 0 0;padding:10px 14px;border-radius:10px;border:1px dashed var(--line);color:var(--soft)}
+.context{margin:12px 0 0;font-size:13.5px;color:var(--quiet);overflow-wrap:anywhere}
 .opt input.other-text{position:static;display:block;width:calc(100% - 42px);height:auto;margin:6px 0 0 42px;background:var(--field);
   color:var(--text);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font:inherit}
 input.other-text:disabled,textarea:disabled{opacity:.75}
@@ -710,7 +711,8 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
   body.run>header .progress{display:none}  /* the bar says which round waits */
   body.run .ib-fbar button:last-child{display:none}  /* Leave Focus: the pressed Focus button in the header */
   body.run .bar #status{order:0;flex:0 1 auto}
-  body.run .item{padding:14px}}
+  body.run .item{padding:14px}
+  body.run.focusing .rp:not(.at-start)>.context{display:none}}  /* with the first item only: the rest stay one screen */
 </style>
 </head>
 <body>
@@ -1911,10 +1913,13 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
       if (w.kind === 'round') {
         var run = 'run/' + Number(w.group) + '/', tab = w.tab && w.tab !== w.title ? w.tab : '';
         var aged = oldRound(w.opened);  // the round file's time; the row's clock stays on its run's start
+        // The context rides on the short line, so the search and the link's name get it once.
         var r = row(s, w, as(w.held ? {kind: L.heldKind, cls: 'k-t', glyph: '◇'}
-          : w.orphan ? {kind: L.orphanKind, cls: 'k-q', glyph: '◆'} : Q, {title: w.title, sub: tab,
+          : w.orphan ? {kind: L.orphanKind, cls: 'k-q', glyph: '◆'} : Q, {title: w.title,
+          sub: [tab, w.context].filter(Boolean).join(' · '),
           find: function () { return w.items || []; }, stamp: w.since, href: run, fill: function (box) {
             if (tab) box.append(el('p', '', tab));
+            if (w.context) box.append(el('p', 'context', w.context));
             if (w.held) box.append(el('p', 'ib-vuln-note', L.held));
             else if (w.orphan) box.append(el('p', 'ib-vuln-note', L.orphan));
             if (aged) box.append(el('p', 'ib-vuln-note', fmt(L.oldOpenFor, {t: lasted(w.opened)}) + ' ' + L.oldNote));
@@ -3082,6 +3087,7 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
       }
     }
     if (d.lang) panel.lang = String(d.lang).replace(/_/g, '-');
+    if (d.context) panel.append(el('p', 'context', d.context));  // which session asks, in the agent's words
     if (r.readonly && r.answers && r.answers.done) panel.append(el('p', 'readonly-note', L.readonly + (r.saved ? ' ' + when(r.saved) : '')));
     if (!r.readonly && oldRound(r.opened)) panel.append(el('p', 'readonly-note warn old-note', L.oldNote));
     var group = null;
@@ -3454,6 +3460,7 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
     var panel = byId('panel-' + active), cards = active === SUMMARY ? [] : itemCards(), n = cur[active];
     cards.forEach(function (c, i) { c.classList.toggle('cur', i === n); });
     if (panel) panel.classList.toggle('at-end', n >= cards.length - 1);
+    if (panel) panel.classList.toggle('at-start', n <= 0);
     sh.fbar.hidden = !cards.length;
     sh.at.textContent = !cards.length ? '' : fmt(L.itemOf, {i: n + 1, n: cards.length})
       + (rounds.length > 1 ? ' · ' + fmt(L.roundOf, {i: active + 1, n: rounds.length}) : '');

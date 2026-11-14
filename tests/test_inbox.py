@@ -2033,10 +2033,31 @@ class InboxRows(InboxTest):
         self.assertEqual(r["title"], "Tab [31m red")
         self.assertEqual([i["title"] for i in r["items"]], ["See project/notes and ~/x  ", "z" * 200])
 
+    def test_a_waiting_round_row_carries_its_context_as_one_line_and_nothing_else_does(self):
+        # The agent's own line, shown on its round's row the way the rows' titles are: folder and home replaced (the
+        # load already refused a format character). Answered rows, the mod's rows and the offer do not get it.
+        home = os.path.expanduser("~")
+        line = "feat/x in %s, notes in %s/n" % (self.root, home)
+        signoff.MAX_CONTEXT, kept = 1000, signoff.MAX_CONTEXT  # a long temporary folder must not trip the load
+        self.addCleanup(setattr, signoff, "MAX_CONTEXT", kept)
+        _, first = self.case([one_round(question("q"), context="answered from a notification")])
+        self.write(self.home / "runs" / (first["run"] + ".json"), dict(first, started="2026-01-01T00:00:00Z"))
+        self.case([one_round(question("r"), context=line)])
+        self.start()
+        offer = self.ctl("offer")
+        self.assertNotIn("answered from", json.dumps(offer))
+        self.assertEqual(self.ctl("accept", offer=offer["offer"]["id"]), {"ok": True})
+        data = self.view(self.open()[1])[0]
+        (w,) = [w for w in data["waiting"] if w["kind"] == "round"]
+        self.assertEqual(w["context"], "feat/x in project, notes in ~/n")
+        self.assertTrue(data["sent"])
+        self.assertTrue(all("context" not in s for s in data["sent"]))
+        self.assertNotIn("feat/x", json.dumps(self.rows()))
+
     def test_a_bad_project_is_refused(self):
         self.case([one_round(question("q"))])
         self.start()
-        for bad in (None, 12, "", "0" * 15, "0" * 17, "A" * 16, ["0" * 16]):
+        for bad in(None, 12, "", "0" * 15, "0" * 17, "A" * 16, ["0" * 16]):
             self.assertEqual(sorted(self.ctl("rows", project=bad)), ["error"], bad)
         self.assertEqual(sorted(self.ctl("rows")), ["error"])
 

@@ -68,6 +68,7 @@ DEFAULT_IGNORABLE = ((0x00AD, 0x00AD), (0x034F, 0x034F), (0x061C, 0x061C), (0x11
                      (0x180B, 0x180F), (0x200B, 0x200F), (0x202A, 0x202E), (0x2060, 0x206F), (0x3164, 0x3164),
                      (0xFE00, 0xFE0F), (0xFEFF, 0xFEFF), (0xFFA0, 0xFFA0), (0xFFF0, 0xFFF8), (0x1BCA0, 0x1BCA3),
                      (0x1D173, 0x1D17A), (0xE0000, 0xE0FFF))
+MAX_CONTEXT = 120  # characters in a round's context line: room for a session and its task, not for a transcript
 MAX_STEPS = 10000  # a number item's values from min to max
 MAX_SCALE = 10 ** 12  # a number item's largest value, in steps: a float holds the grid to a 500th of a step
 MAX_VALUE = 10 ** 15  # a number item's largest value: a float holds every whole number up to it, and no sum overflows
@@ -104,7 +105,7 @@ LEADING_UNC = re.compile(r"^[\\/]{2}")
 # Option ids start with a letter or digit, so these two choices can never clash with one of them.
 OTHER, SKIP = "_other", "_skip"
 
-TOP_KEYS = ("version", "title", "tab", "intro", "notice", "lang", "items", "free_text")
+TOP_KEYS = ("version", "title", "tab", "intro", "notice", "lang", "items", "free_text", "context")
 TOP_REQUIRED = ("version", "title", "items")
 ITEM_KEYS = ("id", "group", "title", "description", "cost", "images", "select", "options", "recommended", "comment",
              "other", "skippable", "marks", "sensitive", "criteria", "attachments", "commands",
@@ -518,7 +519,15 @@ def load_decisions(path, lenient=False):
         raise DecisionsError("decisions file: 'version' must be 1")
     for key in ("title", "tab", "intro", "notice", "lang"):
         _text(data, key, "decisions file")
-    free = data.setdefault("free_text", {})
+    if "context" in data:
+        line = data["context"]
+        # One line the inbox row shows whole: no control, format (bidi, zero-width), line-separator or lone
+        # surrogate character, and never cut, so the agent learns at once that it is too long.
+        if not (isinstance(line, str) and line.strip() and len(line) <= MAX_CONTEXT
+                and not any(unicodedata.category(c) in ("Cc", "Cf", "Cs", "Zl", "Zp") for c in line)):
+            raise DecisionsError("decisions file: 'context' must be one line of 1 to %d characters, with no control "
+                                 "or invisible character" % MAX_CONTEXT)
+    free =data.setdefault("free_text", {})
     _keys(free, FREE_TEXT_KEYS, (), "free_text")
     for key in FREE_TEXT_KEYS:
         _text(free, key, "free_text")
@@ -3295,6 +3304,8 @@ class InboxServer(_Server):
                                             title=r.decisions["title"], tab=r.decisions.get("tab"),
                                             since=g.entry["started"], opened=r.opened, held=not g.writable,
                                             orphan=g.orphan,
+                                            **({"context": _one_line(_unpathed(g, r.decisions["context"]),
+                                                                     MAX_CONTEXT)} if "context" in r.decisions else {}),
                                             items=[it["title"][:MAX_ROW_TEXT] for it in r.decisions["items"][:MAX_ROW_ITEMS]]))
                         # What a todo item may name to link here: its topic folder and file, in its own project.
                         opened.setdefault((g.entry.get("project"), r.path.parent.name + "/" + r.path.name),

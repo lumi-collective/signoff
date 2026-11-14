@@ -54,3 +54,8 @@
   (a number) is required, in the range and on its step. `skippable` and `comment` work as on any item; `other`, `marks` and `criteria` do not. The
   answer is a JSON number (see [answers.md](answers.md)). Needs Signoff 0.5.0 or newer; after updating, the
   user restarts the inbox (`signoff inbox stop`, then open it again).
+- `context` (top level) when several sessions or projects may ask at once: one line saying which session asks
+  and what it was working on, such as `"context": "feat/parser session: splitting the tokenizer"`. At most 120
+  characters, no line break or tab; a longer value makes the round fail to load. The round's page shows it at
+  the top and its inbox row after the tab. Never a prompt, a transcript, a secret or a path. Needs Signoff 0.5.0
+  or newer; after updating, the user restarts the inbox.

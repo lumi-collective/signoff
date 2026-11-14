@@ -487,7 +487,13 @@ class Exits(unittest.TestCase):
         data["items"][0]["blocking"] = "yes"
         folder.write(data)
         bad_commands.append([str(folder.target)])  # not a command, but checked the same way: exit 1 with a message
-        number = {"id": "budget", "title": "How much?", "select": "number", "range": {"min": 0, "max": 10},
+        folder = Folder()
+        self.addCleanup(folder.cleanup)
+        data = sample_decisions()
+        data["context"] = "feat/parser session\nsplitting the tokenizer"  # one line only
+        folder.write(data)
+        bad_commands.append([str(folder.target)])
+        number ={"id": "budget", "title": "How much?", "select": "number", "range": {"min": 0, "max": 10},
                   "recommended": 5}
         for bad in (dict(number, recommended=5.5), dict(number, range={"min": 10, "max": 0}),
                     {k: v for k, v in number.items() if k != "recommended"},

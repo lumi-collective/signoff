@@ -86,7 +86,7 @@ How to batch:
   user's own setup). The item starts marked Private; the user can untick it, or tick Private on any item. It
   only acts on an item with a text field: `comment`, `other` or `marks`.
 - `tab`, `other`, `skippable`, `comment`, `boxes`, boards, `marks`, `group`, `lang`, `notice`, `criteria`,
-  `facts`, `attachments`, `commands`, `blocking` and `range` are in [fields.md](fields.md): read it before you use one.
+  `facts`, `attachments`, `commands`, `blocking`, `range` and `context` are in [fields.md](fields.md): read it before you use one.
 - All text is plain: line breaks are kept; HTML and Markdown show as typed.
 - The full format is in `${CLAUDE_PLUGIN_ROOT}/signoff/schema.json`.
 
@@ -134,7 +134,7 @@ background and tell the user the page is open:
 python3 -I "${CLAUDE_PLUGIN_ROOT}/signoff/signoff.py" --history "<project root>" --folder "<decisions folder>"
 ```
 
-It lists every round in the decisions folder, read only, with outcomes and warnings.
+It lists the folder's rounds, read only, with outcomes and warnings.
 Add `--since YYYY-MM-DD` for a long history. It writes nothing and has no Done: the user closes it with Ctrl+C,
 or it stops after the idle timeout, and stdout stays empty. To answer the question yourself, read the answers
 and outcome files directly instead.

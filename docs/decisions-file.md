@@ -42,6 +42,7 @@ JSON, one file per round. [`plugin/signoff/schema.json`](../plugin/signoff/schem
 | `tab` | top | no | a short label for the round's tab; default the title |
 | `notice` | top | no | a short banner under the header |
 | `lang` | top | no | language tag of your text, default `en`; the page's own labels are Hungarian for `hu`, English otherwise |
+| `context` | top | no | one line on which session asks and what it was working on, up to 120 characters, no line break, tab or other control or invisible character (a longer or multi-line value fails to load); shown at the top of the round and on its inbox row. Never a prompt, a transcript, a secret or a path |
 | `items` | top | yes | one or more decisions |
 | `free_text` | top | no | `title` and `placeholder` of the box at the end; the box is always shown |
 | `id` | item, option | yes | letters, digits, `-`, `_`, `.`; unique; the answers are keyed by it |
@@ -64,8 +65,8 @@ JSON, one file per round. [`plugin/signoff/schema.json`](../plugin/signoff/schem
 | `blocking` | item | no | your next step waits on this item: the page marks it **Agent waits on this** in its title and the sidebar, and the Summary gets an **Agent waits** filter; default `false`. Not in the answers file |
 
 Unknown keys are refused, so a typo shows up at once instead of being ignored. Text is plain: no Markdown, links
-or HTML. `commands`, `blocking` and `select: "number"` with `range` need Signoff 0.5.0 or newer; an older one
-refuses the round, and so does an inbox still running from an older plugin: after updating, restart the inbox
+or HTML. `commands`, `blocking`, `select: "number"` with `range`, and `context` need Signoff 0.5.0 or newer; an
+older one refuses the round, and so does an inbox still running from an older plugin: after updating, restart the inbox
 (`signoff inbox stop`, then open it again).
 
 An invisible or blank character in a command is a control character other than tab and newline; a format, line

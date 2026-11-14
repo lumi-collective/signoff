@@ -219,6 +219,19 @@ class DecisionsFile(unittest.TestCase):
             msg = self.broken(lambda d: d["items"][0].update(commands=[{"text": "ls", "lang": lang}]))
             self.assertIn("'lang'", msg, repr(lang))
 
+    def test_context_is_one_short_line(self):
+        data = sample_decisions()
+        self.assertNotIn("context", signoff.load_decisions(self.folder.decisions)[0])  # no default: as before
+        line = "feat/parser session: splitting the tokenizer " + "é" * (signoff.MAX_CONTEXT - 45)
+        self.assertEqual(len(line), 120)
+        data["context"] = line
+        self.folder.write(data)
+        self.assertEqual(signoff.load_decisions(self.folder.decisions)[0]["context"], line)
+        for value in ("x" * 121, "two\nlines", "a\ttab", "", "   ", 3, ["x"], None, "bidi‮ override", "zero​width",
+                      "line sep"):
+            msg = self.broken(lambda d: d.update(context=value))
+            self.assertIn("'context'", msg, repr(value))
+
     def test_blocking_defaults_to_false_and_must_be_a_bool(self):
         data = sample_decisions()
         data["items"][0]["blocking"] = True

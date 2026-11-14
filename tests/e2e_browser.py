@@ -299,6 +299,11 @@ def finished(server, out, err, expected):
 
 
 PALETTE = "document.documentElement.getAttribute('data-palette')"
+# A round's context line at its longest (MAX_CONTEXT), with markup that must stay text.
+CONTEXT = ("feat/parser session: splitting the tokenizer <b>into</b> a lexer and a parser, then the error messages "
+           "for both, step 34")
+CONTEXT_SHOWN = ("(function () { var p = document.querySelector('.rp:not([hidden]) > .context');"
+                 " return !!p && p.checkVisibility() && p.textContent; })()")
 # The open round's age as shown: the header's time, its 2-day pill and the note at the top of the round's panel (each
 # false when not shown).
 ROUND_AGE = """(function () {
@@ -427,6 +432,7 @@ def run_phone(work):
     shutil.copytree(str(DEMO / "mockups"), str(topic / "mockups"))
     data = json.loads((DEMO / "round-02.json").read_text(encoding="utf-8"))
     data["lang"] = "hu"
+    data["context"] = CONTEXT
     (topic / "decisions.json").write_text(json.dumps(data), encoding="utf-8")
     old = time.time() - 3 * 86400  # asked three days ago: the header's time, its pill and the panel's note
     os.utime(str(topic / "decisions.json"), (old, old))
@@ -452,12 +458,15 @@ def run_phone(work):
               == time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(int(old))) and age["title"]
               and age["pill"] == "2+ napja nyitva" and age["note"].startswith("A kérdései elavulhattak"),
               "an old Hungarian round in Focus: its time, pill and note: %r" % age)
+        check(browser.js(CONTEXT_SHOWN) == CONTEXT, "the context line shows with the first item in Focus")
         browser.click(".ib-fbar button:nth-of-type(2)")  # Next
         check(browser.js("document.querySelector('.item.cur') === document.querySelectorAll('#panel-0 .item')[1] && %s"
                          % shown) == 1, "Next should show the second item alone")
+        check(browser.js(CONTEXT_SHOWN) is False, "on a phone in Focus the context stays off the later items")
         press(browser, "Escape", "Escape", 27)
         check(browser.js("!document.body.classList.contains('focusing') && " + shown) == len(data["items"]),
               "Esc should leave Focus and show every item")
+        check(browser.js(CONTEXT_SHOWN) == CONTEXT, "out of Focus the context line shows")
         check(browser.js("document.documentElement.scrollWidth <= innerWidth"), "nothing wider than the phone")
     except E2EError:
         sys.stderr.write("--- Signoff stderr ---\n" + "".join(err))
@@ -2447,6 +2456,8 @@ def run_round_age(work):
         topic.mkdir(parents=True)
         data = json.loads((DEMO / "round-04.json").read_text(encoding="utf-8"))
         data["title"] = title
+        if not topics:
+            data["context"] = CONTEXT  # the old round's; the fresh one has none
         (topic / "round-01.json").write_text(json.dumps(data), encoding="utf-8")
         topics.append(topic)
     old = time.time() - 3 * 86400
@@ -2492,8 +2503,23 @@ def run_round_age(work):
                            "ask the agent before you answer."], "the old round's open row says why: %r" % note)
         links = browser.js("Array.prototype.map.call(document.querySelectorAll('a.ib-main'), function (a) {"
                            " return a.href; })")
+        # The context: on the row's second line after the tab, once in the link's text, and in the open row.
+        sub = browser.js("Array.prototype.map.call(document.querySelectorAll('a.ib-main'), function (m) { return ["
+                         "m.querySelector('.ib-text').textContent, m.textContent.split(%s).length - 1]; })"
+                         % json.dumps(CONTEXT))
+        check(sub == [["Wording · " + CONTEXT, 1], ["Wording", 0]], "the rows' second lines: %r" % sub)
+        check(browser.js("(function () { var p = document.querySelector('#ib-detail p.context');"
+                         " return !!p && p.checkVisibility() && p.textContent; })()") == CONTEXT,
+              "the open row shows the context")
+        browser.js("document.getElementById('ib-search').focus()")
+        browser.call("Input.insertText", text="tokenizer")
+        check(wait_for("a search on the context", lambda: browser.js(SEARCH_ROWS) == ["An old round"] or None),
+              "a word of the context finds its row only")
         browser.call("Page.navigate", url=links[0])
         wait_for("the old round's page", lambda: browser.js("!!document.getElementById('done')"))
+        check(browser.js(CONTEXT_SHOWN) == CONTEXT and browser.js(
+              "document.querySelector('.rp:not([hidden])').firstElementChild.className") == "context",
+              "the round's page opens its panel with the context, as text")
         age = browser.js(ROUND_AGE)
         check(re.fullmatch(r"Opened .+ · 3 days ago", age["time"]) and age["datetime"] == time.strftime(
               "%Y-%m-%dT%H:%M:%SZ", time.gmtime(int(old))) and age["title"] and age["pill"] == "Open 2+ days"
@@ -2508,6 +2534,7 @@ def run_round_age(work):
         check(re.fullmatch(r"Opened .+ · (just now|\d+ min ago)", age["time"]) and age["pill"] is False
               and age["note"] is False,
               "the fresh round shows its time only: %r" % age)
+        check(browser.js(CONTEXT_SHOWN) is False, "a round without a context shows none")
     except E2EError:
         sys.stderr.write("--- inbox stderr ---\n" + "".join(inbox_err) + "--- run stderr ---\n" + "".join(err))
         raise
@@ -2661,7 +2688,8 @@ def main():
         cleanup()
     print("PASS: every round in examples/ (demo rounds, decisions.json, --history) shows its items, options, "
           "recommendations and answers in light and dark; a phone opens in Focus, Next, the margin above the options, "
-          "Esc, Hungarian labels, an old round's time, pill and note in Hungarian; "
+          "Esc, Hungarian labels, an old round's time, pill and note in Hungarian, its context with the first item "
+          "only; "
           "an old done round shows its time with no warning; "
           "1 round, its opening time in the header, comment quoted above Done, filter, Private hides it, one-click Done, exit 0; "
           "project name in the header and the tab title; --history search finds answers and comments, never a private one, "
@@ -2707,7 +2735,8 @@ def main():
              "an answer from a notification: the socket's offer, its start link opens the item in Focus (a hash naming "
              "nothing is ignored), accept wakes the waiting run, exit 0, source notification; "
              "a round asked 3 days ago: the 2-day pill on its row (from the file's time, the clock on the run's "
-             "start) and the note in its open row, its page's opening time, pill and note, in Focus too; ") +
+             "start) and the note in its open row, its page's opening time, pill and note, in Focus too; its context "
+             "on the row's second line, in its open row, found by the search and at the top of its page; ") +
           "2 rounds in the sidebar with their items, the margin recommendation, Focus with f, j and Esc, "
           "a non-recommended pick, both accepted, Summary filter, the sign-off sheet, Done, exit 0, "
           "2 answers paths on stdout")

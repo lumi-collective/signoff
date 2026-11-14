@@ -39,7 +39,8 @@ cursor not in a field. Otherwise a bar at the top of the list says how many are 
 Each row in Waiting on you says how long ago it last changed (a round: when its run started; a session: when it
 began to wait; a todo item: when its file last changed), the exact time on hover. A round asked 2 days ago or
 more (its round file's time, as its page shows it) also says **Open 2+ days**, and its open row says how long and
-that its questions may be out of date. The two buttons under the
+that its questions may be out of date. A round whose agent wrote a `context` line shows it after the tab on
+the row's second line, and in its open row; the search finds it too. The two buttons under the
 heading order the rows oldest first or newest first, within each project, and the projects by their first row, so
 the oldest (or newest) row is always at the top; the choice is kept in `prefs.json`.
 

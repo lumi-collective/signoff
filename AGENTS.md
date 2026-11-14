@@ -503,7 +503,10 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   (`since`: a round's run start, a session's `waiting_at`, a todo item's file time; the exact time in the tooltip);
   a round's row whose `opened` (its round file's time, as on its page) is `OLD_ROUND` (2 days) old or more also
   gets the pill "Open 2+ days" inside its link, and its open row a note saying how long and why, judged at render
-  only, never moving `since`, the sort or the search. Its rows sit under one heading per project (a run outside any project under its folder's name), the
+  only, never moving `since`, the sort or the search. A round's row whose round has `context` gets it as
+  `context` (as `rows` titles are: one line, cut to `MAX_CONTEXT`, the project's folder and the user's home
+  replaced), shown after the tab on its short line (` · ` between them) and as a paragraph in its open row;
+  Answered rows, `rows`, `offer`, `state.json` and the app never get it. Its rows sit under one heading per project (a run outside any project under its folder's name), the
   header's line saying how many wait in how many projects (a run outside any project counts in no project). Two buttons order the rows within each project: oldest
   first (the default), newest first; the choice is `sort` in `prefs.json` (a stored `project`, the old By project,
   reads as oldest first), the order only changes on screen (j and k follow it). To do shows each project's rows
@@ -514,7 +517,8 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   j, k and Focus walk only the rows shown, never a closed group's. **The search** is a `role=search` field in the
   header (a phone gets it on a second line), live as you type, over every view and past the sidebar's filter: a
   row matches when each word of the query (split on spaces, folded with NFD, combining marks dropped, lower case)
-  is somewhere in its text, which is the project's name, the row's title, kind and short line, plus, per row, a
+  is somewhere in its text, which is the project's name, the row's title, kind and short line (a round's tab
+  and context), plus, per row, a
   round's item titles (`items` on a round's row: at most `MAX_ROW_ITEMS` of `MAX_ROW_TEXT` characters each, titles
   only, never a file or folder name), a todo item's body and its requests' texts, a finding's package, version,
   ids and fixed version, and the project names behind the Not scanned row. The rows not matching are hidden,
@@ -552,7 +556,9 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   no round and item of the page is ignored. The header's project line also says when the open round was asked
   (`opened` in each round of the page data: its round file's time, read with its hash at load, `null` when not
   `0 < mtime <= now`) as a `<time>` with the full time as its title; an open round (not read only) that old by
-  `OLD_ROUND` or more adds the pill there and a `readonly-note warn` at the top of its panel. The Summary and the
+  `OLD_ROUND` or more adds the pill there and a `readonly-note warn` at the top of its panel. A round's `context`
+  is its panel's first line (`p.context`, as text); at 760 px or less in Focus it shows with the first item only
+  (`at-start` on the panel, beside `at-end`). The Summary and the
   past-decisions page show no time. The past-decisions page puts its list in the sidebar and has no Focus. The page
   data gets `mono` (`mono`, `color`: the inbox's monogram for the project's name) on a run and the past-decisions
   page, never more. Every label a round's page uses has English and Hungarian (a test reads the page for each `L.name`; a
