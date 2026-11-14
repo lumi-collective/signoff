@@ -1103,6 +1103,12 @@ class MarkdownEscape(unittest.TestCase):
         ("---", "\\---"),
         ("+", "\\+"),
         ("-", "\\-"),
+        # A table's delimiter row needs no pipe: under a line, these make a one-column table.
+        ("a\n:-:", "a  \n  \\:-:"),
+        ("a\n:--", "a  \n  \\:--"),
+        ("a\n-:", "a  \n  \\-:"),
+        ("a\n--: ", "a  \n  \\--:"),
+        (":: and :-) and a\n:", ":: and :-) and a  \n  :"),
         # Readable: what does not render stays as written.
         ("-5 degrees, --flag, +1, =x, a = b", "-5 degrees, --flag, +1, =x, a = b"),
         ("árvíztűrő tükörfúrógép 👍🏽", "árvíztűrő tükörfúrógép 👍🏽"),

@@ -836,9 +836,9 @@ def read_board(path):
 # run that would close a heading, and what makes a bare URL a link in GFM: the colon of "<scheme>://" and the dot
 # of "www.".
 _MD_INLINE = re.compile(r"([\\`*_\[\]<>|~]|&(?=[#A-Za-z0-9])|(?<=\s)#(?=#*$)|(?<=[A-Za-z0-9]):(?=//)|(?<=www)\.)")
-# At the start of a line: a heading, a list item (an empty one too), a thematic break or setext underline, an
-# ordered list item.
-_MD_LINE_START = re.compile(r"^(#|[-+](?=\s|$)|-(?=[-\s]*$)|=(?==*$)|\d+(?=[.)]))")
+# At the start of a line: a heading, a list item (an empty one too), a thematic break, setext underline or a
+# table's delimiter row (only -, : and spaces, with a -), an ordered list item.
+_MD_LINE_START = re.compile(r"^(#|[-+](?=\s|$)|(?=[-:\s]*-)[-:](?=[-:\s]*$)|=(?==*$)|\d+(?=[.)]))")
 
 
 MD_LABELS = {
