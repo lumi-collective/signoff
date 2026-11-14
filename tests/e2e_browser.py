@@ -448,7 +448,7 @@ def run_phone(work):
         check("undefined" not in text and "Fókusz" in text and "Javasolt".upper() in text.upper(),
               "a Hungarian round should show Hungarian labels: %r" % text[:400])
         age = browser.js(ROUND_AGE)
-        check(age["time"].startswith("Megnyitva: ") and age["time"].endswith(" · 3 nap ezelőtt") and age["datetime"]
+        check(age["time"].startswith("Megnyitva: ") and age["time"].endswith(" · 3 napja") and age["datetime"]
               == time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(int(old))) and age["title"]
               and age["pill"] == "2+ napja nyitva" and age["note"].startswith("A kérdései elavulhattak"),
               "an old Hungarian round in Focus: its time, pill and note: %r" % age)
@@ -501,7 +501,7 @@ def run_single(work):
               "project name: %r" % browser.js("document.title"))
         # The project line also says when the round was asked: a fresh one, with no pill and no note.
         age = browser.js(ROUND_AGE)
-        check(re.fullmatch(r"Opened .+ · just now", age["time"]) and re.fullmatch(
+        check(re.fullmatch(r"Opened .+ · (just now|\d+ min ago)", age["time"]) and re.fullmatch(
               r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", age["datetime"]) and age["title"] and age["pill"] is False
               and age["note"] is False and browser.js("document.getElementById('project-line').innerText")
               == work.name + age["time"], "a fresh round's opening time in the header: %r" % age)
@@ -2033,9 +2033,10 @@ def run_round_age(work):
         rows = wait_for("both round rows", lambda: browser.js(
             "(function () { var a = document.querySelectorAll('a.ib-main'); return a.length === 2 && "
             "Array.prototype.map.call(a, function (m) { var p = m.querySelector('.pill.old'); return [m.querySelector("
-            "'.ib-title').textContent, m.querySelector('time.ib-when').textContent, !!p && p.checkVisibility() && "
-            "p.textContent, m.textContent.indexOf('Open 2+ days') >= 0]; }); })()"))
-        check(rows == [["An old round", "just now", "Open 2+ days", True], ["A fresh round", "just now", False, False]],
+            "'.ib-title').textContent, /^(just now|\\d+ min ago)$/.test(m.querySelector('time.ib-when').textContent), "
+            "!!p && p.checkVisibility() && p.textContent, m.textContent.indexOf('Open 2+ days') >= 0]; }); })()"))
+        # Both clocks on the runs' start (not 3 days ago); only the old file's row has the pill, in the link's text.
+        check(rows == [["An old round", True, "Open 2+ days", True], ["A fresh round", True, False, False]],
               "only the old round's row has the pill, in the link's own text: %r" % rows)
         note = browser.js("Array.prototype.map.call(document.querySelectorAll('#ib-detail .ib-vuln-note'), "
                           "function (p) { return p.textContent; })")
@@ -2057,7 +2058,8 @@ def run_round_age(work):
         browser.call("Page.navigate", url=links[1])
         wait_for("the fresh round's page", lambda: browser.js("!!document.getElementById('done')"))
         age = browser.js(ROUND_AGE)
-        check(re.fullmatch(r"Opened .+ · just now", age["time"]) and age["pill"] is False and age["note"] is False,
+        check(re.fullmatch(r"Opened .+ · (just now|\d+ min ago)", age["time"]) and age["pill"] is False
+              and age["note"] is False,
               "the fresh round shows its time only: %r" % age)
     except E2EError:
         sys.stderr.write("--- inbox stderr ---\n" + "".join(inbox_err) + "--- run stderr ---\n" + "".join(err))
