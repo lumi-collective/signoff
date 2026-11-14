@@ -127,7 +127,7 @@ and once every round is done Signoff says so and exits.
 You can also ask for it directly: "put these on a Signoff page".
 
 **A copy in your notes:** set the plugin's Notes folder option in `/config` to an absolute path of a folder of your
-own, such as an Obsidian vault, and each round that ends with Done also lands there as Markdown,
+own, such as an Obsidian vault (outside the project, and not under a dot folder such as `.config`), and each round that ends with Done also lands there as Markdown,
 `<project> - <topic folder> - <round>.md`, with a private answer shown only as `(private)`. Signoff never replaces a
 file there and sends nothing anywhere; if another app syncs the folder, the copy goes where that app sends it. Not on
 Windows yet. Details: [docs/running.md](docs/running.md#notes-folder).
@@ -196,7 +196,8 @@ the app can find it. Other ways to build it, and the details: [docs/inbox.md](do
 - **Written to disk:** the answers files, their Markdown copies and, when the folder has none, a `.gitignore`;
   once the inbox has run, also locks, run notes, the hooks' notes of projects and sessions (no prompt or message)
   and the inbox's own files, all in the Signoff home; outside it, only on your click, Uptick's list of projects to
-  scan. Nothing is deleted, with two narrow exceptions.
+  scan, and with the Notes folder setting, a note per round done, in that folder (which may be synced by another
+  app). Nothing is deleted, with two narrow exceptions.
 
 The full list: [docs/security.md](docs/security.md#what-runs-and-what-leaves-your-machine).
 

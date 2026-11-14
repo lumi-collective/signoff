@@ -27,26 +27,35 @@ link used twice.
 
 ## Notes folder
 
-The plugin's Notes folder setting (`/config`; empty by default) is passed as `--notes`. When a run exits 0, after
+The plugin's Notes folder setting (`/config`; empty by default) is passed as `--notes`: the skill has the agent add
+it to the run command when it is an absolute path. Nothing binds the argument to the setting, so the checks below
+also keep a misled agent's note out of your tool and project folders. A value that is still the setting's
+`${user_config.…}` placeholder is off, as an empty one, with no message. When a run exits 0, after
 its answers paths are on stdout, it writes one note for each round that was open when it started, from the round's
 answers file: the [Markdown copy](answers-file.md), except that a private answer's item has only its title and
-`(private)`. A waiter whose rounds were answered in the inbox writes them too; the inbox itself never does. A run
+`(private)`. The round's free text (Anything else) always goes in: it has no Private mark. One round whose answers
+file cannot be read or used gets one stderr line and no note; the others still get theirs. A waiter whose rounds were answered in the inbox writes them too; the inbox itself never does. A run
 that exits 1, 2 or 130, a run killed after Done, and a round finished while no run waited on it (an orphan round, or
 one another program finished) get no note. A later run shows done rounds read only and writes none for them.
 
 The note is `<project> - <topic folder> - <round stem>.md`, such as
 `signoff - 2026-11-14-release-050-scope - round-03.md` (outside a project: `<topic folder> - <round stem>.md`).
 Every character but `A-Z`, `a-z`, `0-9`, space, `.`, `_` and `-` becomes `_`, a leading `.` too, and the name is
-cut to 200 bytes before `.md`.
+cut to 200 bytes before `.md`: the project and topic part is cut, never the round stem, so the rounds of a long
+topic keep names of their own.
 
-The folder must be an absolute path to a folder of your own, not a link (a link above it is fine), not writable
-by group or others, and not inside the decisions folder or the Signoff home. The note is created there with mode
+The folder must be an absolute path to a folder of your own, not a link (a link above it is fine; a trailing `/`
+or `/.` does not hide one), with no part of its path or real path starting with a dot (`.claude`, `.config`,
+`.git`), not writable by group or others, and not inside the rounds' project (the folder `.git` or `.signoff`
+marks; outside a project, their topic folder) or the Signoff home. A vault in a git work tree of its own is fine.
+The note is created there with mode
 0600 and never written over: when a file (or a link) already has its name, it stays as it is and the round gets no
 note. Nothing is renamed or removed. A note is created in one step and written at once, but not through a temporary
 file, which would need a rename over the name or a removal: a write that fails midway can leave it incomplete.
 
 Every refusal or failure is one stderr line starting `signoff: notes:`; the answers, stdout and the exit code stay as
-they are. On Windows `--notes` says it is not supported yet and writes nothing. Nothing goes over the network; a
+they are. A Ctrl+C, SIGTERM or SIGHUP while the notes are written acts as the signal does, after the paths are
+on stdout, so the exit code may then not be 0. On Windows `--notes` says it is not supported yet and writes nothing. Nothing goes over the network; a
 folder another app syncs is that app's business.
 
 Once the inbox has run on this machine, its lock file `inbox.lock` is in the Signoff home

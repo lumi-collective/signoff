@@ -949,17 +949,24 @@ NOTE_NAME_MAX = 200  # bytes before ".md", well within the 255 of a file name
 def note_name(round_path):
     """A round's file name in the notes folder: `<project> - <topic folder> - <round stem>.md`, plain characters only,
     so it is the same name on every file system and holds no separator."""
+    def plain(text):
+        return re.sub(r"[^A-Za-z0-9 ._-]", "_", text)
+
     folder = Path(round_path).parent
-    parts = [p for p in (project_name(folder), folder.name, Path(round_path).stem) if p]
-    name = re.sub(r"[^A-Za-z0-9 ._-]", "_", " - ".join(parts))[:NOTE_NAME_MAX]
+    stem = plain(Path(round_path).stem)[:NOTE_NAME_MAX]
+    head = " - ".join(plain(p) for p in (project_name(folder), folder.name) if p)
+    room = NOTE_NAME_MAX - len(stem) - len(" - ")  # the cut takes the head, so two rounds keep two names
+    name = head[:room] + " - " + stem if head and room > 0 else stem
     return ("_" + name[1:] if name.startswith(".") else name) + ".md"  # not a hidden file
 
 
 def write_notes(notes, rounds, home):
-    """At a run's Done: each round's Markdown copy, private answers left out, in the user's notes folder (the Notes
-    folder setting). The folder must be the user's own, not a link, closed to others, and outside the decisions
-    folder and the Signoff home. A note is only ever created: a file already at its name is left as it is. Every
-    failure is one stderr line; the run's answers, stdout and exit code stay as they are."""
+    """At a run's Done: each round's Markdown copy, private answers left out, in the user's notes folder. The agent
+    writes --notes (the skill takes it from the Notes folder setting, but nothing binds the two), so the folder must
+    be the user's own, not a link, closed to others, with no part starting with a dot (.claude, .config, .git), and
+    outside the rounds' project (else their topic folder) and the Signoff home. A note is only ever created: a file
+    already at its name is left as it is. Every failure is one stderr line; the run's answers, stdout and exit code
+    stay as they are."""
     def say(text):
         print("signoff: notes: %s" % text, file=sys.stderr, flush=True)
 
@@ -967,8 +974,11 @@ def write_notes(notes, rounds, home):
         return say("not supported on Windows yet; no note written")
     if not os.path.isabs(notes):
         return say("%s is not an absolute path; no note written" % notes)
-    notes = notes.rstrip(os.sep) or os.sep  # a trailing slash would make lstat and O_NOFOLLOW follow a link
+    notes = os.path.normpath(notes)  # a trailing "/" or "/." would make lstat and O_NOFOLLOW follow a link
     try:
+        real = Path(os.path.realpath(notes))
+        if any(part.startswith(".") for part in Path(notes).parts + real.parts):
+            return say("a part of %s starts with a dot; no note written" % notes)
         if stat.S_ISLNK(os.lstat(notes).st_mode):
             return say("%s is a link; set the folder it points to. No note written" % notes)
         # The checks look at the folder this descriptor holds, and the notes go into it: a swap after them lands
@@ -984,9 +994,14 @@ def write_notes(notes, rounds, home):
             return say("%s is not your own folder; no note written" % notes)
         if st.st_mode & 0o022:
             return say("%s can be written by other users; no note written" % notes)
+        # The path checked below must still be the folder the descriptor holds (a link swapped in above it since).
         real = Path(os.path.realpath(notes))
+        if any(p.startswith(".") for p in real.parts) or not os.path.samestat(os.stat(str(real)), st):
+            return say("%s changed while it was checked; no note written" % notes)
         ups = [os.stat(str(p)) for p in [real] + list(real.parents)]
-        for base in (rounds[0].path.parent, home):
+        topic = rounds[0].path.parent
+        # Outside the project: a note there is a copy git add -A would commit, beside the answers kept out of git.
+        for base in (project_root(topic) or topic, home):
             try:
                 at = os.stat(str(base)) if os.path.isabs(str(base)) else None
             except OSError:
@@ -998,14 +1013,15 @@ def write_notes(notes, rounds, home):
             name = note_name(r.path)
             try:
                 stored = json.loads(read_regular(r.answers_path, MAX_ROUND_BODY).decode("utf-8"))
-                check_answers(stored, r.decisions, stored=True)
-                data = answers_markdown(r.decisions, stored, hide_private=True).encode("utf-8")
+                # check_answers fills what a file may leave out (answers, free_text, done); the rest is kept.
+                record = dict(stored, **check_answers(stored, r.decisions, stored=True))
+                data = answers_markdown(r.decisions, record, hide_private=True).encode("utf-8")
                 # O_EXCL: never over a file (or through a link) already there, the user's or an earlier run's.
                 out = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=fd)
             except FileExistsError:
                 say("%s is already there; not replaced" % os.path.join(notes, name))
                 continue
-            except (OSError, ValueError, RecursionError) as e:
+            except Exception as e:  # one bad round never costs the others their notes
                 say("could not write %s (%s)" % (os.path.join(notes, name), getattr(e, "strerror", None) or e))
                 continue
             try:
@@ -4160,7 +4176,8 @@ def main(argv=None):
             print(path, flush=True)
         # Not before: a stdout nobody reads (BrokenPipeError) leaves no ended, as a killed run, so the inbox tells.
         end(EXIT_DONE)
-        if args.notes:
+        # A setting never saved reaches the command as its placeholder: off, as an empty one.
+        if args.notes and not args.notes.startswith("${user_config."):
             try:  # a copy for the user: whatever happens to it, the answers are handed over and Done stays 0
                 write_notes(args.notes, [r for r in rounds if not r.readonly], home)
             except Exception as e:

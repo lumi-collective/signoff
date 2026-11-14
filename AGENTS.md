@@ -574,13 +574,18 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   `prefs.json` (see the theme rule), and
   `logs/inbox.log` when `signoff inbox open` or the app starts it (the app makes the home and `logs/` for it,
   0700, when absent); `signoff inbox done` writes `<id>.done`. Outside the
-  home, on the user's click only, the inbox writes Uptick's `scan-repos.json` (see the OSV rule). On the user's
-  setting only (`--notes`, the Notes folder setting; POSIX), a run that exits 0 creates one note per round open at
-  its start in that folder (`write_notes`): the folder an absolute path, not a link itself, the user's own, not
-  writable by group or others, outside the decisions folder and the home, checked on the descriptor the note is
-  created through; the note `O_CREAT | O_EXCL | O_NOFOLLOW`, 0600, never over a file or link already at its name
-  (one stderr line, nothing replaced), its private answers left out (`answers_markdown(..., hide_private=True)`).
-  The inbox never writes one. The one thing Signoff removes is a
+  home, on the user's click only, the inbox writes Uptick's `scan-repos.json` (see the OSV rule). With `--notes`
+  (POSIX), a run that exits 0 creates one note per round open at its start in that folder (`write_notes`). The
+  agent writes that argument: the skill takes it from the Notes folder setting, but nothing binds the two, so the
+  checks are what keep a misled agent's note out of the user's tool and project folders. The folder: an absolute
+  path, normalised (`normpath`) before it is looked at, not a link itself, no part of it or of its real path
+  starting with a dot, the user's own, not writable by group or others, outside the rounds' project root (else
+  their topic folder) and the home, its real path checked against the descriptor the note is created through. A
+  value that is still a `${user_config.…}` placeholder is off, as an empty one. The note `O_CREAT | O_EXCL |
+  O_NOFOLLOW`, 0600, never over a file or link already at its name (one stderr line, nothing replaced), its
+  private answers left out (`answers_markdown(..., hide_private=True)`); one round that fails costs only its own
+  note. A SIGINT, SIGTERM or SIGHUP while the notes are written acts as the signal does (the run's handlers are put
+  back by then), so the exit code may not be 0 although the paths are on stdout. The inbox never writes one. The one thing Signoff removes is a
   dead `inbox.sock`: only when it is a socket in the inbox's own home, the starting inbox holds `inbox.lock`, and
   a connect to it is refused. Anything else at that path stops the inbox with an error. A test checks both.
 - **One writer per round, once an inbox has run.** The switch is `inbox.lock` in the Signoff home

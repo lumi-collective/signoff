@@ -47,7 +47,7 @@ blank lines. Agents read the JSON.
 
 With `--notes` (the Notes folder setting), a run that ends with Done also puts a copy of each round's Markdown
 in your notes folder, written from the answers file at that moment. There a private answer's item has its
-title and `(private)` only: no choice, comment, Other text or mark. See [running it yourself](running.md#notes-folder).
+title and `(private)` only: no choice, comment, Other text or mark. The free text always goes in. See [running it yourself](running.md#notes-folder).
 
 **Done is final:** a round whose answers say `done: true` is shown read only from then on and never written
 again. If its round file has changed since (the SHA-256 no longer matches), Signoff refuses to start (exit code

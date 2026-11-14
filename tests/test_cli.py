@@ -18,7 +18,7 @@ from unittest import mock
 import urllib.request
 from pathlib import Path
 
-from support import ROOT, Folder, Rounds, done_record, sample_decisions, signoff, write_outside
+from support import ROOT, Folder, Rounds, done_record, png_bytes, sample_decisions, signoff, write_outside
 
 SCRIPT = str(ROOT / "plugin" / "signoff" / "signoff.py")
 
@@ -255,16 +255,35 @@ class CliNotes(unittest.TestCase):
         self.assertEqual(out, str(self.folder.answers) + "\n")  # nor stdout
         return err
 
-    def refused(self, notes, why, home=None):
-        """write_notes at a run's Done, in process (each run waits DONE_GRACE): one line, nothing written."""
-        before = sorted(p.name for p in self.notes.iterdir())
-        if not self.folder.answers.exists():
-            write_outside(self.folder.answers, done_record())
+    def write_notes(self, notes, rounds=None, home=None):
+        """write_notes at a run's Done, in process (each run waits DONE_GRACE). Returns its stderr."""
+        if rounds is None:
+            if not self.folder.answers.exists():
+                write_outside(self.folder.answers, done_record())
+            rounds = [signoff.Round(self.folder.decisions)]
         err = io.StringIO()
         with mock.patch.object(sys, "stderr", err):
-            signoff.write_notes(str(notes), [signoff.Round(self.folder.decisions)], home or signoff.inbox_home())
-        lines = err.getvalue().splitlines()
-        self.assertEqual(len(lines), 1, err.getvalue())
+            signoff.write_notes(str(notes), rounds, home or signoff.inbox_home())
+        return err.getvalue()
+
+    def project_rounds(self, *topics):
+        """Done rounds in a project: <tmp>/proj (a git work tree), its decisions under decisions/<topic>/."""
+        found = []
+        for topic in topics:
+            folder = Path(self._tmp.name) / "proj" / "decisions" / topic
+            (folder / "mockups").mkdir(parents=True)
+            (folder / "mockups" / "a.png").write_bytes(png_bytes())
+            (folder / "round-01.json").write_text(json.dumps(sample_decisions()), encoding="utf-8")
+            write_outside(folder / "round-01.answers.json", done_record())
+            found.append(signoff.Round(folder / "round-01.json"))
+        (Path(self._tmp.name) / "proj" / ".git").mkdir(exist_ok=True)
+        return found
+
+    def refused(self, notes, why, home=None, rounds=None):
+        """One stderr line, nothing written."""
+        before = sorted(p.name for p in self.notes.iterdir())
+        lines = self.write_notes(notes, rounds, home).splitlines()
+        self.assertEqual(len(lines), 1, lines)
         self.assertIn("signoff: notes: ", lines[0])
         self.assertIn(why, lines[0])
         self.assertEqual(sorted(p.name for p in self.notes.iterdir()), before)
@@ -301,6 +320,48 @@ class CliNotes(unittest.TestCase):
         self.assertNotIn("notes:", err)
         self.assertEqual(list(self.notes.iterdir()), [])
 
+    def test_a_setting_placeholder_left_as_typed_writes_nothing(self):
+        # An unsaved option reaches a command as its placeholder: off, as an empty value is, with no line.
+        err = self.run_done("${user_config.notes}")
+        self.assertNotIn("notes:", err)
+        self.assertEqual(list(self.notes.iterdir()), [])
+
+    def test_every_round_of_the_run_gets_its_note(self):
+        rounds = Rounds(2)
+        self.addCleanup(rounds.cleanup)
+        proc = start(rounds, "--notes", str(self.notes))
+        url = url_of(proc)
+        empty = {"answers": {}, "free_text": "", "done": False}
+        for n in (0, 1):
+            self.assertEqual(post(url, dict(empty, accepted=True), n), 200)
+        for n in (0, 1):
+            self.assertEqual(post(url, dict(empty, done=True), n), 200)
+        out, err = proc.communicate(timeout=20)
+        self.assertEqual(proc.returncode, 0, err)
+        self.assertNotIn("notes:", err)
+        self.assertEqual(sorted(p.name for p in self.notes.iterdir()),
+                         ["%s - round-%02d.md" % (rounds.path.name, n) for n in (1, 2)])
+
+    def test_one_bad_answers_file_costs_only_its_own_note(self):
+        rounds = Rounds(2)
+        self.addCleanup(rounds.cleanup)
+        record = done_record()
+        del record["free_text"]  # check_answers lets it go; the copy takes it as empty
+        write_outside(rounds.answers(1), record)
+        write_outside(rounds.answers(2), done_record())
+        err = self.write_notes(self.notes, [signoff.Round(rounds.round(n)) for n in (1, 2)])
+        self.assertEqual(err, "")
+        self.assertEqual(sorted(p.name for p in self.notes.iterdir()),
+                         ["%s - round-%02d.md" % (rounds.path.name, n) for n in (1, 2)])
+        broken = [signoff.Round(rounds.round(n)) for n in (1, 2)]
+        write_outside(rounds.answers(1), "not json")  # after the run took it in
+        other = self.notes / "other"
+        other.mkdir(mode=0o700)
+        lines = self.write_notes(other, broken).splitlines()
+        self.assertEqual(len(lines), 1, lines)
+        self.assertIn("round-01", lines[0])
+        self.assertEqual([p.name for p in other.iterdir()], ["%s - round-02.md" % rounds.path.name])
+
     def test_a_relative_path_is_refused(self):
         self.refused("vault", "absolute")
 
@@ -311,7 +372,25 @@ class CliNotes(unittest.TestCase):
         link = Path(self._tmp.name) / "link"
         link.symlink_to(self.notes)
         self.refused(link, "link")
-        self.refused(str(link) + "/", "link")  # a trailing slash makes the system follow it
+        for tail in ("/", "/.", "/./", "//./"):  # each makes the system follow it
+            self.refused(str(link) + tail, "link")
+
+    def test_a_folder_with_a_dot_part_is_refused(self):
+        # Tool and config folders (.claude, .config, .git) are where an injected agent would aim a note.
+        hidden = Path(self._tmp.name) / ".config" / "rules"
+        hidden.mkdir(parents=True, mode=0o700)
+        self.refused(hidden, "starts with a dot")
+        alias = Path(self._tmp.name) / "plain"
+        alias.symlink_to(Path(self._tmp.name) / ".config")  # a link above the folder, to a dot folder
+        self.refused(alias / "rules", "starts with a dot")
+
+    def test_a_folder_inside_the_project_of_the_rounds_is_refused(self):
+        rounds = self.project_rounds("2026-11-14-a", "2026-11-14-b")
+        proj = Path(self._tmp.name) / "proj"
+        for inside in (proj, proj / "docs", proj / "decisions", proj / "decisions" / "2026-11-14-b"):
+            inside.mkdir(mode=0o700, exist_ok=True)
+            self.refused(inside, "inside", rounds=rounds[:1])  # a sibling topic too: git add -A would take it
+            self.assertFalse(any(p.suffix == ".md" for p in inside.iterdir()), inside)
 
     def test_a_folder_others_can_write_is_refused(self):
         self.notes.chmod(0o777)
@@ -383,8 +462,11 @@ class CliNotes(unittest.TestCase):
         self.assertEqual(signoff.note_name(topic / "round-03.json"), "my project - 2026-11-14-_nnep__ - round-03.md")
         self.assertEqual(signoff.note_name(Path(self._tmp.name) / ".hidden" / "round-01.json"),
                          "_hidden - round-01.md")
-        long = signoff.note_name(Path(self._tmp.name) / ("ő" * 120) / ("x" * 250 + ".json"))
-        self.assertEqual(long, "_" * 120 + " - " + "x" * 77 + ".md")  # 200 bytes, then .md
+        # The cut takes the topic and project, never the round: two rounds of a long topic keep two names.
+        names = [signoff.note_name(Path(self._tmp.name) / ("t" * 250) / ("round-%02d.json" % n)) for n in (1, 2)]
+        self.assertEqual(names, ["t" * 189 + " - round-%02d.md" % n for n in (1, 2)])  # 200 bytes, then .md
+        self.assertEqual(signoff.note_name(Path(self._tmp.name) / ("ő" * 120) / ("x" * 250 + ".json")),
+                         "x" * 200 + ".md")  # a stem that alone is too long is cut too
 
     def test_on_windows_it_says_so_and_writes_nothing(self):
         rounds = [signoff.Round(self.folder.decisions)]

@@ -98,10 +98,11 @@ Run this from the main session, with the Bash tool and `run_in_background: true`
 python3 -I "${CLAUDE_PLUGIN_ROOT}/signoff/signoff.py" "<folder>"
 ```
 
-It serves every `round-NN.json` in the folder. On Windows write `py -3` for `python3`. Signoff opens the browser
+On Windows write `py -3` for `python3`. Signoff opens the browser
 itself, with a link that works once. Add `--no-open` when there is no browser on this machine (an SSH
 session); the link is on stderr then, and the user forwards the same port number.
-Add `--notes "${user_config.notes}"` to every run command.
+The notes folder is `${user_config.notes}`; when that is an absolute path, add `--notes "<it>"` to every run
+command, else leave it out.
 
 A subagent's background command dies with it: a subagent may write the round files; the main session runs Signoff.
 
@@ -119,8 +120,7 @@ woken when Signoff exits.
 
 ## 3. Read the answers
 
-When the command ends, whatever its exit code, or fails to start, read [answers.md](answers.md) beside this
-file before you act.
+When the command ends, whatever its exit code, or fails to start, read [answers.md](answers.md) before you act.
 
 - `private: true`: the user marked the item Private. Use its comment, `other` text and mark comments to decide
   and act, but follow the private-text rule below.
@@ -135,15 +135,15 @@ python3 -I "${CLAUDE_PLUGIN_ROOT}/signoff/signoff.py" --history "<project root>"
 ```
 
 It lists the folder's rounds, read only, with outcomes and warnings.
-Add `--since YYYY-MM-DD` for a long history. It writes nothing and has no Done: the user closes it with Ctrl+C,
-or it stops after the idle timeout, and stdout stays empty. To answer the question yourself, read the answers
+Add `--since YYYY-MM-DD` for a long history. It writes nothing and has no Done: it ends on Ctrl+C or
+the idle timeout, with nothing on stdout. To answer the question yourself, read the answers
 and outcome files directly instead.
 
 ## Rules
 
 - **Never delete anything**, including old decision folders and answers files. If something should go,
   tell the user and give them the exact command to run.
-- **Sensitive data stays local.** The page and the answers never leave the machine. Do not copy a decisions
+- **Sensitive data stays local.** Signoff sends nothing out (a notes folder the user syncs aside). Do not copy a decisions
   file, its images or its answers into a cloud service, an issue, a pull request or a chat that leaves the
   machine. Screenshots of real systems may show secrets or personal data: crop them or use a mockup.
   Put nothing secret in a board or an attachment either.

@@ -28,11 +28,22 @@ class SkillTest(unittest.TestCase):
         self.assertIn("any other value means %s." % SETTINGS["chat"]["default"], skill)
 
     def test_every_run_passes_the_notes_setting(self):
-        # Off by default: an empty value writes no note. The skill passes it on every run command, the per-round
-        # form too, so the agent never has to choose.
+        # Off by default: an empty value writes no note. The skill names the setting in prose and has the agent add
+        # its value to every run command, the per-round form too, only when it is an absolute path.
         self.assertEqual((SETTINGS["notes"]["type"], SETTINGS["notes"]["default"]), ("string", ""))
         skill = " ".join((SKILL / "SKILL.md").read_text(encoding="utf-8").split())
-        self.assertIn('Add `--notes "${user_config.notes}"` to every run', skill)
+        self.assertIn("`${user_config.notes}`", skill)
+        self.assertIn('add `--notes "<it>"` to every run command', skill)
+
+    def test_no_setting_placeholder_sits_in_a_command(self):
+        # Claude Code (2.1.325) fills ${user_config.X} only from saved options: an unsaved one stays as typed, and a
+        # shell stops on it ("bad substitution"). So a placeholder stands alone in a code span, never in a command.
+        text = (SKILL / "SKILL.md").read_text(encoding="utf-8")
+        for block in re.findall(r"```.*?```", text, re.S):
+            self.assertNotIn("${user_config.", block)
+        for span in re.findall(r"`([^`\n]+)`", re.sub(r"```.*?```", "", text, flags=re.S)):
+            if "${user_config." in span:
+                self.assertRegex(span, r"^\$\{user_config\.[a-z]+\}$")
 
     def test_every_setting_is_in_the_listing(self):
         # The directory listing's text says what the plugin does, so it names each setting by its title.
