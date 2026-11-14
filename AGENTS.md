@@ -370,7 +370,8 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   an answers file another program wrote that it takes in), one per group; and at a look that lets go of a group
   that has every round done and handed over none yet (orphan or not), when the newest (by `started`) gone
   `runs/` entry listing exactly its rounds stopped: a dead pid without `ended`, or `ended` with `exit` 2 or 130,
-  never 1 (a reused start link: its stderr tells the agent to doubt the answers), 0, another value or none. That
+  never 1 (a reused start link: its stderr tells the agent to doubt the answers), 0, another value or none; and no
+  entry on them `ended` with `exit` 0 at or after that one's `started` (two runs at once: the other handed over). That
   is a waiter stopped just after a Done in the inbox, rounds finished from outside after the run stopped or timed
   out, before that look, or a Done that ran just before that look made the group orphan. One that cannot be
   written there is one stderr line. `ref` `<topic folder> / <round>, <round>`
@@ -555,7 +556,9 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   `ended` when it exits by itself, on Ctrl+C, SIGTERM or SIGHUP, with `exit`, its exit code (1 start link reused;
   2 timeout; 130 stopped; 0 Done, written only once its answers paths are on stdout), unless an unexpected error
   ended it; an entry without `exit` (that, or an older plugin) counts as handed over. One killed some other way,
-  or whose paths could not reach stdout (no reader: `BrokenPipeError`), leaves none, so readers check
+  or whose paths could not reach stdout (no reader: `BrokenPipeError`), leaves none, and so does a Done run that
+  gets SIGTERM or SIGHUP while it prints its paths (its handlers are back to the defaults by then, so the signal
+  kills it: the inbox may then hand over answers the agent got, never lose them). Readers check
   `pid` and `started`, and skip `.tmp-*` files.
 - **The hooks cost a session nothing.** They run in every Claude Code session of everyone who installs the
   plugin, so `inbox hook` always exits 0 (exit 2 would block a prompt or a stop), prints nothing (SessionStart and

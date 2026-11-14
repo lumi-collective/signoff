@@ -3107,6 +3107,21 @@ class InboxOrphan(InboxTest):
         self.done_then(ended=signoff.utc_now(), exit=130)
         self.assert_one_answer()
 
+    def test_an_older_run_that_handed_over_while_the_newer_lived_hands_nothing_more_over(self):
+        # Two waiters on the same rounds at once: the older one exits 0 with the paths, the newer one stops.
+        older = entry(self.topic, ["round-01.json", "round-02.json"], project=self.pid, started=stamp(120),
+                      ended=stamp(30), exit=0)
+        self.write(self.home / "runs" / (older["run"] + ".json"), older)
+        self.done_then(started=stamp(60), ended=signoff.utc_now(), exit=130)
+        self.assertFalse((self.home / "requests").exists())
+
+    def test_an_older_run_that_handed_over_before_the_newer_started_does_not_count(self):
+        older = entry(self.topic, ["round-01.json", "round-02.json"], project=self.pid, started=stamp(120),
+                      ended=stamp(100), exit=0)  # its answers were other ones: these rounds were run again since
+        self.write(self.home / "runs" / (older["run"] + ".json"), older)
+        self.done_then(ended=signoff.utc_now(), exit=130)
+        self.assert_one_answer()
+
     def test_a_newer_run_that_handed_over_wins_over_an_older_stopped_one(self):
         older = entry(self.topic, ["round-01.json", "round-02.json"], project=self.pid, started=stamp(120),
                       ended=stamp(100), exit=130)

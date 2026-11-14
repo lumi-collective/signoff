@@ -3005,8 +3005,13 @@ class InboxServer(_Server):
                 if not g.writable and not self.closed.is_set():  # a request still running at close() locks nothing
                     g.take_locks()
                 continue
-            ran = max((e for e in gone if (e["folder"], tuple(e["rounds"])) == key), key=lambda e: e["started"],
-                      default=None)
+            runs = [e for e in gone if (e["folder"], tuple(e["rounds"])) == key]
+            ran = max(runs, key=lambda e: e["started"], default=None)
+            # A run that handed over while the newest lived (two waiters at once) did it for these answers too; one
+            # that ended before the newest started handed over other ones (the times compare as text: one format).
+            if ran and any("ended" in e and type(e.get("exit")) is int and e["exit"] == EXIT_DONE
+                           and isinstance(e["ended"], str) and e["ended"] >= ran["started"] for e in runs):
+                ran = None
             # Every round done and the newest run of them stopped without handing the answers over (a waiter stopped
             # just after a Done here, rounds finished from outside after the run ended or timed out): the inbox does,
             # once. Exit 1 never: a reused start link's answers are for the agent to doubt, not to act on.
