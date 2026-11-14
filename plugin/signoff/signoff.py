@@ -16,6 +16,7 @@ import errno
 import hashlib
 import http.server
 import json
+import math
 import os
 import re
 import secrets
@@ -66,6 +67,8 @@ DEFAULT_IGNORABLE = ((0x00AD, 0x00AD), (0x034F, 0x034F), (0x061C, 0x061C), (0x11
                      (0x180B, 0x180F), (0x200B, 0x200F), (0x202A, 0x202E), (0x2060, 0x206F), (0x3164, 0x3164),
                      (0xFE00, 0xFE0F), (0xFEFF, 0xFEFF), (0xFFA0, 0xFFA0), (0xFFF0, 0xFFF8), (0x1BCA0, 0x1BCA3),
                      (0x1D173, 0x1D17A), (0xE0000, 0xE0FFF))
+MAX_STEPS = 10000  # a number item's values from min to max
+MAX_UNIT = 16  # characters in a number item's unit
 MAX_MARKS = 50
 HISTORY_BUDGET = 200 * 1024 * 1024
 HISTORY_TEXT_BUDGET = 16 * 1024 * 1024  # all attachments on the past-decisions page
@@ -102,8 +105,9 @@ TOP_KEYS = ("version", "title", "tab", "intro", "notice", "lang", "items", "free
 TOP_REQUIRED = ("version", "title", "items")
 ITEM_KEYS = ("id", "group", "title", "description", "cost", "images", "select", "options", "recommended", "comment",
              "other", "skippable", "marks", "sensitive", "criteria", "attachments", "commands",
-             "blocking")
-ITEM_REQUIRED = ("id", "title", "options")
+             "blocking", "range")
+ITEM_REQUIRED = ("id", "title")  # and options for one and many, range and recommended for number
+RANGE_KEYS = ("min", "max", "step", "unit")
 IMAGE_KEYS = ("src", "html", "caption", "alt", "boxes")
 ATTACHMENT_KEYS = ("src", "caption")
 COMMAND_KEYS = ("text", "lang", "caption")
@@ -113,7 +117,7 @@ CRITERION_KEYS = ("id", "label")
 FACT_KEYS = ("text", "tone")
 TONE_VALUES = ("good", "mid", "bad")  # the page uses them as class names, so the list stays closed
 FREE_TEXT_KEYS = ("title", "placeholder")
-SELECT_VALUES = ("one", "many")
+SELECT_VALUES = ("one", "many", "number")
 SOURCE_VALUES = ("recommended", "accept_all", "user", "notification")
 ANSWER_KEYS = ("answers", "free_text", "done", "accepted")
 STORED_KEYS = ANSWER_KEYS + ("version", "saved", "decisions", "accepted_at", "changed_after_accept")
@@ -143,6 +147,70 @@ def _text(obj, key, where):
 
 def _number(v):
     return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def _finite(v):
+    """A number that is a value: json.loads also reads NaN, Infinity and 1e999 (inf), and an int past a float's
+    range makes math.isfinite raise."""
+    try:
+        return _number(v) and math.isfinite(v)
+    except OverflowError:
+        return False
+
+
+def _on_grid(rng, v):
+    """v is a finite number in the range and a whole number of steps from min, give or take float rounding: the
+    page sends the value its slider holds, as a decimal string turned into a float."""
+    if not _finite(v) or not rng["min"] <= v <= rng["max"]:
+        return False
+    k = round((v - rng["min"]) / rng["step"])
+    return abs(v - rng["min"] - k * rng["step"]) <= 1e-9 * rng["step"] + 2e-15 * max(abs(rng["min"]), abs(v))
+
+
+def _num_text(item, v, unit_text=str):
+    """A number item's value as people read it: a whole number without a point or an exponent, then the unit."""
+    text = "%d" % v if float(v).is_integer() else repr(float(v))
+    unit = item["range"].get("unit")
+    return text + " " + unit_text(unit) if unit else text
+
+
+def _number_item(item, where):
+    """select "number": a range, and a recommendation on it, which the page's slider always holds. No options."""
+    for key in ("options", "criteria"):
+        if key in item:
+            raise DecisionsError("%s: a number item takes no %r" % (where, key))
+    for key in ("other", "marks"):
+        if item[key]:
+            raise DecisionsError("%s: a number item takes no %r" % (where, key))
+    if "range" not in item:
+        raise DecisionsError("%s: missing 'range'" % where)
+    rng, rwhere = item["range"], where + ", 'range'"
+    _keys(rng, RANGE_KEYS, ("min", "max"), rwhere)
+    rng.setdefault("step", 1)
+    for key in ("min", "max", "step"):
+        if not _number(rng[key]):
+            raise DecisionsError("%s: %r must be a number" % (rwhere, key))
+        if not _finite(rng[key]):
+            raise DecisionsError("%s: %r must be a finite number" % (rwhere, key))
+    if not rng["min"] < rng["max"]:
+        raise DecisionsError("%s: 'min' must be less than 'max'" % rwhere)
+    if not rng["step"] > 0:
+        raise DecisionsError("%s: 'step' must be more than 0" % rwhere)
+    try:
+        steps = (rng["max"] - rng["min"]) / rng["step"]  # floats overflow to inf, ints raise
+    except OverflowError:
+        steps = math.inf
+    if steps > MAX_STEPS:
+        raise DecisionsError("%s: more than %d steps from 'min' to 'max'" % (rwhere, MAX_STEPS))
+    _text(rng, "unit", rwhere)
+    unit = rng.get("unit", "")
+    if len(unit) > MAX_UNIT or any(unicodedata.category(c) in ("Cc", "Cf", "Zl", "Zp") for c in unit):
+        raise DecisionsError("%s: 'unit' must be one line of up to %d characters" % (rwhere, MAX_UNIT))
+    if "recommended" not in item:
+        raise DecisionsError("%s: a number item needs 'recommended'" % where)
+    if not _on_grid(rng, item["recommended"]):
+        raise DecisionsError("%s: 'recommended' must be a number from %s to %s, on a step of %s"
+                             % (where, rng["min"], rng["max"], rng["step"]))
 
 
 def _box_ok(box):
@@ -288,7 +356,7 @@ def _item(item, n, folder, images, used, lenient=False):
     item.setdefault("sensitive", False)
     item.setdefault("blocking", False)
     if item["select"] not in SELECT_VALUES:
-        raise DecisionsError("%s: 'select' must be \"one\" or \"many\"" % where)
+        raise DecisionsError("%s: 'select' must be \"one\", \"many\" or \"number\"" % where)
     for key in ("comment", "other", "skippable", "marks", "sensitive", "blocking"):
         if not isinstance(item[key], bool):
             raise DecisionsError("%s: %r must be true or false" % (where, key))
@@ -305,30 +373,40 @@ def _item(item, n, folder, images, used, lenient=False):
                 raise DecisionsError("%s: duplicate criterion id %r" % (cwhere, crit["id"]))
             criteria[crit["id"]] = None
             _text(crit, "label", cwhere)
-    options = item["options"]
-    if not isinstance(options, list) or len(options) < (2 if item["select"] == "one" else 1):
-        raise DecisionsError("%s: 'options' needs at least %s" % (where, "two" if item["select"] == "one" else "one"))
-    seen = set()
-    for k, opt in enumerate(options, 1):
-        owhere = "%s, option %d" % (where, k)
-        _keys(opt, OPTION_KEYS, ("id", "label"), owhere)
-        if not isinstance(opt["id"], str) or not ID_PATTERN.fullmatch(opt["id"]):
-            raise DecisionsError("%s: 'id' must match %s" % (owhere, ID_PATTERN.pattern))
-        if opt["id"] in seen:
-            raise DecisionsError("%s: duplicate option id %r" % (owhere, opt["id"]))
-        seen.add(opt["id"])
-        _text(opt, "label", owhere)
-        _text(opt, "detail", owhere)
-        if "facts" in opt:
-            _facts(opt["facts"], criteria, owhere)
-    if "recommended" in item:
-        rec = item["recommended"]
-        if item["select"] == "one":
-            if not isinstance(rec, str) or rec not in seen:
-                raise DecisionsError("%s: 'recommended' must be one option id (%s)" % (where, ", ".join(sorted(seen))))
-        elif not (isinstance(rec, list) and all(isinstance(r, str) and r in seen for r in rec)
-                  and len(set(rec)) == len(rec)):
-            raise DecisionsError("%s: 'recommended' must be a list of option ids (%s)" % (where, ", ".join(sorted(seen))))
+    if item["select"] == "number":
+        _number_item(item, where)
+    elif "range" in item:
+        raise DecisionsError("%s: 'range' is only for select \"number\"" % where)
+    elif "options" not in item:
+        raise DecisionsError("%s: missing 'options'" % where)
+    else:
+        options = item["options"]
+        if not isinstance(options, list) or len(options) < (2 if item["select"] == "one" else 1):
+            raise DecisionsError("%s: 'options' needs at least %s"
+                                 % (where, "two" if item["select"] == "one" else "one"))
+        seen = set()
+        for k, opt in enumerate(options, 1):
+            owhere = "%s, option %d" % (where, k)
+            _keys(opt, OPTION_KEYS, ("id", "label"), owhere)
+            if not isinstance(opt["id"], str) or not ID_PATTERN.fullmatch(opt["id"]):
+                raise DecisionsError("%s: 'id' must match %s" % (owhere, ID_PATTERN.pattern))
+            if opt["id"] in seen:
+                raise DecisionsError("%s: duplicate option id %r" % (owhere, opt["id"]))
+            seen.add(opt["id"])
+            _text(opt, "label", owhere)
+            _text(opt, "detail", owhere)
+            if "facts" in opt:
+                _facts(opt["facts"], criteria, owhere)
+        if "recommended" in item:
+            rec = item["recommended"]
+            if item["select"] == "one":
+                if not isinstance(rec, str) or rec not in seen:
+                    raise DecisionsError("%s: 'recommended' must be one option id (%s)"
+                                         % (where, ", ".join(sorted(seen))))
+            elif not (isinstance(rec, list) and all(isinstance(r, str) and r in seen for r in rec)
+                      and len(set(rec)) == len(rec)):
+                raise DecisionsError("%s: 'recommended' must be a list of option ids (%s)"
+                                     % (where, ", ".join(sorted(seen))))
     shots = item.get("images", [])
     if not isinstance(shots, list):
         raise DecisionsError("%s: 'images' must be a list" % where)
@@ -472,12 +550,14 @@ def check_answers(state, decisions, stored=False):
         choice, comment = ans.get("choice"), ans.get("comment", "")
         if "source" in ans and ans["source"] not in SOURCE_VALUES:
             raise ValueError("answer %r: source must be one of %s" % (key, ", ".join(SOURCE_VALUES)))
-        valid = {o["id"] for o in item["options"]}
+        valid = {o["id"] for o in item.get("options", [])}
         if item["other"]:
             valid.add(OTHER)
         if item["skippable"]:
             valid.add(SKIP)
-        if item["select"] == "one":
+        if item["select"] == "number":
+            ok = choice is None or (isinstance(choice, str) and choice in valid) or _on_grid(item["range"], choice)
+        elif item["select"] == "one":
             ok = choice is None or (isinstance(choice, str) and choice in valid)
         else:
             ok = isinstance(choice, list) and all(isinstance(c, str) and c in valid for c in choice) \
@@ -786,7 +866,9 @@ def answers_markdown(decisions, record):
 
         def text(value):
             return lb["private"] if private and value.strip() else md_text(value, lb["none"])
-        labels = {o["id"]: md_text(o["label"]) for o in item["options"]}
+        labels = {o["id"]: md_text(o["label"]) for o in item.get("options", [])}
+        if item["select"] == "number" and _number(choice):  # the value is ours to write; the unit is the agent's
+            labels[choice] = _num_text(item, choice, lambda unit: md_text(unit, ""))
         labels[SKIP] = lb["skipped"]
         labels[OTHER] = lb["other"] + ": " + text(ans.get("other", ""))
         # Whether a choice was the recommendation only means something when there was one.
@@ -2562,7 +2644,9 @@ class InboxServer(_Server):
                 rec = item.get("recommended")
                 if rec is None or rec == [] or item["sensitive"]:
                     continue
-                labels = {o["id"]: o["label"] for o in item["options"]}
+                labels = {o["id"]: o["label"] for o in item.get("options", [])}
+                if item["select"] == "number":
+                    labels[rec] = _num_text(item, rec)
                 offer = {"id": secrets.token_hex(16), "project": g.name, "round": r.decisions.get("tab")
                          or r.decisions["title"], "question": item["title"],
                          "answer": " + ".join(labels[c] for c in (rec if isinstance(rec, list) else [rec]))}

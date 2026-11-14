@@ -587,6 +587,186 @@ class OtherAndSkip(unittest.TestCase):
         self.assertNotIn("recommended)", md)
 
 
+def number_item(**extra):
+    item = {"id": "budget", "title": "How much of the budget?", "select": "number",
+            "range": {"min": -10, "max": 10, "step": 0.5, "unit": "%"}, "recommended": 2.5}
+    item.update(extra)
+    return {k: v for k, v in item.items() if v is not None}
+
+
+class NumberItem(unittest.TestCase):
+    """select "number": a value in range, on its step, with the recommendation preselected; the answer is a number."""
+
+    def setUp(self):
+        self.folder = Folder()
+
+    def tearDown(self):
+        self.folder.cleanup()
+
+    def load(self, item):
+        data = sample_decisions()
+        data["items"].append(item)
+        self.folder.write(data)
+        return signoff.load_decisions(self.folder.decisions)[0]["items"][2]
+
+    def broken(self, item):
+        with self.assertRaises(signoff.DecisionsError) as ctx:
+            self.load(item)
+        return str(ctx.exception)
+
+    def test_a_number_item_loads_with_its_step_filled(self):
+        item = self.load(number_item(range={"min": 0, "max": 40}, recommended=12))
+        self.assertEqual(item["range"], {"min": 0, "max": 40, "step": 1})
+        self.assertEqual((item["select"], item["recommended"], item["skippable"], item["comment"]),
+                         ("number", 12, False, True))
+        self.assertNotIn("options", item)
+        item = self.load(number_item(range={"min": 0.1, "max": 1, "step": 0.1, "unit": "x"}, recommended=0.7))
+        self.assertEqual(item["range"]["unit"], "x")
+        self.load(number_item(range={"min": 0, "max": 100000, "step": 10}, recommended=0))  # 10,000 steps
+
+    def test_options_belong_to_one_and_many_and_range_to_number(self):
+        opts = [{"id": "a", "label": "A"}, {"id": "b", "label": "B"}]
+        msg = self.broken(number_item(options=opts))
+        self.assertIn("item 3 (budget)", msg)
+        self.assertIn("'options'", msg)
+        msg = self.broken({"id": "plain", "title": "No options"})
+        self.assertIn("item 3 (plain)", msg)
+        self.assertIn("missing 'options'", msg)
+        msg = self.broken({"id": "both", "title": "x", "options": opts, "recommended": "a", "range": {"min": 0, "max": 1}})
+        self.assertIn("item 3 (both)", msg)
+        self.assertIn("'range'", msg)
+        msg = self.broken(number_item(range=None))
+        self.assertIn("missing 'range'", msg)
+
+    def test_bad_shapes_name_the_item(self):
+        cases = [
+            (number_item(recommended=None), "'recommended'"),
+            (number_item(range={"min": 5, "max": 5}, recommended=5), "'min'"),
+            (number_item(range={"min": 6, "max": 5}, recommended=5), "'min'"),
+            (number_item(range={"min": 0, "max": 10, "step": 0}, recommended=5), "'step'"),
+            (number_item(range={"min": 0, "max": 10, "step": -1}, recommended=5), "'step'"),
+            (number_item(range={"min": 0, "max": 100001, "step": 10}, recommended=0), "steps"),
+            (number_item(range={"min": -1e308, "max": 1e308}, recommended=0), "steps"),  # max - min is inf
+            (number_item(range={"min": float("nan"), "max": 10}, recommended=5), "finite"),
+            (number_item(range={"min": 0, "max": float("inf")}, recommended=5), "finite"),
+            (number_item(range={"min": -10 ** 400, "max": 10}, recommended=5), "finite"),
+            (number_item(range={"min": 0, "max": 10, "step": float("inf")}, recommended=5), "finite"),
+            (number_item(range={"min": False, "max": 10}, recommended=5), "number"),
+            (number_item(range={"min": "0", "max": 10}, recommended=5), "number"),
+            (number_item(range={"min": 0, "max": 10, "step": True}, recommended=5), "number"),
+            (number_item(range=[0, 10]), "'range'"),
+            (number_item(range={"min": 0}), "missing 'max'"),
+            (number_item(range={"min": 0, "max": 10, "scale": "log"}), "unknown key"),
+            (number_item(recommended=10.5), "'recommended'"),
+            (number_item(recommended=-11), "'recommended'"),
+            (number_item(recommended=2.25), "'recommended'"),
+            (number_item(recommended="2.5"), "'recommended'"),
+            (number_item(recommended=True), "'recommended'"),
+            (number_item(recommended=[2.5]), "'recommended'"),
+            (number_item(recommended=float("nan")), "'recommended'"),
+            (number_item(recommended=10 ** 400), "'recommended'"),
+            (number_item(other=True), "'other'"),
+            (number_item(marks=True), "'marks'"),
+            (number_item(criteria=[{"id": "effort", "label": "Effort"}]), "'criteria'"),
+            (number_item(range={"min": 0, "max": 10, "unit": 3}), "'unit'"),
+            (number_item(range={"min": 0, "max": 10, "unit": "x" * (signoff.MAX_UNIT + 1)}), "'unit'"),
+            (number_item(range={"min": 0, "max": 10, "unit": "per\nday"}), "'unit'"),
+            (number_item(range={"min": 0, "max": 10, "unit": "x‮"}), "'unit'"),
+            (number_item(select="numbers"), "'select'"),
+        ]
+        for item, word in cases:
+            with self.subTest(item=repr(item)[:120]):
+                msg = self.broken(item)
+                self.assertIn("item 3 (budget)", msg)
+                self.assertIn(word, msg)
+
+    def test_a_unit_of_its_full_length_and_a_skippable_item_load(self):
+        item = self.load(number_item(range={"min": 0, "max": 10, "unit": "x" * signoff.MAX_UNIT}, recommended=0,
+                                     skippable=True, sensitive=True, comment=False))
+        self.assertTrue(item["skippable"])
+
+
+class NumberAnswers(unittest.TestCase):
+    def setUp(self):
+        folder = Folder()
+        data = sample_decisions()
+        data["items"].append(number_item(skippable=True))
+        data["items"].append(number_item(id="share", range={"min": 0.1, "max": 1, "step": 0.1}, recommended=0.3))
+        folder.write(data)
+        self.decisions, _ = signoff.load_decisions(folder.decisions)
+        folder.cleanup()
+
+    def check(self, choice, key="budget", stored=False, **extra):
+        state = {"answers": {key: dict({"choice": choice, "comment": ""}, **extra)}, "free_text": "", "done": False}
+        if stored:
+            state.update(version=1, saved="2026-01-01T12:00:00Z")
+        return signoff.check_answers(state, self.decisions, stored=stored)["answers"][key]
+
+    def test_a_number_on_the_grid_null_or_skip(self):
+        for choice in (2.5, -10, 10, 0, 0.0, -0.5, 7, None, "_skip"):
+            with self.subTest(choice=choice):
+                self.assertEqual(self.check(choice)["choice"], choice)
+                self.assertEqual(self.check(choice, stored=True)["choice"], choice)
+        for choice in (0.1, 0.3, 0.7, 1, 0.30000000000000004):  # float steps, as a browser sends them
+            self.assertEqual(self.check(choice, key="share")["choice"], choice)
+        self.assertEqual(self.check(4, source="notification", private=True),
+                         {"choice": 4, "comment": "", "source": "notification", "private": True})
+
+    def test_anything_else_is_refused(self):
+        for choice in ("2.5", "", True, False, [2.5], [], {"v": 1}, 2.25, 10.5, -10.5, 1e999, -1e999,
+                       float("nan"), 10 ** 400, "_other", "two"):
+            with self.subTest(choice=repr(choice)[:40]):
+                with self.assertRaises(ValueError):
+                    self.check(choice)
+                with self.assertRaises(ValueError):
+                    self.check(choice, stored=True)
+        with self.assertRaises(ValueError):
+            self.check("_skip", key="share")  # not skippable
+        with self.assertRaises(ValueError):
+            self.check(2.5, other="x")
+        with self.assertRaises(ValueError):
+            self.check(2.5, marks=[])
+
+    def test_a_saved_body_with_nan_from_json_is_refused(self):
+        # json.loads reads NaN and Infinity, which JSON itself does not have.
+        for raw in ('{"choice": NaN}', '{"choice": Infinity}', '{"choice": -Infinity}', '{"choice": 1e999}'):
+            ans = json.loads(raw)
+            with self.assertRaises(ValueError):
+                signoff.check_answers({"answers": {"budget": ans}, "free_text": "", "done": False}, self.decisions)
+
+    def test_zero_is_decided_unless_only_preselected(self):
+        self.assertTrue(signoff._decided({"choice": 0, "source": "user"}))
+        self.assertTrue(signoff._decided({"choice": 0.0, "source": "notification"}))
+        self.assertFalse(signoff._decided({"choice": 0, "source": "recommended"}))
+        self.assertFalse(signoff._decided({"choice": None, "source": "user"}))
+
+    def md(self, choice, lang=None, key="budget"):
+        decisions = dict(self.decisions) if lang is None else dict(self.decisions, lang=lang)
+        record = {"answers": {key: {"choice": choice, "comment": "", "source": "user"}}, "free_text": "",
+                  "done": True, "saved": "2026-01-01T12:00:00Z"}
+        return signoff.answers_markdown(decisions, record)
+
+    def test_markdown_shows_the_value_and_unit(self):
+        self.assertIn("- Choice: 2.5 % (recommended)\n", self.md(2.5))
+        self.assertIn("- Choice: -3 % (not recommended)\n", self.md(-3))
+        self.assertIn("- Choice: 0 % (not recommended)\n", self.md(0))
+        self.assertIn("- Choice: Skipped (not recommended)\n", self.md("_skip"))
+        self.assertIn("- Choice: nothing chosen\n", self.md(None))
+        self.assertIn("- Choice: 0.3 (recommended)\n", self.md(0.3, key="share"))  # no unit, no trailing space
+        self.assertIn("- Választás: 2.5 % (javasolt)\n", self.md(2.5, lang="hu"))
+        self.assertIn("- Választás: 7 % (nem javasolt)\n", self.md(7, lang="hu"))
+        self.assertIn("- Választás: Kihagyva (nem javasolt)\n", self.md("_skip", lang="hu"))
+
+    def test_markdown_escapes_the_unit_and_keeps_big_numbers_whole(self):
+        item = self.decisions["items"][2]
+        item["range"] = {"min": 0, "max": 2000000, "step": 500, "unit": "<b>*HUF*</b>"}
+        item["recommended"] = 1234500
+        md = self.md(1234500)
+        self.assertIn("- Choice: 1234500 \\<b\\>\\*HUF\\*\\</b\\> (recommended)\n", md)
+        self.assertNotIn("<b>", md)
+        self.assertNotIn("e+06", md)
+
+
 class StoredAnswers(unittest.TestCase):
     def setUp(self):
         folder = Folder()
@@ -814,6 +994,22 @@ class SchemaFile(unittest.TestCase):
         self.assertEqual(item["properties"]["id"]["pattern"], signoff.ID_PATTERN.pattern)
         self.assertEqual((item["properties"]["blocking"]["type"], item["properties"]["blocking"]["default"]),
                          ("boolean", False))
+
+    def test_number(self):
+        rng = self.defs["range"]
+        self.assertEqual(set(rng["properties"]), set(signoff.RANGE_KEYS))
+        self.assertEqual(rng["required"], ["min", "max"])
+        self.assertFalse(rng["additionalProperties"])
+        self.assertEqual(rng["properties"]["unit"]["maxLength"], signoff.MAX_UNIT)
+        self.assertEqual(rng["properties"]["step"]["default"], 1)
+        item = self.defs["item"]
+        self.assertEqual(item["properties"]["range"], {"$ref": "#/$defs/range"})
+        self.assertIn({"type": "number"}, item["properties"]["recommended"]["oneOf"])
+        # options for one and many; range and recommended for number
+        (rule,) = item["allOf"]
+        self.assertEqual(rule["if"], {"properties": {"select": {"const": "number"}}, "required": ["select"]})
+        self.assertEqual(rule["then"]["required"], ["range", "recommended"])
+        self.assertEqual(rule["else"]["required"], ["options"])
 
     def test_image_and_option(self):
         self.assertEqual(set(self.defs["image"]["properties"]), set(signoff.IMAGE_KEYS))

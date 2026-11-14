@@ -76,7 +76,7 @@ How to batch:
 ```
 
 - `id` (item and option): letters, digits, `-`, `_`, `.`; unique and stable. The answers are keyed by them.
-- `select`: `"one"` (radio buttons, at least two options) or `"many"` (checkboxes). Default `"one"`.
+- `select`: `"one"` (radio buttons, at least two options), `"many"` (checkboxes) or `"number"`. Default `"one"`.
 - `recommended`: an option id for `"one"`, a list of option ids for `"many"`. It is preselected and labelled
   "Recommended". Always give one when you have a view, and say why in `description` or `cost`.
 - **One picture per option** whenever the options look different: put one image per option in `images`, in
@@ -86,7 +86,7 @@ How to batch:
   user's own setup). The item starts marked Private; the user can untick it, or tick Private on any item. It
   only acts on an item with a text field: `comment`, `other` or `marks`.
 - `tab`, `other`, `skippable`, `comment`, `boxes`, boards, `marks`, `group`, `lang`, `notice`, `criteria`,
-  `facts`, `attachments`, `commands` and `blocking` are in [fields.md](fields.md): read it before you use one.
+  `facts`, `attachments`, `commands`, `blocking` and `range` are in [fields.md](fields.md): read it before you use one.
 - All text is plain: line breaks are kept; HTML and Markdown show as typed.
 - The full format is in `${CLAUDE_PLUGIN_ROOT}/signoff/schema.json`.
 
@@ -112,7 +112,7 @@ In a repository other people share, when the decisions folder is inside it, chec
 committed: `git check-ignore -q "<folder>"`. Exit 1 means it is not ignored: tell the user and suggest the line
 `<decisions folder>/` for the project's `.gitignore`; do not add it yourself. Any other non-zero exit: skip this.
 
-Read the task's output once: if it says `no browser opened`, give the user the link from it (it works once).
+If the task's output says `no browser opened`, give the user its link (it works once).
 Then tell the user, in one or two lines, that the page is open and what it asks. Do not wait in a loop and do
 not poll the answers file: keep working on what does not depend on the answers, or end your turn. You are
 woken when Signoff exits.

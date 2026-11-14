@@ -50,9 +50,10 @@ JSON, one file per round. [`plugin/signoff/schema.json`](../plugin/signoff/schem
 | `images` | item | no | pictures: `src` (inside the round's folder; PNG, JPEG, WebP or GIF), `caption`, `alt`, `boxes`. For one picture per option, list them in option order with `caption` = the option's label. An entry with `html` instead of `src` is a board |
 | `boxes` | picture | no | `[x, y, w, h]` in percent of the picture, from the top left |
 | `html` | board | no | one self-contained HTML file inside the folder, up to 2 MiB: inline CSS and JS, `data:` images; it reads `?theme=light` or `?theme=dark` from its URL |
-| `select` | item | no | `one` (radio buttons, default) or `many` (checkboxes) |
-| `options` | item | yes | each: `id`, `label`, optional `detail`; at least two for `one` |
-| `recommended` | item | no | an option id (`one`) or a list of them (`many`); preselected and labelled |
+| `select` | item | no | `one` (radio buttons, default), `many` (checkboxes) or `number` (a slider and a number field) |
+| `options` | item | `one`, `many` | each: `id`, `label`, optional `detail`; at least two for `one`. Refused on a `number` item |
+| `range` | item | `number` | a number item's values: `min` and `max` (`min` less than `max`), optional `step` (more than 0, default 1; at most 10,000 steps from `min` to `max`) and `unit` (shown after the value, up to 16 characters, one line). Only on a `number` item, which takes no `other`, `marks` or `criteria` |
+| `recommended` | item | `number` | an option id (`one`), a list of them (`many`), or a number on the range's step (`number`, required there); preselected and labelled |
 | `comment` | item | no | a comment box, default `true` |
 | `other`, `skippable`, `marks` | item | no | add **Other** with a text field, add **Skip**, let the user draw marks; each default `false` |
 | `sensitive` | item | no | the answer may hold personal data: the item starts marked **Private**, which the user can untick; only on an item with a text field (`comment`, `other` or `marks`); default `false` |
@@ -63,9 +64,9 @@ JSON, one file per round. [`plugin/signoff/schema.json`](../plugin/signoff/schem
 | `blocking` | item | no | your next step waits on this item: the page marks it **Agent waits on this** in its title and the sidebar, and the Summary gets an **Agent waits** filter; default `false`. Not in the answers file |
 
 Unknown keys are refused, so a typo shows up at once instead of being ignored. Text is plain: no Markdown, links
-or HTML. `commands` and `blocking` need Signoff 0.5.0 or newer; an older one refuses the round, and so does an
-inbox still running from an older plugin: after updating, restart the inbox (`signoff inbox stop`, then open it
-again).
+or HTML. `commands`, `blocking` and `select: "number"` with `range` need Signoff 0.5.0 or newer; an older one
+refuses the round, and so does an inbox still running from an older plugin: after updating, restart the inbox
+(`signoff inbox stop`, then open it again).
 
 An invisible or blank character in a command is a control character other than tab and newline; a format, line
 or paragraph separator, surrogate, private-use or unassigned one; one of Unicode's default-ignorable code points

@@ -28,8 +28,15 @@
     "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$" },
     "item": {
       "type": "object",
-      "required": ["id", "title", "options"],
+      "required": ["id", "title"],
       "additionalProperties": false,
+      "allOf": [
+        {
+          "if": { "properties": { "select": { "const": "number" } }, "required": ["select"] },
+          "then": { "required": ["range", "recommended"], "properties": { "options": false, "criteria": false, "other": { "const": false }, "marks": { "const": false } } },
+          "else": { "required": ["options"], "properties": { "range": false } }
+        }
+      ],
       "properties": {
         "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$", "description": "Unique and stable: the answers are keyed by it." },
         "group": { "type": "string", "description": "A heading is shown whenever this changes from the item before." },
@@ -37,15 +44,17 @@
         "description": { "type": "string" },
         "cost": { "type": "string", "description": "What it costs: effort, lines, tokens, money, risk." },
         "images": { "type": "array", "items": { "$ref": "#/$defs/image" } },
-        "select": { "enum": ["one", "many"], "default": "one", "description": "one: radio buttons. many: checkboxes." },
-        "options": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/option" }, "description": "At least two when select is \"one\"." },
+        "select": { "enum": ["one", "many", "number"], "default": "one", "description": "one: radio buttons. many: checkboxes. number: a slider and a number field, between range's min and max (needs Signoff 0.5.0 or newer)." },
+        "options": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/option" }, "description": "At least two when select is \"one\". Required for \"one\" and \"many\", refused for \"number\"." },
         "recommended": {
-          "description": "Preselected and labelled. An option id for \"one\", a list of option ids for \"many\".",
+          "description": "Preselected and labelled. An option id for \"one\", a list of option ids for \"many\", a number in range and on its step for \"number\" (required there).",
           "oneOf": [
             { "$ref": "#/$defs/id" },
-            { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/id" } }
+            { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/id" } },
+            { "type": "number" }
           ]
         },
+        "range": { "$ref": "#/$defs/range" },
         "comment": { "type": "boolean", "default": true, "description": "Show a comment box under the options." },
         "other": { "type": "boolean", "default": false, "description": "Add an \"Other\" choice with its own text field. It is recorded as the choice \"_other\", with the text in \"other\"." },
         "skippable": { "type": "boolean", "default": false, "description": "Add a \"Skip\" choice. It is recorded as the choice \"_skip\", on its own." },
@@ -55,6 +64,18 @@
         "attachments": { "type": "array", "maxItems": 20, "items": { "$ref": "#/$defs/attachment" }, "description": "Text files read when Signoff starts and shown under the options, each in a collapsed box as plain text: nothing in them is rendered. At most 20 an item and 200 a round. The Markdown copy names them only. Not changed by sensitive: the text is yours, not the user's." },
         "commands": { "type": "array", "minItems": 1, "maxItems": 10, "items": { "$ref": "#/$defs/command" }, "description": "Commands for the user to run before deciding, each shown under the description as a wrapped code block with a Copy button that copies the text exactly, and a hint under one that deletes a relative path, whatever its lang. Signoff never runs them, and the user should read one before running it. The Markdown copy gives each as one line. Needs Signoff 0.5.0 or newer." },
         "blocking": { "type": "boolean", "default": false, "description": "Your next step waits on this item. The page marks it, with a word, in its title and in the sidebar, and the Summary gets a filter that shows only these items. Mark few. Not in the answers file or the Markdown copy. Needs Signoff 0.5.0 or newer." }
+      }
+    },
+    "range": {
+      "type": "object",
+      "description": "A number item's values: min to max on step, at most 10,000 steps. The answer's choice is one of them, a JSON number, or \"_skip\" or null. Only with select \"number\".",
+      "required": ["min", "max"],
+      "additionalProperties": false,
+      "properties": {
+        "min": { "type": "number", "description": "Less than max." },
+        "max": { "type": "number" },
+        "step": { "type": "number", "exclusiveMinimum": 0, "default": 1, "description": "The values are min plus a whole number of steps." },
+        "unit": { "type": "string", "maxLength": 16, "description": "Shown after the value, such as % or HUF. One line." }
       }
     },
     "command": {

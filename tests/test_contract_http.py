@@ -434,6 +434,33 @@ class Exits(unittest.TestCase):
         self.assertEqual(run.save(0, big)[0].status, 413)
         self.assertEqual(run.save(1, big)[0].status, 400)  # read, then refused as too long a text
 
+    def test_a_number_items_save_is_checked_against_its_range(self):
+        folder = Folder()
+        self.addCleanup(folder.cleanup)
+        data = sample_decisions()
+        data["items"].append({"id": "budget", "title": "How much?", "select": "number",
+                              "range": {"min": -10, "max": 10, "step": 0.5, "unit": "%"}, "recommended": 2.5})
+        folder.write(data)
+        run = Run(folder.target)
+        self.addCleanup(run.stop)
+        run.open()
+
+        def body(choice):
+            return {"answers": {"budget": {"choice": choice, "comment": "", "source": "user"}}, "free_text": "",
+                    "done": False}
+        for choice in ("2.5", True, [2.5], 2.25, 10.5, -11, "_skip", "_other"):
+            self.assertEqual(run.save(0, body(choice))[0].status, 400, choice)
+        for raw in (b'{"answers": {"budget": {"choice": NaN}}, "free_text": "", "done": false}',
+                    b'{"answers": {"budget": {"choice": Infinity}}, "free_text": "", "done": false}',
+                    b'{"answers": {"budget": {"choice": 1e999}}, "free_text": "", "done": false}'):
+            self.assertEqual(run.save(0, raw)[0].status, 400, raw)
+        self.assertFalse(folder.answers.exists())
+        for choice in (0, -7.5, 10):
+            self.assertEqual(run.save(0, body(choice))[0].status, 200, choice)
+            saved = json.loads(folder.answers.read_text(encoding="utf-8"))
+            self.assertEqual(saved["answers"]["budget"]["choice"], choice)
+            self.assertNotIsInstance(saved["answers"]["budget"]["choice"], bool)
+
     def test_invalid_input_exits_1(self):
         rounds = Rounds(1)
         self.addCleanup(rounds.cleanup)
@@ -460,6 +487,17 @@ class Exits(unittest.TestCase):
         data["items"][0]["blocking"] = "yes"
         folder.write(data)
         bad_commands.append([str(folder.target)])  # not a command, but checked the same way: exit 1 with a message
+        number = {"id": "budget", "title": "How much?", "select": "number", "range": {"min": 0, "max": 10},
+                  "recommended": 5}
+        for bad in (dict(number, recommended=5.5), dict(number, range={"min": 10, "max": 0}),
+                    {k: v for k, v in number.items() if k != "recommended"},
+                    dict(number, options=[{"id": "a", "label": "A"}, {"id": "b", "label": "B"}])):
+            folder = Folder()
+            self.addCleanup(folder.cleanup)
+            data = sample_decisions()
+            data["items"].append(bad)
+            folder.write(data)
+            bad_commands.append([str(folder.target)])
         for args in [[], ["--no-such-option"], [str(rounds.path / "missing.json")], [str(rounds.target)],
                      [str(svg.target)]] + bad_commands:
             done = subprocess.run(COMMAND + args + ["--no-open"], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -1061,7 +1099,7 @@ class InboxOffer(unittest.TestCase):
         os.makedirs(os.path.join(cls.home, "runs"), mode=0o700)
         os.makedirs(cls.folder)
         data = sample_decisions()
-        data["items"] = [dict(data["items"][0], images=[])]  # one item, with a recommendation: the one a tap may answer
+        data["items"] = [cls.item(data)]  # one item, with a recommendation: the one a tap may answer
         with open(os.path.join(cls.folder, "round-01.json"), "w", encoding="utf-8") as f:
             json.dump(data, f)
         cls.answers = os.path.join(cls.folder, "round-01.answers.json")
@@ -1086,6 +1124,13 @@ class InboxOffer(unittest.TestCase):
                 assert cls.proc.poll() is None and time.monotonic() < deadline, "the inbox did not start"
                 time.sleep(0.1)
 
+    # The item offered, and what the offer and the answers file must say for it.
+    ANSWER, CHOICE = "Two columns", "two"
+
+    @staticmethod
+    def item(data):
+        return dict(data["items"][0], images=[])
+
     @classmethod
     def ask(cls, request):
         with socket.socket(socket.AF_UNIX) as s:
@@ -1109,7 +1154,7 @@ class InboxOffer(unittest.TestCase):
         self.assertFalse(os.path.exists(self.answers))
         offer = self.ask({"op": "offer"})["offer"]
         self.assertEqual((offer["round"], offer["question"], offer["answer"]),
-                         ("Pick the settings layout", "Two columns or one?", "Two columns"))
+                         ("Pick the settings layout", "Two columns or one?", self.ANSWER))
         self.assertRegex(offer["id"], r"^[0-9a-f]{32}$")
         for text in (self.home, self.folder, "round-01", "fedcba9876543210", "http"):
             self.assertNotIn(text, json.dumps(offer))
@@ -1124,12 +1169,25 @@ class InboxOffer(unittest.TestCase):
         saved = json.loads(before.decode("utf-8"))
         self.assertEqual((saved["done"], saved["accepted"]), (True, True))
         self.assertEqual((saved["answers"]["layout"]["choice"], saved["answers"]["layout"]["source"]),
-                         ("two", "notification"))
+                         (self.CHOICE, "notification"))
+        self.assertIs(type(saved["answers"]["layout"]["choice"]), type(self.CHOICE))
         self.assertEqual(self.ask({"op": "accept", "offer": offer["id"]}), {"error": "gone"})
         with open(self.answers, "rb") as f:
             self.assertEqual(f.read(), before)
         self.assertEqual(self.ask({"op": "offer"}), {"offer": None})
         self.assertIsNone(self.proc.poll())
+
+
+@unittest.skipIf(sys.platform == "win32", "the inbox's control socket is a Unix socket; no inbox on Windows yet")
+class InboxNumberOffer(InboxOffer):
+    """The same, for a number item: the offer's answer is its value and unit, and accept stores the number."""
+
+    ANSWER, CHOICE = "12.5 %", 12.5
+
+    @staticmethod
+    def item(data):
+        return {"id": "layout", "title": "Two columns or one?", "select": "number",
+                "range": {"min": -10, "max": 90, "step": 2.5, "unit": "%"}, "recommended": 12.5}
 
 
 @unittest.skipIf(sys.platform == "win32", "the inbox's control socket is a Unix socket; no inbox on Windows yet")

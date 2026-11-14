@@ -128,6 +128,19 @@ textarea{display:block;width:100%;min-height:52px;background:var(--field);color:
 .opt input.other-text{position:static;display:block;width:calc(100% - 42px);height:auto;margin:6px 0 0 42px;background:var(--field);
   color:var(--text);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font:inherit}
 input.other-text:disabled,textarea:disabled{opacity:.75}
+.num-row{display:flex;align-items:center;gap:10px 12px;flex-wrap:wrap}
+.num-slide{flex:1 1 240px;min-width:0}
+.num-range{display:block;width:100%;margin:6px 0;accent-color:var(--accent)}
+.num-range[data-unset]{opacity:.5}
+.num-ends{display:flex;justify-content:space-between;gap:8px;font-size:12.5px;color:var(--soft)}
+.num-field{width:8.5em;background:var(--field);color:var(--text);border:1px solid var(--line2);border-radius:8px;
+  padding:8px 10px;font:inherit}
+.num-field:disabled,.num-range:disabled{opacity:.75}
+.num-range:focus-visible,.num-field:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
+.num-unit{color:var(--soft)}
+.num-pick .tag{margin-left:0}
+.num-pick .tag.off{visibility:hidden}
+.num-pick+.choices{margin-top:10px}
 button.link{border:0;background:none;color:var(--accent);padding:4px 0;text-decoration:underline}
 dialog{background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:14px;padding:18px 20px;
   max-width:min(460px,calc(100vw - 32px))}
@@ -861,7 +874,8 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
       opened: 'Opened {d} · {t} ago', openedNow: 'Opened {d} · just now', oldRound: 'Open 2+ days',
       oldNote: 'Its questions may be out of date: if in doubt, ask the agent before you answer.',
       oldOpenFor: 'This round has been open for {t}.', codeLang: 'code',
-      blocking: 'Agent waits on this', blockingShort: 'agent waits', show_blocking: 'Agent waits'},
+      blocking: 'Agent waits on this', blockingShort: 'agent waits', show_blocking: 'Agent waits',
+      numValue: '{t}, value'},
     hu: {done: 'Kész', doneRounds: 'Kész ({n} kör)', acceptShort: 'Javaslatok elfogadása', acceptRest: '',
       undo: 'Elfogadás visszavonása', recommended: 'Javasolt', cost: 'Költség',
       comment: 'Megjegyzés (nem kötelező)', many: 'Több is választható.', other: 'Egyéb', otherText: 'Egyéb: a te válaszod',
@@ -924,7 +938,8 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
       oldNote: 'A kérdései elavulhattak: ha bizonytalan vagy, kérdezd meg az ágenst, mielőtt válaszolsz.',
       copy: 'Másolás', copied: 'Másolva', copyFailed: 'Nem sikerült másolni: jelöld ki a szöveget',
       copyLabel: 'A(z) {l} blokk másolása', relDelete: 'Relatív útvonal: futtatás előtt ellenőrizd a mappát',
-      codeLang: 'kód', blocking: 'Erre vár az ágens', blockingShort: 'erre vár', show_blocking: 'Erre vár az ágens'}
+      codeLang: 'kód', blocking: 'Erre vár az ágens', blockingShort: 'erre vár', show_blocking: 'Erre vár az ágens',
+      numValue: '{t}, érték'}
   };
   var data = JSON.parse(document.getElementById('signoff-data').textContent);
   var historyMode = data.mode === 'history';
@@ -2658,20 +2673,28 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
   }
 
   function labelOf(item, id) {
+    if (typeof id === 'number') return numText(item, id);
     for (var i = 0; i < item.options.length; i++) if (item.options[i].id === id) return item.options[i].label;
     return id;
   }
+  function numText(item, v) { return String(v) + (item.range.unit ? ' ' + item.range.unit : ''); }
   function hasRec(item) { return item.recommended !== undefined; }
   function recList(item) { return !hasRec(item) ? [] : (Array.isArray(item.recommended) ? item.recommended : [item.recommended]); }
   // Element ids come from positions, never from agent ids, so no id can collide with another element's.
   function key(ri, item) { return 'r' + ri + '-i' + rounds[ri].decisions.items.indexOf(item); }
   function inputs(ri, item) { return Array.prototype.slice.call(document.getElementsByName(key(ri, item))); }
+  // The item's choices as values: the ticked options, or a number item's value (none while it has no value).
+  function picks(ri, item) {
+    var p = inputs(ri, item).filter(function (i) { return i.checked; }).map(function (i) { return i.value; });
+    var r = byId(key(ri, item) + '-n');
+    return p.length || !r || r.dataset.unset ? p : [Number(r.value)];
+  }
 
   // pos: the choice's place, 1 to 9 shown as its number key (the keys count Other and Skip too).
   function choiceRow(ri, item, suffix, value, text, detail, isRec, pos) {
     var row = el('div', 'opt');
     var input = el('input');
-    input.type = item.select === 'many' ? 'checkbox' : 'radio';
+    input.type = item.select === 'one' ? 'radio' : 'checkbox';  // a number item's Skip must untick
     input.name = key(ri, item);
     input.value = value;
     input.id = key(ri, item) + suffix;
@@ -2783,6 +2806,53 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
     s.append(g, word);
     return s;
   }
+  // A number item: a slider and a field bound together, the unit beside them and the range's ends under the slider.
+  // They have no name, so inputs() never takes them for options; picks() reads the slider, which the browser keeps
+  // on the step and in range.
+  function numberPick(ri, item) {
+    var k = key(ri, item), g = item.range, box = el('div', 'num-pick'), row = el('div', 'num-row');
+    var slide = el('div', 'num-slide'), range = el('input', 'num-range'), field = el('input', 'num-field');
+    var ends = el('div', 'num-ends'), tag = el('span', 'tag', L.recommended);
+    range.type = 'range';
+    field.type = 'number';
+    [range, field].forEach(function (i) {
+      i.min = g.min;
+      i.max = g.max;
+      i.step = g.step;
+      i.dataset.round = ri;
+      i.dataset.num = item.id;
+    });
+    range.id = k + '-n';
+    field.id = k + '-v';
+    tag.id = k + '-rt';
+    range.setAttribute('aria-label', item.title);
+    field.setAttribute('aria-label', fmt(L.numValue, {t: item.title}));
+    ends.setAttribute('aria-hidden', 'true');  // the slider's own min and max say it
+    ends.append(el('span', '', numText(item, g.min)), el('span', '', numText(item, g.max)));
+    slide.append(range, ends);
+    row.append(slide, field);
+    if (g.unit) row.append(el('span', 'num-unit', g.unit));
+    row.append(tag);
+    box.append(row);
+    return box;
+  }
+  // v: the value to show on both inputs, or null for none (a done round with no answer).
+  function setNumber(ri, item, v) {
+    var k = key(ri, item), range = byId(k + '-n');
+    if (v === null) range.dataset.unset = '1';
+    else {
+      delete range.dataset.unset;
+      range.value = v;
+    }
+    byId(k + '-v').value = v === null ? '' : range.value;
+    numShown(ri, item);
+  }
+  function numShown(ri, item) {
+    var k = key(ri, item), range = byId(k + '-n'), unset = !!range.dataset.unset;
+    range.setAttribute('aria-valuetext', unset ? L.nothing : numText(item, Number(range.value)));
+    // Hidden, it keeps its place: the slider must not change width under a drag.
+    byId(k + '-rt').classList.toggle('off', unset || Number(range.value) !== item.recommended);
+  }
   // An item: the question, its text and pictures; the agent's recommendation and the cost in the margin (between the
   // question and the options when the window is narrow); then the options and the rest.
   function renderItem(ri, item, n) {
@@ -2815,7 +2885,7 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
       var side = el('div', 'margin');
       if (rec.length) {
         side.append(el('p', 'm-head', L.agentRecommends), el('p', 'rec', rec.map(function (r) { return labelOf(item, r); }).join(', ')));
-        var why = rec.length === 1 && item.options.filter(function (o) { return o.id === rec[0]; })[0];
+        var why = rec.length === 1 && item.options && item.options.filter(function (o) { return o.id === rec[0]; })[0];
         if (why && why.detail) side.append(el('p', 'm-why', why.detail));
       }
       if (item.cost) {
@@ -2856,8 +2926,9 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
       view.append(wrap, hint);
       fs.append(bar, view);
     }
+    if (item.select === 'number') fs.append(numberPick(ri, item));
     var choices = el('div', 'choices');
-    item.options.forEach(function (opt, k) {
+    (item.options || []).forEach(function (opt, k) {
       var row = choiceRow(ri, item, '-o' + k, opt.id, opt.label, opt.detail, rec.indexOf(opt.id) >= 0, k + 1);
       if (compare) row.lastChild.append(chips(item, opt));
       rows.push(row);
@@ -2876,7 +2947,9 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
       row.append(text);
       choices.append(row);
     }
-    if (item.skippable) choices.append(choiceRow(ri, item, '-skip', SKIP, L.skip, '', false, choices.children.length + 1));
+    // A number item's Skip gets no digit key: the digits pick numbered options, and it has none.
+    if (item.skippable) choices.append(choiceRow(ri, item, '-skip', SKIP, L.skip, '', false,
+      item.select === 'number' ? 10 : choices.children.length + 1));
     fs.append(choices);
     if (compare && item.options.some(function (o) { return o.facts && Object.keys(o.facts).some(function (c) { return o.facts[c].tone; }); })) {
       fs.append(el('p', 'legend-line', L.legend));
@@ -2976,6 +3049,10 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
   function setChoice(ri, item, values) {
     inputs(ri, item).forEach(function (i) { i.checked = values.indexOf(i.value) >= 0; });
     if (mirrors[key(ri, item)]) mirrors[key(ri, item)]();
+    if (item.select !== 'number') return;
+    var n = values.filter(function (v) { return typeof v === 'number'; })[0];
+    // Skipped: the slider still shows a value, the recommendation, for when Skip is unticked.
+    setNumber(ri, item, n !== undefined ? n : values.indexOf(SKIP) >= 0 ? item.recommended : null);
   }
 
   function renderPanel(ri) {
@@ -3084,9 +3161,9 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
   function collect(ri, done) {
     var answers = {};
     rounds[ri].decisions.items.forEach(function (item) {
-      var picked = inputs(ri, item).filter(function (i) { return i.checked; }).map(function (i) { return i.value; });
+      var picked = picks(ri, item);
       var ta = byId(key(ri, item) + '-c');
-      var a = {choice: item.select === 'many' ? picked : (picked[0] || null), comment: ta ? ta.value : '',
+      var a = {choice: item.select === 'many' ? picked : (picked.length ? picked[0] : null), comment: ta ? ta.value : '',
         source: sources[ri][item.id]};
       if (picked.indexOf(OTHER) >= 0) a.other = byId(key(ri, item) + '-t').value;
       if (item.marks) a.marks = marksOf(ri, item);
@@ -3243,7 +3320,8 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
         var a = r.answers.answers[it.id];
         if (!a) return;
         var picked = Array.isArray(a.choice) ? a.choice : [a.choice];
-        it.options.forEach(function (o) { if (picked.indexOf(o.id) >= 0) words.push(o.label); });
+        (it.options || []).forEach(function (o) { if (picked.indexOf(o.id) >= 0) words.push(o.label); });
+        if (typeof a.choice === 'number') words.push(numText(it, a.choice));
         if (a.private === true) return;
         words.push(a.other, a.comment);
         (a.marks || []).forEach(function (m) { words.push(m.comment); });
@@ -3504,7 +3582,7 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
     panel.focus();
   }
   function choiceText(ri, item, priv) {
-    var picked = inputs(ri, item).filter(function (i) { return i.checked; }).map(function (i) { return i.value; });
+    var picked = picks(ri, item);
     return {picked: picked, text: picked.map(function (v) {
       if (v === OTHER) return L.other + ': ' + (priv ? L.privateBadge : byId(key(ri, item) + '-t').value || '–');
       if (v === SKIP) return L.skipped;
@@ -3683,8 +3761,7 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
     } else {
       undo[ri] = {};
       items.forEach(function (item) {
-        undo[ri][item.id] = {source: sources[ri][item.id],
-          choice: inputs(ri, item).filter(function (i) { return i.checked; }).map(function (i) { return i.value; })};
+        undo[ri][item.id] = {source: sources[ri][item.id], choice: picks(ri, item)};
         if (hasRec(item)) {
           setChoice(ri, item, recList(item));
           sources[ri][item.id] = 'accept_all';
@@ -3695,10 +3772,29 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
     later(ri, 150);
   });
 
+  // A move of a number item's slider or field: the other follows, Skip goes, and the answer is the user's. A field
+  // with no number in it yet ("-", "1e") leaves the slider where it was.
+  function moveNumber(t) {
+    var ri = Number(t.dataset.round), item = rounds[ri].decisions.items.filter(function (x) { return x.id === t.dataset.num; })[0];
+    var k = key(ri, item), range = byId(k + '-n'), field = byId(k + '-v'), skip = byId(k + '-skip');
+    if (t === range) field.value = range.value;
+    else if (field.value === '') return;
+    else range.value = field.value;
+    delete range.dataset.unset;
+    if (skip) skip.checked = false;
+    numShown(ri, item);
+    sources[ri][item.id] = 'user';
+    if (undo[ri]) {
+      undo[ri] = null;
+      label(false);
+    }
+    later(ri, t === range ? 250 : 800);
+  }
   document.addEventListener('change', function (e) {
     var t = e.target;
     if (t.dataset.round === undefined) return;
     var ri = Number(t.dataset.round);
+    if (t.dataset.num !== undefined && t.type === 'number') t.value = byId(t.id.replace(/-v$/, '-n')).value;  // snapped
     if (t.dataset.item !== undefined && (t.type === 'radio' || t.type === 'checkbox')) {
       if (t.type === 'checkbox' && t.checked) {
         // Skip stands alone: ticking it clears the other boxes, ticking another box clears it.
@@ -3717,6 +3813,7 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
   });
   document.addEventListener('input', function (e) {
     var t = e.target;
+    if (t.dataset.num !== undefined && t.dataset.round !== undefined) return moveNumber(t);
     if (t.dataset.round === undefined || (t.tagName !== 'TEXTAREA' && t.type !== 'text')) return;
     if (t.classList.contains('other-text')) {
       var pick = byId(t.dataset.pick);
@@ -3782,7 +3879,7 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
   byId('help-close').addEventListener('click', function () { help.close(); });
   function typing(t) {
     return !!t && (t.isContentEditable || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT'
-      || (t.tagName === 'INPUT' && t.type !== 'radio' && t.type !== 'checkbox'));
+      || (t.tagName === 'INPUT' && t.type !== 'radio' && t.type !== 'checkbox' && t.type !== 'range'));
   }
   function shown(list) {  // the first enabled input on screen: in the table view the cards' inputs are hidden
     return Array.prototype.filter.call(list, function (i) { return !i.disabled && i.offsetParent !== null; })[0];
@@ -3833,7 +3930,7 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
       }
       return;
     }
-    if (/^[1-9]$/.test(e.key) && current) {
+    if (/^[1-9]$/.test(e.key) && current && !current.querySelector('.num-pick')) {
       var input = current.querySelectorAll('.choices input[type=radio], .choices input[type=checkbox]')[Number(e.key) - 1];
       if (!input || input.disabled) return;
       e.preventDefault();

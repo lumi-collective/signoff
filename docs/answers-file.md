@@ -22,9 +22,11 @@ Beside each round, `round-NN.answers.json`, from the first change on the page:
 }
 ```
 
-- `choice` is an option id or `null` for `one`, a list for `many`. Where it differs from `recommended`, you
+- `choice` is an option id or `null` for `one`, a list for `many`, and a JSON number for `number` (such as
+  `12.5`; `0` is a value too), or `null` there when nothing was saved. Where it differs from `recommended`, you
   overruled the agent. `_other` means you picked Other and wrote `other`; `_skip` means you skipped the item.
-  Neither can clash with an option id, which starts with a letter or digit.
+  Neither can clash with an option id, which starts with a letter or digit. An answers file holding a number
+  needs Signoff 0.5.0 or newer to be read.
 - `source`: `recommended` (the preselected recommendation, never touched), `accept_all` (set by **Accept all
   recommendations**), `user`, or `notification` (the recommendation, accepted with Done through the inbox's
   control socket, as a tap on a notification asks).

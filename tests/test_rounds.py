@@ -753,6 +753,19 @@ class Page(unittest.TestCase):
             self.assertIn(part, hu)
         self.assertIn("['all', 'comment', 'differs', 'blocking']", self.page)
 
+    def test_a_number_item_has_its_labels_and_the_digit_keys_skip_it(self):
+        labels = self.page[self.page.index("var LABELS = {"):self.page.index("var data = JSON.parse")]
+        en, hu = labels[:labels.index("hu: {")], labels[labels.index("hu: {"):]
+        self.assertIn("numValue: '{t}, value'", en)
+        self.assertIn("numValue: '{t}, érték'", hu)
+        # The digits pick an item's numbered options; a number item has none, so they do nothing there.
+        line = next(l for l in self.page.splitlines() if "/^[1-9]$/.test(e.key)" in l)
+        self.assertIn("!current.querySelector('.num-pick')", line)
+        # A slider is no text field: j, k and f still work while it has focus, and its arrows move it.
+        typing = self.page[self.page.index("function typing(t)"):]
+        typing = typing[:typing.index("\n  }\n")]
+        self.assertIn("t.type !== 'range'", typing)
+
     def test_an_orphan_round_says_its_run_has_ended_in_english_and_hungarian(self):
         # The run is what is known gone: after Ctrl+C or the idle timeout its session may well live on.
         labels = self.page[self.page.index("var LABELS = {"):self.page.index("var data = JSON.parse")]

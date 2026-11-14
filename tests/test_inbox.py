@@ -1767,6 +1767,38 @@ class InboxOffer(InboxTest):
                 time.sleep(0.02)
             self.assertIsNone(self.offer())  # a done round is offered no more
 
+    def test_a_number_item_is_offered_as_its_value_and_unit_and_accepted_as_a_number(self):
+        num = {"id": "n", "title": "How many?", "select": "number", "range": {"min": -10, "max": 10, "step": 0.5,
+                                                                             "unit": "%"}, "recommended": 2.5}
+        bare = dict(num, range={"min": 0, "max": 3000000, "step": 500}, recommended=1234500)
+        self.start()
+        cases = [("value and unit", [one_round(dict(num))], None, "2.5 %"),
+                 ("no unit, a big whole number", [one_round(dict(bare))], None, "1234500"),
+                 ("zero", [one_round(dict(num, recommended=0))], None, "0 %"),
+                 ("sensitive", [one_round(dict(num, sensitive=True))], None, None),
+                 ("moved by the user is decided", [one_round(dict(num), question("q"))],
+                  {1: record({"n": {"choice": 0, "source": "user"}})}, "Alpha"),
+                 ("only preselected is not", [one_round(dict(num), question("q"))],
+                  {1: record({"n": {"choice": 2.5, "source": "recommended"}})}, None)]
+        for label, rounds, answers, want in cases:
+            with self.subTest(label):
+                topic, e = self.case(rounds, answers)
+                offer = self.offer()
+                self.assertEqual(offer and offer["answer"], want)
+                self.end(e)
+        topic, e = self.case([one_round(question("q"), dict(num))],
+                             {1: record({"q": {"choice": "b", "comment": "", "source": "user"}})})
+        offer = self.offer()
+        self.assertEqual((offer["question"], offer["answer"]), ("How many?", "2.5 %"))
+        self.assertEqual(self.ctl("accept", offer=offer["id"], choice=9), {"ok": True})
+        saved = json.loads((topic / "round-01.answers.json").read_text(encoding="utf-8"))
+        self.assertEqual((saved["done"], saved["accepted"]), (True, True))
+        self.assertEqual(saved["answers"]["n"], {"choice": 2.5, "comment": "", "source": "notification"})
+        self.assertIs(type(saved["answers"]["n"]["choice"]), float)
+        md = (topic / "round-01.answers.md").read_text(encoding="utf-8")
+        self.assertIn("- Choice: 2.5 % (recommended)\n", md)
+        self.end(e)
+
     def test_refusals_are_one_word_and_write_nothing(self):
         topic, e = self.case([one_round(question("q"))])
         self.start()
@@ -1967,6 +1999,14 @@ class InboxRows(InboxTest):
         self.assertEqual(self.rows("0" * 16), empty)  # a project with no run
         self.end(e)
         self.assertEqual(self.rows(), empty)  # a run that ended is gone
+
+    def test_a_number_item_is_listed_until_decided(self):
+        num = {"id": "n", "title": "How many?", "select": "number", "range": {"min": 0, "max": 5}, "recommended": 2}
+        self.case([one_round(question("q"), dict(num), dict(num, id="z", title="Zero"))],
+                  {1: record({"n": {"choice": 2, "source": "recommended"}, "z": {"choice": 0, "source": "user"}})})
+        self.start()
+        (r,) = self.rows()["rounds"]
+        self.assertEqual(r["items"], [{"item": 0, "title": "Question q"}, {"item": 1, "title": "How many?"}])
 
     def test_oldest_run_first_and_a_held_round_listed(self):
         topic, older = self.case([one_round(question("o"), tab="Older")])

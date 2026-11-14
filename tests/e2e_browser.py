@@ -1211,6 +1211,189 @@ def run_blocking(work):
         kill(browser.proc)
 
 
+NUMBER_ITEMS = [
+    {"id": "budget", "title": "How much of the budget?", "description": "A share of this quarter's budget.",
+     "select": "number", "range": {"min": -10, "max": 10, "step": 0.5, "unit": "%"}, "recommended": 2.5,
+     "skippable": True},
+    {"id": "count", "title": "How many workers?", "select": "number", "range": {"min": 0, "max": 100, "step": 5},
+     "recommended": 40, "comment": False},
+]
+# A number item's controls as the page shows them, by item index in round 0.
+NUMBER_STATE = """(function (n) {
+  var r = document.getElementById('r0-i' + n + '-n'), f = document.getElementById('r0-i' + n + '-v');
+  var s = document.getElementById('r0-i' + n + '-skip'), t = document.getElementById('r0-i' + n + '-rt');
+  var u = r.closest('.num-pick').querySelector('.num-unit');
+  return {range: r.value, field: f.value, min: r.min, max: r.max, step: r.step, fmin: f.min, fmax: f.max, fstep: f.step,
+    text: r.getAttribute('aria-valuetext'), skip: s ? s.checked : null,
+    tag: getComputedStyle(t).visibility === 'visible' && t.textContent, width: r.getBoundingClientRect().width,
+    unset: r.dataset.unset === '1', unit: u ? u.textContent : null,
+    keys: r.closest('.item').querySelectorAll('.okey').length, active: document.activeElement.id};
+})(%d)"""
+
+
+def run_number(work):
+    """A number item: a slider and a field bound both ways, the recommendation preselected and tagged, typing a value
+    (a half-typed one never saved, 0 kept as 0, an off-grid one snapped), the arrows on the slider, j from it, no digit
+    key, Skip and a move that takes it back, Accept all and its undo, the Summary's value and its "not the
+    recommendation", nothing wider than a phone, a Hungarian copy without a missing label; Done exits 0 with JSON
+    numbers in the answers file; a done round shows its value read only, and no value where none was saved."""
+    for lang in ("en", "hu"):
+        topic = work / ("2026-01-09-number-" + lang)
+        topic.mkdir()
+        data = {"version": 1, "title": "Size the pilot", "lang": lang, "items": NUMBER_ITEMS}
+        target = topic / "decisions.json"
+        target.write_text(json.dumps(data), encoding="utf-8")
+        answers = topic / "decisions.answers.json"
+        server, out, err, browser = serve(target, str(work / ("profile-number-" + lang)))
+
+        def state(n=0):
+            return browser.js(NUMBER_STATE % n)
+
+        def saved(want, key="budget"):
+            def look():
+                try:
+                    a = json.loads(answers.read_text(encoding="utf-8"))["answers"].get(key, {})
+                except (OSError, ValueError):
+                    return None
+                return a if (a.get("choice"), a.get("source")) == want else None
+            return wait_for("the answer %r for %s" % (want, key), look)
+
+        def type_value(text):  # replaces the field's text, as typing over a selection does
+            browser.js("document.getElementById('r0-i0-v').value = ''")
+            browser.call("Input.insertText", text=text)
+        try:
+            wait_for("the page", lambda: browser.js("!!document.getElementById('r0-i0-n')"))
+            check(not browser.js("document.body.innerText.indexOf('undefined') >= 0"), "a label is missing (%s)" % lang)
+            got = state()
+            rec = "Recommended" if lang == "en" else "Javasolt"
+            check((got["range"], got["field"], got["min"], got["max"], got["step"], got["fmin"], got["fmax"],
+                   got["fstep"], got["text"], got["skip"], got["tag"], got["unset"], got["unit"], got["keys"])
+                  == ("2.5", "2.5", "-10", "10", "0.5", "-10", "10", "0.5", "2.5 %", False, rec, False, "%", 0),
+                  "the number item as loaded (%s): %r" % (lang, got))
+            got = state(1)
+            check((got["range"], got["field"], got["text"], got["skip"], got["unit"]) == ("40", "40", "40", None, None),
+                  "a number item without a unit or Skip: %r" % got)
+            field = "How much of the budget?, " + ("value" if lang == "en" else "érték")
+            names = [ax_name(browser, "#r0-i0-n"), ax_name(browser, "#r0-i0-v")]
+            check(names == ["How much of the budget?", field], "the inputs' accessible names (%s): %r" % (lang, names))
+            margin = browser.js("document.querySelector('#panel-0 .item .margin .rec').textContent")
+            check(margin == "2.5 %", "the margin's recommendation: %r" % margin)
+            if lang == "hu":
+                browser.click("#done")
+                got = finished(server, out, err, [answers])[0]["answers"]
+                check(got["budget"] == {"choice": 2.5, "comment": "", "source": "recommended"}
+                      and got["count"]["choice"] == 40, "the untouched Hungarian round's answers: %r" % got)
+                md = (topic / "decisions.answers.md").read_text(encoding="utf-8")
+                check("- Választás: 2.5 % (javasolt)\n" in md, "the Hungarian Markdown copy: %r" % md)
+                continue
+            # Typing: a half-typed "-" changes nothing, "-7" moves the slider and is saved, 0 is saved as 0.
+            width = state()["width"]
+            browser.click("#r0-i0-v")
+            type_value("-")
+            check(state()["range"] == "2.5", "a half-typed value leaves the slider: %r" % state())
+            browser.call("Input.insertText", text="7")
+            check((state()["range"], state()["text"], state()["tag"], state()["width"]) == ("-7", "-7 %", False, width),
+                  "typing moves the slider and drops the tag, the slider's width kept: %r" % state())
+            saved((-7, "user"))
+            type_value("0")
+            got = saved((0, "user"))
+            check(type(got["choice"]) is int, "0 must stay the number 0: %r" % got)
+            # An off-grid value snaps on leaving the field; the slider never holds one.
+            type_value("3.3")
+            press(browser, "Tab", "Tab", 9)
+            check((state()["range"], state()["field"]) == ("3.5", "3.5"), "an off-grid value snaps: %r" % state())
+            saved((3.5, "user"))
+            # The slider: arrows move it and the field; a digit picks nothing; j goes on to the next item.
+            browser.js("document.getElementById('r0-i0-n').focus()")
+            press(browser, "ArrowLeft", "ArrowLeft", 37)
+            press(browser, "ArrowLeft", "ArrowLeft", 37)
+            got = state()
+            check((got["range"], got["field"], got["text"], got["tag"]) == ("2.5", "2.5", "2.5 %", "Recommended"),
+                  "the arrows move the slider and the field, back on the recommendation the tag shows: %r" % got)
+            saved((2.5, "user"))
+            press(browser, "1", "Digit1", 49, text="1")
+            check(state()["skip"] is False, "a digit picks nothing on a number item: %r" % state())
+            press(browser, "j", "KeyJ", 74, text="j")
+            check(browser.js("document.activeElement.closest('.item').dataset.item") == "count",
+                  "j from the slider goes to the next item: %r" % browser.js("document.activeElement.id"))
+            # Skip, then a move takes it back.
+            browser.click("label[for=r0-i0-skip]")
+            check(state()["skip"] is True, "Skip is ticked")
+            saved(("_skip", "user"))
+            browser.js("document.getElementById('r0-i0-n').focus()")
+            press(browser, "ArrowRight", "ArrowRight", 39)
+            check((state()["skip"], state()["range"]) == (False, "3"), "a move unticks Skip: %r" % state())
+            saved((3, "user"))
+            # Accept all, then its undo.
+            browser.click("#accept-all")
+            check(state()["range"] == "2.5" and not state()["skip"], "Accept all sets the recommendation: %r" % state())
+            saved((2.5, "accept_all"))
+            browser.click("#accept-all")
+            check(state()["range"] == "3", "the undo brings the value back: %r" % state())
+            saved((3, "user"))
+            browser.click("#r0-i0-v")
+            type_value("0")
+            saved((0, "user"))
+            # The Summary: the value with its unit, and the flag where it differs.
+            summary = ("Array.prototype.map.call(document.querySelectorAll('#summary-block .summary-list li'), "
+                       "function (li) { return [li.querySelector('.summary-choice').textContent, Array.prototype.map"
+                       ".call(li.querySelectorAll('.flags .badge'), function (b) { return b.textContent; })]; })")
+            rows = wait_for("the summary", lambda: (lambda r: r if r and r[0][0] == "0 %" else None)(browser.js(summary)))
+            check(rows == [["0 %", ["not the recommendation"]], ["40", []]], "the Summary rows: %r" % rows)
+            labels = filter_labels(browser, "#summary-block")
+            check(labels == ["All 2", "With comment 0", "Not the recommendation 1"], "the Summary's filters: %r" % labels)
+            # A phone: nothing wider than the screen, the slider still usable.
+            browser.call("Emulation.setDeviceMetricsOverride", width=390, height=844, deviceScaleFactor=1, mobile=False)
+            time.sleep(0.5)
+            fit = browser.js("(function () { var r = document.getElementById('r0-i0-n').getBoundingClientRect(); "
+                             "return [document.documentElement.scrollWidth, r.width, r.right]; })()")
+            check(fit[0] <= 390 and fit[1] >= 120 and fit[2] <= 390, "the number item at 390 px: %r" % fit)
+            browser.call("Emulation.setDeviceMetricsOverride", width=1280, height=900, deviceScaleFactor=1, mobile=False)
+            time.sleep(0.3)
+            browser.click("#done")
+            got = finished(server, out, err, [answers])[0]["answers"]
+            check(got["budget"] == {"choice": 0, "comment": "", "source": "user"}
+                  and got["count"] == {"choice": 40, "comment": "", "source": "recommended"},
+                  "the answers file holds JSON numbers: %r" % got)
+            md = (topic / "decisions.answers.md").read_text(encoding="utf-8")
+            check("- Choice: 0 % (not recommended)\n" in md and "- Choice: 40 (recommended)\n" in md,
+                  "the Markdown copy: %r" % md)
+        except E2EError:
+            sys.stderr.write("--- Signoff stderr ---\n" + "".join(err))
+            raise
+        finally:
+            kill(server)
+            kill(browser.proc)
+
+    # A done round read only: its value shows, disabled; an item with no saved answer shows no value.
+    topic = work / "2026-01-09-number-done"
+    topic.mkdir()
+    (topic / "round-01.json").write_text(json.dumps({"version": 1, "title": "Done one", "items": NUMBER_ITEMS}),
+                                         encoding="utf-8")
+    (topic / "round-02.json").write_text(json.dumps({"version": 1, "title": "Open one", "items": NUMBER_ITEMS[1:]}),
+                                         encoding="utf-8")
+    sha = hashlib.sha256((topic / "round-01.json").read_bytes()).hexdigest()
+    (topic / "round-01.answers.json").write_text(json.dumps({
+        "version": 1, "done": True, "saved": "2026-01-09T10:00:00Z", "free_text": "",
+        "decisions": {"file": "round-01.json", "sha256": sha},
+        "answers": {"budget": {"choice": -4.5, "comment": "", "source": "user"}}}), encoding="utf-8")
+    server, out, err, browser = serve(topic, str(work / "profile-number-done"))
+    try:
+        wait_for("the page", lambda: browser.js("!!document.getElementById('tab-0')"))
+        browser.click("#tab-0")
+        got = browser.js("[document.getElementById('r0-i0-n').disabled, document.getElementById('r0-i0-v').disabled, "
+                         "document.getElementById('r0-i0-v').value, document.getElementById('r0-i1-v').value, "
+                         "document.getElementById('r0-i1-n').dataset.unset, document.querySelectorAll("
+                         "'#panel-0 .summary-choice').length]")
+        check(got[:5] == [True, True, "-4.5", "", "1"], "a done round's number items: %r" % got)
+    except E2EError:
+        sys.stderr.write("--- Signoff stderr ---\n" + "".join(err))
+        raise
+    finally:
+        kill(server)
+        kill(browser.proc)
+
+
 def run_inbox(work):
     """The inbox: first nothing waits, so the empty state shows, and its To do button and the sidebar filter the list.
     Then a waiting run's round and a todo item marked waiting on you. The item opens beside the list to its Markdown: the
@@ -2338,6 +2521,7 @@ def run():
     run_commands(work)
     run_commands_elsewhere(work)
     run_blocking(work)
+    run_number(work)
     if WINDOWS:
         print("SKIP: the inbox (it needs a Unix socket; not on Windows yet)", flush=True)
     else:
@@ -2474,6 +2658,9 @@ def main():
           "round and --history Copy is exact too; "
           "items the agent waits on: a badge in the title and the sidebar, a fourth Summary filter showing only them, "
           "Hungarian too, exit 0, three filters without the key; "
+          "a number item: slider and field bound both ways, typing (0 kept, off-grid snapped), arrows, j, no digit "
+          "key, Skip, Accept all and undo, the Summary's value and flag, 390 px, Hungarian, JSON numbers, exit 0, "
+          "read only when done; "
           + ("" if WINDOWS else "inbox: the empty state, the sidebar's view and project filters, "
              "each project's other open items closed behind a count row that opens them, "
              "a waiting round and a waiting todo item grouped by project under the summary line, its steps counted, "

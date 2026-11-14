@@ -32,6 +32,11 @@
 - **Focus** (the button in the header, or `f`) shows one item at a time, with Previous and Next; the round's last
   box and its Accept or Done come after the last item. Esc leaves it. A phone opens the page in Focus.
 - **Other and Skip** appear where the agent allows them: Other with its own text field, Skip on its own.
+- **A number.** Where the answer is a number, the item has a slider and a number field that move together,
+  between the agent's lowest and highest value and on its step, with the unit beside them. The recommended
+  value is preselected and tagged **Recommended**. The arrow keys move the slider; a value typed between two
+  steps goes to the nearest one when you leave the field. Moving either one unticks Skip. The Summary shows the
+  value and its unit.
 - **Cards or a table.** When the agent compares the options on criteria (effort, risk, the way back), each card
   shows its facts as small chips, and a **Cards / Table** toggle lays the options side by side, a row per
   criterion. Pick in either view: it is the same choice. The view itself is not saved. On a phone the table
@@ -93,7 +98,7 @@ buttons, Space ticks a checkbox. On top of that:
 
 | Key | Does |
 |---|---|
-| `1` to `9` | picks that option in the current item (Other and Skip count last) |
+| `1` to `9` | picks that option in the current item (Other and Skip count last; nothing on a number item) |
 | `j`, `k` | moves to the next or previous item |
 | Up, Down, Home, End | on the rounds in the sidebar: switches rounds (Left and Right too) |
 | arrow keys, Shift+arrow keys | on a mark: moves it, resizes it |

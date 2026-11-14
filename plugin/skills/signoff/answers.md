@@ -48,7 +48,8 @@ as `<folder>/round-02.answers.json`. Read every line, not only the last:
   sessions as a `Signoff inbox:` line on the Signoff rounds; the `signoff-inbox` skill says what to do with it.
 - `choice` is an option id, `null` when nothing is picked (`"one"`), or a list (`"many"`). `_other` means the
   user picked Other and wrote `other`; `_skip` means the user skipped the item. Read an `other` text as the
-  user's own answer.
+  user's own answer. On a `"number"` item it is a JSON number in your `range` and on its step (`0` is a value),
+  or `_skip`.
 - `source`: `user` when the user changed the item's options; `accept_all` when the user pressed **Accept all
   recommendations** and left the item; `recommended` when the preselected recommendation was never touched;
   `notification` when the user accepted your recommendation from a notification, which also sent Done. Treat `accept_all` and
