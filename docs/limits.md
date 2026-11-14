@@ -7,8 +7,8 @@
   6 bytes each; past that an attachment is not shown.
 - Commands: up to 10 an item, each at most 4000 characters and 60 lines. A command's text may not start or end
   with a space or line break; its `lang` is up to 20 letters, digits or `+#._-`.
-- A number item: one value, at most 10,000 steps from its lowest to its highest, a unit of up to 16 characters;
-  no range answer (from–to) and no logarithmic scale.
+- A number item: one value, at most 10,000 steps from its lowest to its highest, both within 10^12 steps of 0, a
+  unit of up to 16 characters; no range answer (from–to) and no logarithmic scale.
 - A drive-relative or network path in a decisions file (`C:foo`, `\\host`, `//host`) is refused, on every OS.
   Attachments take only relative paths; a picture or board may still use an absolute path inside the folder.
 - Pictures, boards and attachments are read at start; changing a round's files while the page is open needs a restart.

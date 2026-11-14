@@ -136,6 +136,7 @@ input.other-text:disabled,textarea:disabled{opacity:.75}
 .num-field{width:8.5em;background:var(--field);color:var(--text);border:1px solid var(--line2);border-radius:8px;
   padding:8px 10px;font:inherit}
 .num-field:disabled,.num-range:disabled{opacity:.75}
+.num-range[data-unset]:disabled{visibility:hidden}
 .num-range:focus-visible,.num-field:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
 .num-unit{color:var(--soft)}
 .num-pick .tag{margin-left:0}
@@ -2677,7 +2678,10 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
     for (var i = 0; i < item.options.length; i++) if (item.options[i].id === id) return item.options[i].label;
     return id;
   }
-  function numText(item, v) { return String(v) + (item.range.unit ? ' ' + item.range.unit : ''); }
+  function numText(item, v) {  // no range: a past round's answer that its changed round no longer matches
+    var unit = item.range && item.range.unit;
+    return String(v) + (unit ? ' ' + unit : '');
+  }
   function hasRec(item) { return item.recommended !== undefined; }
   function recList(item) { return !hasRec(item) ? [] : (Array.isArray(item.recommended) ? item.recommended : [item.recommended]); }
   // Element ids come from positions, never from agent ids, so no id can collide with another element's.

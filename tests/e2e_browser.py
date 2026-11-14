@@ -1383,9 +1383,11 @@ def run_number(work):
         browser.click("#tab-0")
         got = browser.js("[document.getElementById('r0-i0-n').disabled, document.getElementById('r0-i0-v').disabled, "
                          "document.getElementById('r0-i0-v').value, document.getElementById('r0-i1-v').value, "
-                         "document.getElementById('r0-i1-n').dataset.unset, document.querySelectorAll("
-                         "'#panel-0 .summary-choice').length]")
-        check(got[:5] == [True, True, "-4.5", "", "1"], "a done round's number items: %r" % got)
+                         "document.getElementById('r0-i1-n').dataset.unset, "
+                         "getComputedStyle(document.getElementById('r0-i1-n')).visibility, "
+                         "getComputedStyle(document.getElementById('r0-i0-n')).visibility]")
+        check(got == [True, True, "-4.5", "", "1", "hidden", "visible"],
+              "a done round's number items, no slider where nothing was saved: %r" % got)
     except E2EError:
         sys.stderr.write("--- Signoff stderr ---\n" + "".join(err))
         raise

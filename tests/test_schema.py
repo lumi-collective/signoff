@@ -654,6 +654,9 @@ class NumberItem(unittest.TestCase):
             (number_item(range={"min": False, "max": 10}, recommended=5), "number"),
             (number_item(range={"min": "0", "max": 10}, recommended=5), "number"),
             (number_item(range={"min": 0, "max": 10, "step": True}, recommended=5), "number"),
+            # A float cannot tell 1e15 from 1e15 + 0.5 apart well enough to keep a step of 1.
+            (number_item(range={"min": 1e15, "max": 1e15 + 10, "step": 1}, recommended=1e15), "'step'"),
+            (number_item(range={"min": -5e12, "max": -5e12 + 3, "step": 1}, recommended=-5e12), "'step'"),
             (number_item(range=[0, 10]), "'range'"),
             (number_item(range={"min": 0}), "missing 'max'"),
             (number_item(range={"min": 0, "max": 10, "scale": "log"}), "unknown key"),
@@ -722,6 +725,12 @@ class NumberAnswers(unittest.TestCase):
                     self.check(choice, stored=True)
         with self.assertRaises(ValueError):
             self.check("_skip", key="share")  # not skippable
+        # Large values keep the grid: half a step off is refused near the largest values a range may hold.
+        self.decisions["items"][3]["range"] = {"min": 1e11, "max": 1e11 + 100, "step": 1}
+        self.assertEqual(self.check(1e11 + 7, key="share")["choice"], 1e11 + 7)
+        for off in (0.5, 0.01):
+            with self.assertRaises(ValueError):
+                self.check(1e11 + 7 + off, key="share")
         with self.assertRaises(ValueError):
             self.check(2.5, other="x")
         with self.assertRaises(ValueError):

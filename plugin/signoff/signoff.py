@@ -68,6 +68,7 @@ DEFAULT_IGNORABLE = ((0x00AD, 0x00AD), (0x034F, 0x034F), (0x061C, 0x061C), (0x11
                      (0xFE00, 0xFE0F), (0xFEFF, 0xFEFF), (0xFFA0, 0xFFA0), (0xFFF0, 0xFFF8), (0x1BCA0, 0x1BCA3),
                      (0x1D173, 0x1D17A), (0xE0000, 0xE0FFF))
 MAX_STEPS = 10000  # a number item's values from min to max
+MAX_SCALE = 10 ** 12  # a number item's largest value, in steps: a float holds the grid to a 500th of a step
 MAX_UNIT = 16  # characters in a number item's unit
 MAX_MARKS = 50
 HISTORY_BUDGET = 200 * 1024 * 1024
@@ -196,6 +197,10 @@ def _number_item(item, where):
         raise DecisionsError("%s: 'min' must be less than 'max'" % rwhere)
     if not rng["step"] > 0:
         raise DecisionsError("%s: 'step' must be more than 0" % rwhere)
+    # _on_grid's float slack grows with the values: past this it is no longer a small part of a step.
+    if max(abs(rng["min"]), abs(rng["max"])) > MAX_SCALE * rng["step"]:
+        raise DecisionsError("%s: 'step' is too small for values this large: 'min' and 'max' must be within %d "
+                             "steps of 0" % (rwhere, MAX_SCALE))
     try:
         steps = (rng["max"] - rng["min"]) / rng["step"]  # floats overflow to inf, ints raise
     except OverflowError:

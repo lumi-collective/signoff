@@ -538,7 +538,9 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   Right), each with its state as a glyph and a word; the open round's items are listed under them. Each item is
   its question, text and pictures, a margin with the recommendation (the recommended labels, and the option's detail when one is recommended)
   and the cost (between the question and the options under 1100 px), then the options, numbered for the 1 to 9
-  keys. An item's commands (between its text and pictures) are the inbox's code blocks (`codeBlock`, above the
+  keys. A number item has instead a native range and number input bound together (each with a name, the range
+  with `aria-valuetext` and the unit), the range holding the value that is saved, and Skip as a checkbox with no
+  digit key; the digits do nothing there, and j, k and f still work while the range has focus. An item's commands (between its text and pictures) are the inbox's code blocks (`codeBlock`, above the
   inbox's part of the script), with Copy and the relative-delete hint whatever their `lang`; every code block
   wraps (`pre-wrap`, `overflow-wrap:anywhere`), and `_command()` refuses the known invisible and blank characters,
   white space at a text's ends and a text over `MAX_COMMAND_TEXT` or `MAX_COMMAND_LINES`. This catches the known
