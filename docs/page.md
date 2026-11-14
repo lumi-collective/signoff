@@ -12,9 +12,10 @@
   instead.
 - **When the round was asked** follows the name: `Opened <date> · 3 days ago`, the full time on hover. It is the
   round file's time, so a new run on the same rounds keeps it, and an agent's edit of the round moves it; a
-  `touch`, a copy, a `git checkout` or a restore from a backup moves it too, which only makes a round look younger.
-  An open round 2 days old or more says **Open 2+ days** there and, at the top of the round, that its questions may
-  be out of date, so ask the agent if in doubt. A tab left open does not add the warning until it is reloaded.
+  `touch`, a copy that does not keep file times (`cp` without `-p`) or a `git checkout` moves it too, which only
+  makes a round look younger. An open round 2 days old or more says **Open 2+ days** there and, at the top of the
+  round, that its questions may be out of date, so ask the agent if in doubt. A tab left open keeps its age text and
+  warning as they were until it is reloaded.
 - **Rounds are in the sidebar**, each with its state in a word: open, accepted, changed, done. A round answered
   with Done in an earlier run is read only. A round that depends on earlier answers comes as a new run on the same
   folder, so the earlier ones stay in view. Under the rounds, the open round's items are listed; a click goes to

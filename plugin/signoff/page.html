@@ -601,6 +601,7 @@ body.run .head-text{display:flex;flex-direction:column;min-width:0}
 body.run h1{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 body.run .project{order:2;padding:0;margin:2px 0 0;font-size:12px;font-weight:500;color:var(--quiet)}
 #project:not(:empty)+#opened::before{content:" · "}
+#opened{white-space:nowrap}
 .project .pill{margin-left:6px}
 body.run .back{margin:0 0 2px}
 body.run>header>.mono{flex:none;margin:0}
@@ -975,7 +976,7 @@ body.run.focusing .rp>.item[data-item]:not(.cur),body.run.focusing .rp>h2.group,
     return m < 2880 ? fmt(L.hours, {n: Math.floor(m / 60)}) : fmt(L.days, {n: Math.floor(m / 1440)});
   }
   // A round asked this long ago may hold questions the agent has moved past: its page and its inbox row say so.
-  // shortcut: judged at render only; a tab left open past it shows the warning at its next reload.
+  // shortcut: the age text and the warning are judged at render only; a tab left open keeps them until its next reload.
   var OLD_ROUND = 2 * 86400000;
   function oldRound(stamp) { return !!stamp && Date.now() - new Date(stamp).getTime() >= OLD_ROUND; }
 
