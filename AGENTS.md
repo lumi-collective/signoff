@@ -331,7 +331,12 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   `check_answers` and the run's own writer, so a waiter wakes on the answers file. One inbox per home: it holds `inbox.lock` while it lives, trying for about half a second first (a run's look takes the
   lock for a moment).
 - **The inbox reads a project's todo file and never writes it.** The first of `_bmad-output/todo.md`, `TODO.md`,
-  `todo.md` under the root in `projects/<id>.json` that is a file inside the root, at most `MAX_TODO` bytes. An
+  `todo.md` under the root in `projects/<id>.json` that is a file inside the root, at most `MAX_TODO` bytes; or,
+  when that file has a `todo` key (set by hand), the file it names and no other (`project_todo`): a string, checked
+  as a picture's path is (`_inside`: no control character, no drive or network path, inside the resolved root
+  with links followed, an absolute path too), and a regular file. A bad key, or one naming no file, keeps the
+  project on the list with fixed text for `file` and `error` (`TODO_KEY_FILE`, `TODO_KEY_ERROR`), never the
+  value; a message or Later on that project gets 409. A project whose root is gone shows no todo file. An
   open item is `- [ ] text` (`*` and `+` too) with its indented lines; one waiting on the user starts
   `- [ ] (waiting on you: <what>) text`, exactly so (English only). A chain is one row: a top-level item that is
   open, or done with an open item under it, with every item under it (`TODO_DEPTH` deep) as its steps, never a row
@@ -569,7 +574,8 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   UserPromptSubmit stdout goes into the model's context) but the hand-over below, and writes nothing while
   `inbox_on()` is false, nor for
   input it cannot read, a session id that is not a plain id, or a `cwd` outside any project. Otherwise it writes,
-  atomically, 0600 in 0700 folders, `projects/<id>.json` (`schema, id, root, name`; when absent) and
+  atomically, 0600 in 0700 folders, `projects/<id>.json` (`schema, id, root, name`; when absent, so an optional `todo` the user set,
+  which the hooks never write, stays) and
   `sessions/<session>.json` (`schema, session, project, pid, state, at`; `state` is `idle`, `working` or
   `ended`; `pid` is Claude Code's, from `hook.sh`, or null; and, only when they hold, `bg: true` when Claude
   Code's environment has `CLAUDE_CODE_SESSION_ATTENDED=0`, or a `CLAUDE_JOB_DIR` when

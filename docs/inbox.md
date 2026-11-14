@@ -64,7 +64,7 @@ back as it was. The search survives the page's own reload.
 | `?` | lists the shortcuts |
 
 A project's todo file is the first of `_bmad-output/todo.md`, `TODO.md` and `todo.md` under its root (the root the
-hooks noted). The inbox only reads it, and never calls an issue tracker: for a project whose tasks are in one, the
+hooks noted), or the file its `todo` key names (below). The inbox only reads it, and never calls an issue tracker: for a project whose tasks are in one, the
 agent copies into the todo file only the issues that wait on you, each with its link as `<https://…>` (a bare URL
 stays text), and keeps them in step. An open item is a Markdown task, `- [ ] text`, with its indented lines; an
 agent marks one as waiting on you right after the checkbox, in English:
@@ -75,6 +75,17 @@ agent marks one as waiting on you right after the checkbox, in English:
   ./manage.py migrate
   ```
 ```
+
+To keep the list in another file, add a `todo` key to the project's file in the Signoff home, a path relative to
+the project's root. The hooks write that file once and never again, so the key stays. Find the file by its `root`:
+
+```bash
+grep -l '"root": "/path/to/project"' "$(signoff inbox home)"/projects/*.json
+```
+
+and add the key beside the others, for example `"todo": "docs/tasks.md"`. That file alone is then read: when it is
+not a file inside the root (a link is followed and must stay inside too), the inbox shows "the todo path in its
+project file not read: it names no file inside the project" and reads none of the three names.
 
 An item and the items indented under it are one row, a chain: the items under it are its steps, never rows of their
 own, and the row says how many are done (`1 of 3 steps done`). The row waits on you when the item or one of its open

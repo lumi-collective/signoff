@@ -17,7 +17,7 @@ To open it for the user, run `python3 -I "${CLAUDE_PLUGIN_ROOT}/signoff/signoff.
 ## Todo items that wait on the user
 
 The inbox lists each project's open todo items, from the first of `_bmad-output/todo.md`, `TODO.md` and
-`todo.md` in the project. When an item needs the user (a command to run, a click in a GUI), mark it right after
+`todo.md` in the project, or the file the user named with a `todo` key. When an item needs the user (a command to run, a click in a GUI), mark it right after
 its checkbox, in English: `- [ ] (waiting on you: <what, in a few words>) <the item>`. Mark only an item that
 blocks the next step now; anything the user can do later stays unmarked. An item and the items indented under it
 are one row in the inbox, a chain: put the steps of one piece of work under one item, without markers, and give

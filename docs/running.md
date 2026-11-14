@@ -39,7 +39,8 @@ stdout.
 
 With `inbox.lock` there, the plugin's hooks also note each Claude Code session in the home, so the inbox can show
 whether a session is working, idle or waiting on you, from what the session itself reported. `projects/<id>.json`
-holds a project's root folder and name (written once); `sessions/<session id>.json` holds the project's id, the
+holds a project's root folder and name (written once; an optional `todo` key, which you add and the hooks never
+write, names the project's todo file, see [the inbox](inbox.md#the-inbox)); `sessions/<session id>.json` holds the project's id, the
 Claude Code process id (none on Windows), the state (`idle`, `working` or `ended`) and when it was set, `bg: true`
 for a background session (`claude --bg`), and, while the session waits on you for a permission or an answer to
 its question, `waiting: "permission"` and since when. The wait ends at your next prompt, when the tool has run

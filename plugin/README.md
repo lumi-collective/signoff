@@ -117,7 +117,8 @@ except on Windows, whether it is working, idle or ended, with the time, whether 
 since when it waits on you for a permission or an answer), and a flag that says whether any session may be
 waiting. They never write your prompts, Claude's replies, Claude Code's messages, the tools' input or output, or
 the transcript. The inbox reads each project's todo file (the first of
-_bmad-output/todo.md, TODO.md and todo.md) and never writes it. It writes the answers you give there the way a
+_bmad-output/todo.md, TODO.md and todo.md, or a file inside the project that you name in that project's file) and
+never writes it. It writes the answers you give there the way a
 run does, and in its folder a lock file, a note of its port and socket (no token), a count of what waits on you (numbers and two-letter project marks,
 no text), the palette, light or dark, density and list order you kept, the socket itself and a log. Each message you send on a todo item is a small file there (the item's
 first line, your text, the time); the agent marks it handled with an empty file beside it. A finding you hand

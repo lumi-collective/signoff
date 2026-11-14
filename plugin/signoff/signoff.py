@@ -793,6 +793,8 @@ _WAITING = re.compile(r"^\(waiting on you: ([^)\n]+)\)(?= |$)")
 MD_DEPTH = 6  # nested quotes and lists; past it the rest is text (each level adds nodes for the same few bytes)
 MAX_COLUMNS = 64  # a table's columns
 TODO_FILES = ("_bmad-output/todo.md", "TODO.md", "todo.md")  # where a project's todo.md is looked for, in order
+# A bad `todo` key on the page ("<file> not read: <error>"): fixed text, as the key's value may be an agent's.
+TODO_KEY_FILE, TODO_KEY_ERROR = "the todo path in its project file", "it names no file inside the project"
 MAX_TODO = 1024 * 1024
 MAX_TODOS = 300  # per project
 MAX_ITEM = 64 * 1024  # an item's text turned into a tree; past it only the start of its first line
@@ -1157,6 +1159,27 @@ def todo_file(root):
         if path.is_file() and Path(root).resolve() in path.resolve().parents:
             return path
     return None
+
+
+def project_todo(p):
+    """(path, file, error) for a project file from the home: the file its `todo` key names, a path inside its root,
+    with no fallback to TODO_FILES (a typo shows an error, not another file); without the key, todo_file. `file` is
+    the path the page shows, relative to the root. The key's value never goes into the error."""
+    if "todo" not in p:
+        path = todo_file(p["root"])
+        return path, path.relative_to(p["root"]).as_posix() if path else None, None
+    if not os.path.isdir(p["root"]):
+        return None, None, None  # a project whose folder is gone shows no todo file, as without the key
+    try:
+        root = Path(p["root"]).resolve()
+        path = _inside(root, p["todo"], "todo") if isinstance(p["todo"], str) else None
+        # shortcut: the check and read_todo_file's open are two steps, as for TODO_FILES: a link swapped in between
+        # can point out of the root. Open each part with O_NOFOLLOW if that bites.
+        if path and stat.S_ISREG(path.stat().st_mode):
+            return path, path.relative_to(root).as_posix(), None
+    except (ValueError, OSError, RuntimeError):  # DecisionsError is a ValueError; a name too long for stat, OSError
+        pass
+    return None, TODO_KEY_FILE, TODO_KEY_ERROR
 
 
 def read_todo_file(path):
@@ -2926,7 +2949,7 @@ class InboxServer(_Server):
                     return 409, b"that finding is no longer listed; reload the page\n"
             else:
                 # Any open item of a chain takes a message, its steps too; Later only one marked waiting.
-                path = todo_file(p["root"])
+                path = project_todo(p)[0]
                 key = "waits" if kind == "later" else "refs"
                 refs = {r for t in (self._todos(path)[0] if path else []) for r in t[key]}
                 if body["ref"] not in refs:
@@ -3094,10 +3117,10 @@ class InboxServer(_Server):
                         opened.setdefault((g.entry.get("project"), r.path.parent.name + "/" + r.path.name),
                                           "run/%d/" % n)
             for pid, p in sorted(projects.items(), key=lambda kv: kv[1]["name"].lower()):
-                path, osv = todo_file(p["root"]), self._osv(p)
-                if path is None and osv is None:
+                (path, file, bad), osv = project_todo(p), self._osv(p)
+                if file is None and osv is None:
                     continue
-                todos, error = self._todos(path) if path else ([], None)
+                todos, error = self._todos(path) if path else ([], bad)
                 who, asked = _who(pid, p["name"]), self._requests(pid)
                 # An item has no time of its own: the list shows and sorts on when its file last changed.
                 changed = datetime.datetime.fromtimestamp((_mtime(path) or 0) / 1e9, datetime.timezone.utc
@@ -3113,8 +3136,7 @@ class InboxServer(_Server):
                     return dict(shown, round=link) if link else shown
                 waiting += [dict(who, kind="todo", waiting=t["waiting"], since=changed, **row(t))
                             for t in todos if t["waiting"]]
-                listed.append(dict(who, id=pid, file=path.relative_to(p["root"]).as_posix() if path else None,
-                                   error=error, todos=[row(t) for t in todos if not t["waiting"]]))
+                listed.append(dict(who, id=pid, file=file, error=error, todos=[row(t) for t in todos if not t["waiting"]]))
                 if osv:
                     for f in osv[0]["findings"]:
                         f["requests"] = asked.get(("vuln", f["ref"]), []) if f["ref"] else []

@@ -936,6 +936,85 @@ class Inbox(unittest.TestCase):
 
 
 @unittest.skipIf(sys.platform == "win32", "the inbox's control socket is a Unix socket; no inbox on Windows yet")
+class InboxTodoPath(unittest.TestCase):
+    """The `todo` key of a project file in the home, for an inbox in a separate process: the file it names inside
+    the root is the todo file; one out of the root (by `..`, an absolute path or a link), too big or not a file puts
+    no text on the page, gives the project an error, and takes no message. The fixed names are not read then."""
+
+    GOOD = "notes/tasks.md"
+
+    @classmethod
+    def setUpClass(cls):
+        cls._tmp = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(cls._tmp.cleanup)
+        base = os.path.realpath(cls._tmp.name)
+        cls.home = os.path.join(base, "home")
+        cls.secret = os.path.join(base, "secret.md")
+        with open(cls.secret, "w", encoding="utf-8") as f:
+            f.write("- [ ] SECRET item\n")
+        os.makedirs(os.path.join(cls.home, "projects"), mode=0o700)
+        cls.ids = {}
+        for name, key in (("good", cls.GOOD), ("dotdot", "../secret.md"), ("absolute", cls.secret),
+                          ("link", "out.md"), ("big", "big.md"), ("folder", "notes")):
+            root = os.path.join(base, name)
+            os.makedirs(os.path.join(root, "notes"))
+            os.makedirs(os.path.join(root, ".git"))
+            with open(os.path.join(root, "TODO.md"), "w", encoding="utf-8") as f:
+                f.write("- [ ] Fixed item\n")
+            with open(os.path.join(root, "notes", "tasks.md"), "w", encoding="utf-8") as f:
+                f.write("- [ ] Custom task\n")
+            os.symlink(cls.secret, os.path.join(root, "out.md"))
+            with open(os.path.join(root, "big.md"), "w", encoding="utf-8") as f:
+                f.write("- [ ] SECRET item\n" + "y" * (2 << 20))
+            pid = cls.ids[name] = hashlib.sha256(root.encode("utf-8")).hexdigest()[:16]
+            with open(os.path.join(cls.home, "projects", pid + ".json"), "w", encoding="utf-8") as f:
+                json.dump({"schema": 1, "id": pid, "root": root, "name": name, "todo": key}, f)
+        cls.proc = subprocess.Popen(COMMAND + ["inbox", "serve"], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                    env=dict(os.environ, SIGNOFF_INBOX_HOME=cls.home))
+
+        def stop():
+            if cls.proc.poll() is None:
+                cls.proc.kill()
+            cls.proc.communicate()
+        cls.addClassCleanup(stop)
+        deadline = time.monotonic() + 30
+        while True:
+            try:
+                link = cls.link()
+                break
+            except OSError:
+                assert cls.proc.poll() is None and time.monotonic() < deadline, "the inbox did not start"
+                time.sleep(0.1)
+        found = LINK.search(link)
+        cls.origin, cls.port = found.group(1), int(found.group(3))
+        cls.host = "127.0.0.1:%d" % cls.port
+
+    link = Inbox.__dict__["link"]
+    request, open, save = Inbox.request, Inbox.open, Inbox.save
+
+    def test_only_the_file_the_key_names_inside_the_root_is_read(self):
+        page = self.open()[1]
+        resp, html = self.request("GET", page)
+        self.assertEqual(resp.status, 200)
+        for text in (b"SECRET", self.secret.encode(), b"Fixed item"):
+            self.assertNotIn(text, html)
+        data = json.loads(re.search(rb'id="signoff-data">(.*?)</script>', html, re.S).group(1))
+        projects = {p["name"]: p for p in data["projects"]}
+        self.assertEqual(sorted(projects), sorted(self.ids))
+        good = projects.pop("good")
+        self.assertEqual((good["file"], good["error"], [t["ref"] for t in good["todos"]]),
+                         (self.GOOD, None, ["Custom task"]))
+        for name, p in projects.items():
+            self.assertTrue(p["error"], name)
+            self.assertEqual(p["todos"], [], name)
+        for name, pid in self.ids.items():
+            for ref in ("Custom task", "SECRET item", "Fixed item"):
+                body = {"project": pid, "ref": ref, "text": "please split it"}
+                resp, data = self.save(page, body, path="request")
+                self.assertEqual(resp.status, 200 if (name, ref) == ("good", "Custom task") else 409, (name, ref))
+
+
+@unittest.skipIf(sys.platform == "win32", "the inbox's control socket is a Unix socket; no inbox on Windows yet")
 class InboxOffer(unittest.TestCase):
     """An answer from a notification, over the control socket of an inbox in a separate process: offer, open with
     the offer (its start link lands on the item in Focus), accept once (the recommendation, with Done), and the

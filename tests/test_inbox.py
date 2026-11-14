@@ -348,6 +348,59 @@ class TodoReader(unittest.TestCase):
             self.assertEqual((texts(todos[0]["title"]), error), ("\ufffd\ufffd broken utf-8", None))
 
 
+@unittest.skipUnless(POSIX, "links and a FIFO; the inbox does not run on Windows yet")
+class TodoPathKey(unittest.TestCase):
+    """The `todo` key of a project file: a path relative to the root, checked as a decisions file's pictures are,
+    with no fallback to TODO_FILES, so a typo shows an error instead of another file."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.base = Path(tmp.name).resolve()
+        self.root = self.base / "project"
+        (self.root / "notes").mkdir(parents=True)
+        (self.root / "notes" / "tasks.md").write_text("- [ ] custom\n", encoding="utf-8")
+        (self.root / "TODO.md").write_text("- [ ] fixed\n", encoding="utf-8")
+        self.outside = self.base / "outside.md"
+        self.outside.write_text("- [ ] SECRET\n", encoding="utf-8")
+
+    def get(self, value, root=None):
+        return signoff.project_todo({"root": str(root or self.root), "todo": value})
+
+    def test_without_the_key_the_fixed_names_are_looked_for(self):
+        self.assertEqual(signoff.project_todo({"root": str(self.root)}), (self.root / "TODO.md", "TODO.md", None))
+        self.assertEqual(signoff.project_todo({"root": str(self.base / "empty")}), (None, None, None))
+
+    def test_a_path_inside_the_root_is_the_todo_file_alone(self):
+        (self.root / "tasks.md").write_text("- [ ] top\n", encoding="utf-8")
+        (self.root / "link.md").symlink_to(self.root / "notes" / "tasks.md")
+        (self.base / "linked").symlink_to(self.root)  # the root as the hooks wrote it may go through a link
+        tasks = self.root / "notes" / "tasks.md"
+        for value, root, path, file in (
+                ("notes/tasks.md", None, tasks, "notes/tasks.md"),
+                ("notes/../tasks.md", None, self.root / "tasks.md", "tasks.md"),
+                (str(tasks), None, tasks, "notes/tasks.md"),
+                ("link.md", None, tasks, "notes/tasks.md"),  # links are followed: the file read is shown
+                ("notes/tasks.md", self.base / "linked", tasks, "notes/tasks.md"),
+                (str(self.base / "linked" / "notes" / "tasks.md"), None, tasks, "notes/tasks.md")):
+            self.assertEqual(self.get(value, root), (path, file, None), value)
+        todos, error = signoff.read_todo_file(self.get("notes/tasks.md")[0])
+        self.assertEqual(([texts(t["title"]) for t in todos], error), (["custom"], None))
+
+    def test_a_bad_key_gives_the_fixed_error_and_no_other_file(self):
+        (self.root / "out.md").symlink_to(self.outside)
+        os.mkfifo(str(self.root / "fifo.md"))  # no writer: looking at it must not hang
+        for value in ("../outside.md", str(self.outside), "out.md", "notes/\x01tasks.md", "C:tasks.md",
+                      "//host/share/tasks.md", "\\\\host\\share\\tasks.md", "notes", "fifo.md", "missing.md",
+                      "", ".", "a" * 300, 5, None, ["notes/tasks.md"], {"path": "notes/tasks.md"}):
+            self.assertEqual(self.get(value), (None, signoff.TODO_KEY_FILE, signoff.TODO_KEY_ERROR), repr(value))
+        for text in (signoff.TODO_KEY_FILE, signoff.TODO_KEY_ERROR):
+            self.assertNotIn("/", text)
+
+    def test_a_key_on_a_project_whose_folder_is_gone_shows_nothing(self):
+        self.assertEqual(self.get("notes/tasks.md", self.base / "gone"), (None, None, None))
+
+
 def entry(folder, rounds, project=None, mode="waiter", pid=None, **extra):
     data = {"schema": 1, "run": os.urandom(8).hex(), "project": project, "folder": str(folder), "rounds": rounds,
             "mode": mode, "pid": os.getpid() if pid is None else pid, "started": signoff.utc_now()}
@@ -851,6 +904,60 @@ class InboxRequests(InboxTest):
             "Content-Type": "application/json", "Origin": run.origin, "Sec-Fetch-Site": "same-origin"})
         self.assertEqual(resp.status, 404)
         self.assertFalse((self.home / "requests").exists())
+
+
+class InboxTodoKey(InboxTest):
+    """A project file's `todo` key on the list and for messages: its file alone, and for a bad key the project with
+    a fixed error, its sessions still there, no other file's text and no path."""
+    WAITING_REF, PLAIN_REF = InboxRequests.WAITING_REF, InboxRequests.PLAIN_REF
+    send, message, requests = InboxRequests.send, InboxRequests.message, InboxRequests.requests
+
+    def key(self, value):
+        self.write(self.home / "projects" / (self.pid + ".json"), {"schema": 1, "id": self.pid, "root": str(self.root),
+                                                                   "name": self.root.name, "todo": value})
+
+    def test_the_key_names_the_todo_file_for_the_list_and_messages(self):
+        (self.root / "notes").mkdir()
+        (self.root / "notes" / "tasks.md").write_text("- [ ] Custom task\n", encoding="utf-8")
+        self.key("notes/tasks.md")
+        self.start()
+        page = self.open()[1]
+        project = self.view(page)[0]["projects"][0]
+        self.assertEqual((project["file"], project["error"]), ("notes/tasks.md", None))
+        self.assertEqual([t["ref"] for t in project["todos"]], ["Custom task"])
+        self.assertEqual(self.send(page, self.message(ref="Custom task"))[0].status, 200)
+        self.assertEqual(self.send(page, self.message())[0].status, 409)  # TODO.md is not read while the key is set
+        self.assertEqual(self.send(page, {"kind": "later", "project": self.pid, "ref": self.WAITING_REF})[0].status,
+                         409)
+
+    def test_a_bad_key_keeps_the_project_with_a_fixed_error(self):
+        outside = self.root.parent / "outside"
+        outside.mkdir()
+        (outside / "secret.md").write_text("- [ ] SECRET item\n", encoding="utf-8")
+        (self.root / "out.md").symlink_to(outside / "secret.md")
+        (self.root / "big.md").write_bytes(b"- [ ] SECRET item\n" + b"y" * signoff.MAX_TODO)
+        self.write(self.home / "sessions" / "s1.json", {
+            "schema": 1, "session": "s1", "project": self.pid, "pid": os.getpid(), "state": "working",
+            "at": stamp(5), "waiting": "permission", "waiting_at": stamp(5)})
+        self.start()
+        for value, error in (("../outside/secret.md", signoff.TODO_KEY_ERROR),
+                             (str(outside / "secret.md"), signoff.TODO_KEY_ERROR),
+                             ("out.md", signoff.TODO_KEY_ERROR), ("missing.md", signoff.TODO_KEY_ERROR),
+                             ("big.md", "larger than 1024 KiB")):
+            self.key(value)
+            page = self.open()[1]
+            data, html = self.view(page)
+            project = data["projects"][0]
+            self.assertEqual((project["id"], project["error"], project["todos"]), (self.pid, error, []), value)
+            # A file inside the root that is too big is named, as a fixed name is; a bad key's value never.
+            bad = error == signoff.TODO_KEY_ERROR
+            self.assertEqual(project["file"], signoff.TODO_KEY_FILE if bad else value)
+            self.assertEqual([w["kind"] for w in data["waiting"]], ["session"], value)  # TODO.md is not read either
+            for text in (b"SECRET", str(outside).encode()) + ((value.encode(),) if bad else ()):
+                self.assertNotIn(text, html, value)
+            for ref in ("SECRET item", self.PLAIN_REF):
+                self.assertEqual(self.send(page, self.message(ref=ref))[0].status, 409, (value, ref))
+        self.assertEqual(self.requests(), [])
 
 
 class InboxChains(InboxTest):

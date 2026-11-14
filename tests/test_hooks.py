@@ -145,6 +145,17 @@ class Hook(HookBase):
         self.run_hook(self.event("UserPromptSubmit", prompt="x"))  # an inbox turned on mid-session
         self.assertTrue((self.home / "projects" / (self.pid + ".json")).is_file())
 
+    def test_a_project_file_with_a_todo_key_is_left_as_it_is(self):
+        (self.home / "projects").mkdir(mode=0o700)
+        path = self.home / "projects" / (self.pid + ".json")
+        kept = json.dumps({"schema": 1, "id": self.pid, "root": str(self.project), "name": "proj",
+                           "todo": "notes/tasks.md"}).encode("utf-8")
+        path.write_bytes(kept)
+        for name, extra in (("SessionStart", {"source": "startup"}), ("UserPromptSubmit", {"prompt": "x"}),
+                            ("Stop", {}), ("SessionEnd", {"reason": "other"})):
+            self.run_hook(self.event(name, **extra))
+        self.assertEqual(path.read_bytes(), kept)
+
     def test_compact_leaves_the_state_alone(self):
         self.run_hook(self.event("UserPromptSubmit", prompt="x"))
         self.run_hook(self.event("SessionStart", source="compact"))
