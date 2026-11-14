@@ -481,6 +481,8 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   first (the default), newest first; the choice is `sort` in `prefs.json` (a stored `project`, the old By project,
   reads as oldest first), the order only changes on screen (j and k follow it). To do shows each project's rows
   behind one count row (a button with `aria-expanded`), closed until clicked; a project's filter opens its own.
+  Answered (the rounds answered, under Waiting on you) is one such group: its heading is the count row, closed
+  until clicked, and no filter opens it. No `prefs.json` key keeps any of them.
   j, k and Focus walk only the rows shown, never a closed group's. **The search** is a `role=search` field in the
   header (a phone gets it on a second line), live as you type, over every view and past the sidebar's filter: a
   row matches when each word of the query (split on spaces, folded with NFD, combining marks dropped, lower case)
@@ -495,7 +497,7 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   the open (else first) shown row; Enter or the down arrow in it go to that row, then j, k and Enter walk the
   results. The query goes through a reload with the rest (`query` in the kept state). The groups of Waiting on you follow their first
   row in the chosen order, so the oldest (or newest) row is always at the top. A self-reload keeps which To do
-  groups were open. A live session (its `sessions/` file no older than `SESSIONS_MAX_AGE`, not `ended`, its
+  groups were open, and whether Answered was. A live session (its `sessions/` file no older than `SESSIONS_MAX_AGE`, not `ended`, its
   `pid` alive) that waits on the user is a row in Waiting on you, ordered like the others (its `since` is its
   `waiting_at`): the project, how long, and for a `bg` session `claude attach <short id>` in a code block with Copy
   (the short id is the session id's first 8 characters, sent only when they are lowercase hex), else "Go to its

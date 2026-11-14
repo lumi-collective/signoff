@@ -1353,6 +1353,59 @@ def run_inbox(work):
         check(state == "sent", "the answered round should show as sent, not working: %r" % state)
         title = browser.js("document.title")
         check(title == "(2) Inbox", "the answered round should leave the count: %r" % title)
+        # Answered is closed by default, as a To do group is: its heading is a button with the count.
+        answered = ("(function () { var b = document.querySelector('h2.ib-head .ib-gtoggle'), u = b && document"
+                    ".getElementById(b.getAttribute('aria-controls')); return b && [b.textContent, b.getAttribute("
+                    "'aria-expanded'), u.querySelectorAll('.ib-row').length, u.querySelector('.ib-row').checkVisibility()]; })()")
+        check(browser.js(answered) == ["Answered 1", "false", 1, False], "Answered starts closed: %r" % browser.js(answered))
+        in_answered = ("(function () { var b = document.querySelector('h2.ib-head .ib-gtoggle'), c = document.querySelector("
+                       "'#panels .ib-main[aria-current=true]'); return !!c && document.getElementById(b.getAttribute("
+                       "'aria-controls')).contains(c); })()")
+        # j, k and Focus walk only the rows shown, never a closed Answered's.
+        browser.js("document.querySelector('#panels .ib-main').focus()")
+        for _ in range(8):
+            press(browser, "j", "KeyJ", 74, text="j")
+            check(not browser.js(in_answered), "j should not walk into a closed Answered")
+        press(browser, "f", "KeyF", 70, text="f")
+        for _ in range(8):
+            press(browser, "k", "KeyK", 75, text="k")
+            check(not browser.js(in_answered), "Focus should not walk into a closed Answered")
+        press(browser, "Escape", "Escape", 27)
+        browser.click("h2.ib-head .ib-gtoggle")
+        check(browser.js(answered) == ["Answered 1", "true", 1, True], "a click opens Answered: %r" % browser.js(answered))
+        browser.click("h2.ib-head .ib-gtoggle")
+        check(browser.js(answered)[1:] == ["false", 1, False], "a second click closes it: %r" % browser.js(answered))
+        # A search opens it while a match is inside, and only then.
+        answered_title = browser.js("document.querySelector('h2.ib-head .ib-gtoggle').closest('section')"
+                                    ".querySelector('.ib-title').textContent")
+        browser.js("var f = document.getElementById('ib-search'); f.focus(); f.select()")
+        browser.call("Input.insertText", text=answered_title)
+        check(browser.js(answered)[1:] == ["true", 1, True], "a match inside opens Answered: %r" % browser.js(answered))
+        browser.js("var f = document.getElementById('ib-search'); f.focus(); f.select()")
+        browser.call("Input.insertText", text="lodash")
+        check(not browser.js("document.querySelector('h2.ib-head .ib-gtoggle').checkVisibility()"),
+              "a search with no match inside leaves Answered out")
+        press(browser, "Escape", "Escape", 27)
+        check(browser.js(answered)[1:] == ["false", 1, False], "a cleared search closes it again: %r" % browser.js(answered))
+        # The page's own reload keeps it open; a fresh load starts closed.
+        browser.click("h2.ib-head .ib-gtoggle")
+        browser.js("window.notReloaded = true; document.activeElement.blur()")
+        todo_before = todo_file.read_text(encoding="utf-8")
+        todo_file.write_text(todo_before + "- [ ] (waiting on you: look) One more item for the reload\n", encoding="utf-8")
+        wait_for("the reload or the bar that offers it", lambda: browser.js(
+            "window.notReloaded !== true || (function () { var f = document.querySelector('#panels .ib-fresh'); "
+            "return !!f && !f.hidden; })()"), timeout=40)
+        if browser.js("window.notReloaded === true"):
+            browser.click("#panels .ib-fresh button")
+        wait_for("the reload", lambda: browser.js("window.notReloaded !== true && !!document.querySelector('.ib-main')"))
+        check(browser.js(answered)[1:] == ["true", 1, True], "the reload keeps Answered open: %r" % browser.js(answered))
+        todo_file.write_text(todo_before, encoding="utf-8")  # back to two waiting, for the checks below
+        wait_for("the inbox to count two again", lambda: json.loads(
+            (home / "state.json").read_text(encoding="utf-8"))["waiting"] == 2)
+        browser.call("Page.navigate", url=browser.js("location.href"))
+        wait_for("the list again", lambda: browser.js("document.title === '(2) Inbox' && "
+                                                      "!!document.querySelector('h2.ib-head .ib-gtoggle')"))
+        check(browser.js(answered)[1:] == ["false", 1, False], "a fresh load starts closed: %r" % browser.js(answered))
         # The OSV section: projects off Uptick's scan list share one collapsed row, each with its own Scan button;
         # a click adds that project to the list.
         osv = "section.ib:last-of-type "
@@ -2053,7 +2106,8 @@ def main():
              "Esc goes back, Enter keeps the palette for the list and the round's page; Compact kept across a reload; "
              "j/k and Enter, Focus with f and Esc; at 390 px the sheet and the drawer, Esc and focus back; "
              "the round answered from the inbox wakes the waiting "
-             "run, exit 0, then shows as sent; Scan this project adds it to Uptick's list and counts Not scanned down "
+             "run, exit 0, then shows as sent in Answered, closed behind its count row (out of j, k and Focus), "
+             "opened by a click or a match inside, kept open by the page's own reload; Scan this project adds it to Uptick's list and counts Not scanned down "
              "to 0 without a reload, a finding handed to the agent is a vuln request and not counted; "
              "live sessions: two waiting ones counted, the background one's claude attach copied exactly, the "
              "interactive one pointed to its terminal, an idle one dimmer in Idle and counted nowhere, a third "

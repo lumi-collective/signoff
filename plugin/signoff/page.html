@@ -483,6 +483,8 @@ body.focusing #ib-detail{padding:18px max(28px,calc(50% - 400px)) 40px}
 .ib-gtoggle[aria-expanded=true]::after{content:"▾"}
 .ib-gtoggle:focus-visible{outline:3px solid var(--focus);outline-offset:-3px}
 @media (hover:hover){.ib-gtoggle:hover{background:var(--hover)}}
+.ib-head.tog{margin:12px 8px 2px}
+.ib-head .ib-gtoggle{padding:6px 14px;font-weight:inherit;letter-spacing:inherit;text-transform:inherit}
 .ib-acts{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 14px}
 .md .ib-acts a.ib-go{margin:0}
 .ib-steps{font-size:13px;font-weight:600;color:var(--soft)}
@@ -1425,7 +1427,7 @@ body.run.focusing .rp>.item[data-item]:not(.cur),body.run.focusing .rp>h2.group,
       try {  // the load after a reload takes this once
         sessionStorage.setItem(KEPT, JSON.stringify({row: current ? rowKey(current) : null,
           filter: filter ? filter.key : null, query: box.value, scroll: pane.scrollTop, detail: detail.scrollTop, at: Date.now(),
-          open: (todoSec.groups || []).filter(function (g) { return g.open; }).map(function (g) { return g.key; })}));
+          open: closable().filter(function (g) { return g.open; }).map(function (g) { return g.key; })}));
       } catch (e) { /* no storage: it reloads from the top */ }
       location.reload();
     }
@@ -1562,7 +1564,7 @@ body.run.focusing .rp>.item[data-item]:not(.cur),body.run.focusing .rp>h2.group,
       if (note) h.append(el('span', 'ib-note', note));
       s.append(h);
       pane.append(s);
-      var sec ={el: s, ul: ul, key: key, rows: []};
+      var sec ={el: s, head: h, ul: ul, key: key, rows: []};
       sections.push(sec);
       return sec;
     }
@@ -1593,24 +1595,32 @@ body.run.focusing .rp>.item[data-item]:not(.cur),body.run.focusing .rp>h2.group,
         h.id = g.ul.id + '-h';
         g.ul.setAttribute('aria-labelledby', h.id);
         if (closed) {
-          var b = el('button', 'ib-gtoggle'), n = g.rows.length;
-          b.type = 'button';
-          b.setAttribute('aria-controls', g.ul.id);
-          b.append(m, el('span', 'nl', fmt(n === 1 ? L.moreOpenOne : L.moreOpen, {p: g.w.name, n: n})));
-          b.addEventListener('click', function () {
-            if (terms.length) return;  // a search holds every group with a match open
-            g.open = g.ul.hidden;  // a project filter keeps its own project's group open (paint)
-            paint(g);
-            if (g.ul.hidden && current && current.grp === g) select(null);  // no open row out of sight; focus stays here
-            bars();
-          });
-          g.toggle = b;
-          h.append(b);
+          var n = g.rows.length;
+          h.append(toggler(g, [m, el('span', 'nl', fmt(n === 1 ? L.moreOpenOne : L.moreOpen, {p: g.w.name, n: n}))]));
         } else h.append(m, el('span', 'nl', g.w.name), el('span', 'n', String(g.rows.length)));
         g.box.append(h, g.ul);
         sec.box.append(g.box);
         paint(g);
       });
+    }
+    function toggler(g, label) {  // a closed group's count row: a click shows or hides its rows
+      var b = el('button', 'ib-gtoggle');
+      b.type = 'button';
+      b.setAttribute('aria-controls', g.ul.id);
+      b.append.apply(b, label);
+      b.addEventListener('click', function () {
+        if (terms.length) return;  // a search holds every group with a match open
+        g.open = g.ul.hidden;  // a project filter keeps its own project's group open (paint)
+        paint(g);
+        if (g.ul.hidden && current && current.grp === g) select(null);  // no open row out of sight; focus stays here
+        bars();
+      });
+      g.toggle = b;
+      return b;
+    }
+    // Every group behind a count row, the ones a reload keeps open or closed.
+    function closable() {
+      return [].concat.apply([], sections.map(function (x) { return x.groups || []; })).filter(function (g) { return g.toggle; });
     }
     function forced(g) { return terms.length > 0 || !!(filter && filter.project && g.key === filter.project); }
     function paint(g) {  // a group: its rows open or closed, hidden when the filter leaves none of them
@@ -1935,7 +1945,7 @@ body.run.focusing .rp>.item[data-item]:not(.cur),body.run.focusing .rp>h2.group,
     applySort(sortKey);
     done(s, L.nothingWaiting);
     if (sent.length) {
-      s = section(L.sentHead, sent.length, '', '', 'waiting');
+      s = section(L.sentHead, sent.length, '', 'tog', 'waiting');
       sent.forEach(function (w) {
         // "working" only when the project's session said so after the answer (its hooks); otherwise "sent".
         var busy = w.state === 'working', pill = el('span', 'state ' + (busy ? 'working' : 'sent'),
@@ -1943,6 +1953,15 @@ body.run.focusing .rp>.item[data-item]:not(.cur),body.run.focusing .rp>h2.group,
         row(s, w, {kind: L.answered, cls: 'k-ok', glyph: '✓', title: w.title, sub: pill, when: since(w.saved),
           fill: function (box) { box.append(pill.cloneNode(true)); }});
       });
+      // Closed until clicked, as a To do group: the whole section is one group, its heading the count row.
+      var sentGroup = {key: 'answered', rows: s.rows, open: false, ul: s.ul, box: el('div', 'ib-groups')};
+      s.ul.id = 'ib-group-' + (count++);
+      s.rows.forEach(function (r) { r.grp = sentGroup; });
+      s.groups = [sentGroup];
+      s.box = sentGroup.box;
+      s.box.append(s.ul);
+      s.head.append(toggler(sentGroup, Array.prototype.slice.call(s.head.childNodes)));
+      paint(sentGroup);
       done(s);
     }
     var idleSec = null;
@@ -2200,7 +2219,7 @@ body.run.focusing .rp>.item[data-item]:not(.cur),body.run.focusing .rp>h2.group,
       sessionStorage.removeItem(KEPT);
     } catch (e) { /* none kept */ }
     if (back && Date.now() - back.at < 60000) {
-      (todoSec.groups || []).forEach(function (g) {  // the To do groups that were open
+      closable().forEach(function (g) {  // the To do groups and Answered, as they were
         g.open = Array.isArray(back.open) && back.open.indexOf(g.key) >= 0;
         paint(g);
       });
