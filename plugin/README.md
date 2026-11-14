@@ -110,7 +110,7 @@ Markdown copy leaves it out. It is not encrypted. The past-decisions view reads 
 set (the Decisions folder setting; by default `.signoff` in the project) and writes nothing. Once the inbox has run on
 your computer, a run also writes an empty lock file beside each open round, and a short note of the run in the
 inbox's folder: the topic folder, a hash of the project folder's path, the round file names, its process id and
-when it started and ended. Once the inbox has run, the hooks also keep small files there: one per
+when it started and ended, with its exit code. Once the inbox has run, the hooks also keep small files there: one per
 project (its folder's path and name), one per session (its id, the project, the Claude Code process id
 except on Windows, whether it is working, idle or ended, with the time, whether it runs in the background, and
 since when it waits on you for a permission or an answer), and a flag that says whether any session may be
@@ -122,7 +122,7 @@ no text), the palette, light or dark, density and list order you kept, the socke
 first line, your text, the time); the agent marks it handled with an empty file beside it. A finding you hand
 over is the same kind of file (the package and version, and a line the inbox writes from the finding), and so is
 Later (the item's first line and the inbox's fixed line), and so is the note the inbox writes once every round of a
-run that had ended is finished (the topic folder, the round names and the inbox's fixed text, none of your answers). The inbox
+run that had ended, or that stopped before it handed the answers over, is finished (the topic folder, the round names and the inbox's fixed text, none of your answers). The inbox
 reads Uptick's scan file (vulns.json in Uptick's cache folder) and Uptick's scan list (scan-repos.json in
 Uptick's config folder). Only when you click Scan this project does it write that list: it adds the project's
 folder path and keeps everything else in it. The monitor writes nothing.

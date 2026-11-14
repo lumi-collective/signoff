@@ -2997,6 +2997,90 @@ class InboxOrphan(InboxTest):
             self.assertEqual(self.save(page, dict(ANSWER, done=True), round_=n)[0].status, 200)
         self.assertFalse((self.home / "requests").exists())
 
+    def done_then(self, **left):
+        """Done on both rounds while the waiter lives, then its entry as the run left it (left: the keys it got)."""
+        e = self.register()
+        self.start()
+        start, page = self.open()
+        self.assertEqual(self.save(page, dict(ANSWER, accepted=True), round_=1)[0].status, 200)
+        for n in (0, 1):
+            self.assertEqual(self.save(page, dict(ANSWER, done=True), round_=n)[0].status, 200)
+        self.write(self.home / "runs" / (e["run"] + ".json"), dict(e, **left))
+        for _ in range(3):  # later looks write nothing more
+            self.assertEqual(self.rounds_waiting(page), [])
+        return page
+
+    def assert_one_answer(self):
+        self.assertEqual([(r["kind"], r["ref"], r["text"]) for r in self.answers()],
+                         [("answer", "2026-11-06-inbox / round-01, round-02", signoff.ANSWER_TEXT)])
+
+    def test_a_waiter_stopped_after_a_done_in_the_inbox_hands_the_answer_over_once(self):
+        # SIGTERM or SIGHUP before the waiter's next look: it exits 130 with nothing on stdout, so the inbox tells.
+        self.done_then(ended=signoff.utc_now(), exit=130)
+        self.assert_one_answer()
+        self.stop()  # a restart: the done rounds are no orphan rounds, so nothing is handed over again
+        self.start()
+        start, page = self.open()
+        for _ in range(3):
+            self.assertEqual(self.rounds_waiting(page), [])
+        self.assert_one_answer()
+
+    def test_a_killed_waiter_after_a_done_counts_as_stopped(self):
+        self.done_then(pid=dead_pid())
+        self.assert_one_answer()
+
+    def test_a_waiter_that_exited_0_after_a_done_hands_nothing_over(self):
+        self.done_then(ended=signoff.utc_now(), exit=0)
+        self.assertFalse((self.home / "requests").exists())
+
+    def test_an_entry_with_no_exit_code_hands_nothing_over_as_before(self):
+        self.done_then(ended=signoff.utc_now())  # an older plugin's run: it may have handed over
+        self.assertFalse((self.home / "requests").exists())
+
+    def outside_after_the_end(self, code, look_first):
+        """Another program finishes both rounds after the run ended with code: before the inbox's next look, or
+        after that look made the group orphan."""
+        e = self.register(mode="page" if code == 2 else "waiter")
+        server = self.start()
+        start, page = self.open()
+        self.assertEqual(len(self.rounds_waiting(page)), 2)
+        with server.scan_lock:  # no look in between, from the inbox's own thread either
+            self.write(self.home / "runs" / (e["run"] + ".json"), dict(e, ended=signoff.utc_now(), exit=code))
+            if not look_first:
+                for n in (1, 2):
+                    write_outside(self.topic / ("round-%02d.answers.json" % n), done_record())
+        if look_first:
+            self.assertEqual([w["orphan"] for w in self.rounds_waiting(page)], [True, True])
+            for n in (1, 2):
+                write_outside(self.topic / ("round-%02d.answers.json" % n), done_record())
+        for _ in range(3):
+            self.assertEqual(self.rounds_waiting(page), [])
+        self.assert_one_answer()
+
+    def test_a_done_file_from_outside_before_the_next_look_hands_a_stopped_runs_answer_over(self):
+        self.outside_after_the_end(130, look_first=False)
+
+    def test_a_done_file_from_outside_after_the_group_went_orphan_hands_it_over_once(self):
+        self.outside_after_the_end(130, look_first=True)
+
+    def test_a_timed_out_page_runs_rounds_finished_from_outside_are_handed_over(self):
+        self.outside_after_the_end(2, look_first=False)
+
+    def test_a_stopped_waiters_answer_that_cannot_be_written_is_said_and_the_list_goes_on(self):
+        e = self.register()
+        self.start()
+        start, page = self.open()
+        self.assertEqual(self.save(page, dict(ANSWER, accepted=True), round_=1)[0].status, 200)
+        for n in (0, 1):
+            self.assertEqual(self.save(page, dict(ANSWER, done=True), round_=n)[0].status, 200)
+        (self.home / "requests").write_text("not a folder", encoding="utf-8")
+        err = io.StringIO()
+        with mock.patch.object(sys, "stderr", err):
+            self.write(self.home / "runs" / (e["run"] + ".json"), dict(e, ended=signoff.utc_now(), exit=130))
+            for _ in range(3):
+                self.assertEqual(self.rounds_waiting(page), [])
+        self.assertEqual(err.getvalue().count("cannot hand over"), 1, err.getvalue())
+
     def test_accept_from_a_notification_hands_an_orphan_answer_over(self):
         topic, e = self.case([one_round(question("q"))])
         self.write(self.home / "runs" / (e["run"] + ".json"), dict(e, pid=dead_pid()))
@@ -3018,7 +3102,7 @@ class InboxOrphan(InboxTest):
         with mock.patch.object(sys, "stderr", err):  # before the file: the inbox's own look may take it in first
             write_outside(self.topic / "round-01.answers.json", done_record())
             self.assertEqual(self.rounds_waiting(page), [])
-        self.assertIn("cannot hand over", err.getvalue())
+        self.assertEqual(err.getvalue().count("cannot hand over"), 1, err.getvalue())  # not tried again on letting go
 
     def test_a_done_whose_answer_cannot_be_written_is_not_final(self):
         page = self.one_orphan_round()

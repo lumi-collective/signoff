@@ -439,6 +439,7 @@ class CliInbox(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, err)
         self.assertEqual(out, self.paths())
         self.assertRegex(self.entry_of(proc)["ended"], signoff.SAVED_PATTERN)
+        self.assertEqual(self.entry_of(proc)["exit"], 0)  # it handed the answers over
         self.hold(self.rounds.path / "round-01.json.lock")  # let go when the run ended
 
     def test_a_second_run_on_a_held_round_exits_1(self):
@@ -470,6 +471,7 @@ class CliInbox(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, err)
         self.assertEqual(out, self.paths())
         self.assertNotIn("http://", err)
+        self.assertEqual(self.entry_of(proc)["exit"], 0)
         self.assertIn("ended", self.entry_of(proc))
         self.assertFalse((self.rounds.path / "round-02.json.lock").exists())
 
@@ -511,6 +513,7 @@ class CliInbox(unittest.TestCase):
         out, err = self.finish(proc)
         self.assertEqual(proc.returncode, 1, err)
         self.assertIn("ended", self.entry_of(proc))
+        self.assertEqual(self.entry_of(proc)["exit"], 1)
 
     @unittest.skipIf(sys.platform == "win32", "Ctrl+C is sent as SIGINT, which is POSIX only")
     def test_ctrl_c_sigterm_and_sighup_close_the_entry_in_both_modes(self):
@@ -531,6 +534,7 @@ class CliInbox(unittest.TestCase):
                     self.assertIn("stopped", err)
                     self.assertNotIn("Traceback", err)
                     self.assertIn("ended", self.entry_of(proc))
+                    self.assertEqual(self.entry_of(proc)["exit"], 130)  # stopped: nothing handed over
 
     @unittest.skipIf(sys.platform == "win32", "SIGHUP is POSIX only")
     def test_a_run_started_with_sighup_ignored_keeps_ignoring_it(self):
@@ -557,9 +561,9 @@ class CliInbox(unittest.TestCase):
         def register(*args):
             end = real(*args)
 
-            def ending():
+            def ending(*code):
                 os.kill(os.getpid(), signal.SIGTERM)  # a SIGTERM just as the run ends by itself
-                end()
+                end(*code)
             return ending
 
         self.assertEqual(signal.getsignal(signal.SIGTERM), signal.SIG_DFL)  # not one an earlier test left behind
@@ -569,7 +573,22 @@ class CliInbox(unittest.TestCase):
             code = signoff.main([str(self.rounds.target), "--no-open", "--timeout", "0.002"])
         self.assertEqual(code, signoff.EXIT_TIMEOUT)
         self.assertIn("ended", self.entries()[0])
+        self.assertEqual(self.entries()[0]["exit"], signoff.EXIT_TIMEOUT)  # the code it ended with, not 130
         self.assertEqual(signal.getsignal(signal.SIGTERM), signal.SIG_DFL)
+
+    def test_an_unexpected_error_ends_the_entry_without_an_exit_code(self):
+        # As before the key came: the inbox then takes the run as one that handed over, and writes no request.
+        def boom(*args):
+            raise RuntimeError("boom")
+
+        with mock.patch.dict(os.environ, {"SIGNOFF_INBOX_HOME": str(self.home)}), \
+                mock.patch.object(signoff, "_serve", boom), \
+                mock.patch.object(sys, "stdout", io.StringIO()), mock.patch.object(sys, "stderr", io.StringIO()):
+            with self.assertRaises(RuntimeError):
+                signoff.main([str(self.rounds.target), "--no-open"])
+        [entry] = self.entries()
+        self.assertIn("ended", entry)
+        self.assertNotIn("exit", entry)
 
     @unittest.skipIf(sys.platform == "win32", "os.kill with SIGTERM ends the process there")
     def test_a_signal_before_the_serve_loop_still_stops_the_run(self):

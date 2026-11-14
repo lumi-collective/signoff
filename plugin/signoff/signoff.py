@@ -2195,7 +2195,7 @@ class _Group(_Rounds):
     for those rounds only, as on the run's own page. The inbox writes them only while it holds their round locks;
     another run holding one leaves them shown read only. An orphan group's rounds are listed by no live run (AD-24)."""
     start_reused = False
-    orphan = gone = False
+    orphan = gone = handed = False
 
     def __init__(self, entry, rounds, name, locks):
         self.entry, self.name, self.locks, self.held = entry, name, locks, []
@@ -2230,10 +2230,15 @@ class _Group(_Rounds):
         """No run waits on an orphan group: its answers go to the project's sessions as one request (AD-28), with
         the topic folder and round names only. The run's rounds as runs/ lists them, so a round answered before
         this group was made (an inbox restarted in between) is named too."""
-        if self.orphan and self.entry.get("project"):
+        if self.orphan:
+            self.hand_over()
+
+    def hand_over(self):
+        if self.entry.get("project"):
             write_request(self.home, self.entry["project"], "answer", ("%s / %s" % (
                 Path(self.entry["folder"]).name, ", ".join(Path(n).stem for n in self.entry["rounds"])))[:MAX_REF],
                 ANSWER_TEXT)
+            self.handed = True
 
     def view(self):
         data = _Rounds.view(self)
@@ -3000,6 +3005,17 @@ class InboxServer(_Server):
                 if not g.writable and not self.closed.is_set():  # a request still running at close() locks nothing
                     g.take_locks()
                 continue
+            ran = [e for e in gone if (e["folder"], tuple(e["rounds"])) == key]
+            # Every round done and no run of them handed the answers over (a waiter stopped just after a Done here,
+            # rounds finished from outside after the run ended): the inbox does, once. An orphan group had closing().
+            if not left and not g.orphan and not g.handed and key not in live and ran and all(
+                    "ended" not in e or e.get("exit") not in (None, 0) for e in ran):
+                try:
+                    g.hand_over()
+                except OSError as err:
+                    print("signoff inbox: cannot hand over the answers of %s (%s)" % (g.folder.name,
+                                                                                     err.strerror or err),
+                          file=sys.stderr, flush=True)
             for r in g.rounds:
                 if r.finished:
                     self._sent(g, r)
@@ -3420,8 +3436,9 @@ def _stop_on_signals():
 
 def register_run(home, rounds, mode):
     """Write runs/<run>.json in the Signoff home, so the inbox knows which rounds this run waits on, and whether on
-    its own page or as a waiter. Returns a function that marks the entry ended. A failed write is said on stderr and
-    changes nothing else. A run killed some other way leaves no ended: a reader checks pid and started."""
+    its own page or as a waiter. Returns a function that marks the entry ended, with the exit code when given (0: it
+    handed the answers over). A failed write is said on stderr and changes nothing else. A run killed some other way
+    leaves no ended: a reader checks pid and started."""
     folder = rounds[0].path.parent
     root = project_root(folder)
     entry = {"schema": 1, "run": secrets.token_hex(8), "project": project_id(root) if root else None,
@@ -3437,8 +3454,10 @@ def register_run(home, rounds, mode):
             print("signoff: could not write %s (%s); the inbox will not see this run" % (path, e), file=sys.stderr,
                   flush=True)
 
-    def end():
+    def end(code=None):
         entry["ended"] = utc_now()
+        if code is not None:
+            entry["exit"] = code
         write()
 
     write()
@@ -3787,8 +3806,9 @@ def main(argv=None):
     except OSError as e:
         print("signoff: could not write .gitignore (%s); keep *.answers.json, *.answers.md and *.json.lock in %s "
               "out of git" % (e, folder), file=sys.stderr)
-    end = register_run(home, rounds, "waiter" if waiter else "page") if inbox else (lambda: None)
+    end = register_run(home, rounds, "waiter" if waiter else "page") if inbox else (lambda code=None: None)
     previous, stopping = _stop_on_signals()
+    result = None  # an unexpected error ends the entry with no exit code, as before the key came
     try:
         if waiter:
             print("signoff: the inbox is open, so the questions are there; waiting for the answers in %s (Ctrl+C "
@@ -3805,7 +3825,7 @@ def main(argv=None):
         result = "stopped"
     finally:
         stopping.append(None)
-        end()
+        end({"done": EXIT_DONE, "reused": EXIT_ERROR, "timeout": EXIT_TIMEOUT, "stopped": 130}.get(result))
         if locks:
             server.lock.acquire()  # kept until exit: a save in flight ends, and none starts, before the inbox may write
         for fd in locks:
