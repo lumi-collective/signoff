@@ -52,7 +52,18 @@
         "marks": { "type": "boolean", "default": false, "description": "Let the user draw rectangles on this item's pictures, each with a comment. They are recorded in the answer's \"marks\"." },
         "sensitive": { "type": "boolean", "default": false, "description": "The answer may hold personal data: the item starts marked Private. It only acts on an item with a text field (comment, other or marks). The user can untick it, or tick it on any item. A private answer is recorded with \"private\": true; its text stays in the answers file, and the Markdown copy hides its comment, Other text and mark comments." },
         "criteria": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/criterion" }, "description": "What the options are compared on, in row order. With it, each option's facts show as chips on its card, and a Cards / Table toggle shows the options side by side, a row per criterion. The choice is the same in both views; the view is not saved." },
-        "attachments": { "type": "array", "maxItems": 20, "items": { "$ref": "#/$defs/attachment" }, "description": "Text files read when Signoff starts and shown under the options, each in a collapsed box as plain text: nothing in them is rendered. At most 20 an item and 200 a round. The Markdown copy names them only. Not changed by sensitive: the text is yours, not the user's." }
+        "attachments": { "type": "array", "maxItems": 20, "items": { "$ref": "#/$defs/attachment" }, "description": "Text files read when Signoff starts and shown under the options, each in a collapsed box as plain text: nothing in them is rendered. At most 20 an item and 200 a round. The Markdown copy names them only. Not changed by sensitive: the text is yours, not the user's." },
+        "commands": { "type": "array", "minItems": 1, "maxItems": 10, "items": { "$ref": "#/$defs/command" }, "description": "Commands for the user to run before deciding, each shown under the description as a code block with a Copy button that copies the text exactly, and a warning under one that deletes a relative path. Signoff never runs them. The Markdown copy gives each as one line. Needs Signoff 0.5.0 or newer." }
+      }
+    },
+    "command": {
+      "type": "object",
+      "required": ["text"],
+      "additionalProperties": false,
+      "properties": {
+        "text": { "type": "string", "minLength": 1, "description": "The command as the user pastes it; line breaks and tabs kept. Any other control character, or a format character (bidi overrides, zero-width marks), is refused, so the text on screen is all that runs." },
+        "lang": { "type": "string", "description": "The language shown in the block's bar, such as bash. Default: code. The relative-delete warning applies with none, text or a shell." },
+        "caption": { "type": "string", "description": "One line of plain text above the block, also the Copy button's name." }
       }
     },
     "attachment": {

@@ -921,7 +921,77 @@ def run_attachment(work):
         kill(browser.proc)
 
 
-RELEASE = "Release 1.0 for 2026-01-10-inbox / round-01"
+COMMANDS = [{"text": "rm -rf build && make docs\n  echo '<b>done</b>'", "lang": "bash", "caption": "Rebuild the docs"},
+            {"text": "rm -rf /tmp/build"}]
+# Each command block under the item: where it sits, its caption, bar, Copy's name, the text and its warning.
+COMMAND_BLOCKS = """(function () {
+  var q = document.querySelector('.rp:not([hidden]) .item .q'), kids = Array.prototype.slice.call(q.children);
+  var cmds = q.querySelector('.cmds'), at = kids.indexOf(cmds);
+  return {after: kids[at - 1] && kids[at - 1].className, before: kids[at + 1] && kids[at + 1].className,
+    blocks: Array.prototype.map.call(cmds.querySelectorAll('.md-code'), function (c) {
+      var cap = c.previousElementSibling, pre = c.querySelector('pre'), w = c.querySelector('.md-warn');
+      return {caption: cap && cap.classList.contains('cmd-cap') ? cap.textContent : null,
+        lang: c.querySelector('.md-lang').textContent, copy: c.querySelector('.md-bar button').textContent,
+        name: c.querySelector('.md-bar button').getAttribute('aria-label'), text: pre.textContent,
+        children: pre.firstChild.children.length, tab: pre.tabIndex, warn: w && w.textContent,
+        warnBox: !!w && getComputedStyle(w).paddingTop !== '0px'};
+    }), bold: q.querySelectorAll('b').length, undef: document.body.innerText.indexOf('undefined') >= 0};
+})()"""
+
+
+def run_commands(work):
+    """An item's commands: each a code block under the description and above the pictures, its text exactly (no
+    markup), Copy puts it on the clipboard, a relative rm warns and an absolute one does not; a Hungarian round has
+    Hungarian labels; Done exits 0 and the Markdown copy holds the command escaped."""
+    for lang in ("en", "hu"):
+        topic = work / ("2026-01-09-commands-" + lang)
+        topic.mkdir()
+        shutil.copytree(str(DEMO / "mockups"), str(topic / "mockups"))
+        data = json.loads((DEMO / "round-01.json").read_text(encoding="utf-8"))
+        data["items"] = data["items"][:1]
+        data["items"][0]["commands"] = COMMANDS
+        data["lang"] = lang
+        target = topic / "decisions.json"
+        target.write_text(json.dumps(data), encoding="utf-8")
+        server, out, err, browser = serve(target, str(work / ("profile-commands-" + lang)))
+        try:
+            browser.call("Browser.grantPermissions", origin=wait_for("the page", lambda: browser.js(
+                "document.querySelector('.cmds') && location.origin")),
+                permissions=["clipboardReadWrite", "clipboardSanitizedWrite"])
+            got = browser.js(COMMAND_BLOCKS)
+            check((got["after"], got["before"]) == ("desc", "shots"),
+                  "the commands should sit after the description and before the pictures: %r" % got)
+            check(not got["bold"] and not got["undef"], "nothing may render, and no label may be missing: %r" % got)
+            copy, code, warn = (("Copy", "code", "⚠ Relative path: check the folder before running") if lang == "en"
+                                else ("Másolás", "kód", "⚠ Relatív útvonal: futtatás előtt ellenőrizd a mappát"))
+            name = "Copy the {l} block" if lang == "en" else "A(z) {l} blokk másolása"
+            want = [{"caption": "Rebuild the docs", "lang": "bash", "copy": copy, "name": name.format(l="Rebuild the docs"),
+                     "text": COMMANDS[0]["text"], "children": 0, "tab": 0, "warn": warn, "warnBox": True},
+                    {"caption": None, "lang": code, "copy": copy, "name": name.format(l=code), "text": COMMANDS[1]["text"],
+                     "children": 0, "tab": 0, "warn": None, "warnBox": False}]
+            check(got["blocks"] == want, "the command blocks (%s): %r" % (lang, got["blocks"]))
+            if lang == "en":
+                browser.click(".cmds .md-code .md-bar button")
+                clip = browser.call("Runtime.evaluate", expression="navigator.clipboard.readText()", awaitPromise=True,
+                                    returnByValue=True).get("result", {}).get("value")
+                check(clip == COMMANDS[0]["text"], "Copy should put the command on the clipboard exactly: %r" % clip)
+                check(browser.js("document.querySelector('.cmds .md-bar button').textContent") == "Copied",
+                      "the button should say it copied")
+            browser.click("#done")
+            finished(server, out, err, [topic / "decisions.answers.json"])
+            md = (topic / "decisions.answers.md").read_text(encoding="utf-8")
+            label = "Command" if lang == "en" else "Parancs"
+            check("- %s (Rebuild the docs): rm -rf build && make docs  \n  echo '\\<b\\>done\\</b\\>'\n" % label in md
+                  and "- %s: rm -rf /tmp/build\n" % label in md, "the Markdown copy should hold the commands: %r" % md)
+        except E2EError:
+            sys.stderr.write("--- Signoff stderr ---\n" + "".join(err))
+            raise
+        finally:
+            kill(server)
+            kill(browser.proc)
+
+
+RELEASE ="Release 1.0 for 2026-01-10-inbox / round-01"
 INBOX_TODO = """# Todo
 
 - [ ] (waiting on you: run the backup) Check <b>the backup</b> before the release
@@ -2086,6 +2156,7 @@ def run():
     run_readonly(work)
     run_table(work)
     run_attachment(work)
+    run_commands(work)
     if WINDOWS:
         print("SKIP: the inbox (it needs a Unix socket; not on Windows yet)", flush=True)
     else:
@@ -2217,6 +2288,8 @@ def main():
           "and its picker previews in the tab only, and once it stops a picture that fails says so; "
           "table view: chips, toggle, a pick in the table saved and shown on the cards, exit 0; "
           "an attachment starts closed, opens, shows the file's text unrendered, exit 0; "
+          "an item's commands sit between its text and pictures as code blocks, unrendered, Copy exact, a relative rm "
+          "warns, Hungarian labels, exit 0, escaped in the Markdown copy; "
           + ("" if WINDOWS else "inbox: the empty state, the sidebar's view and project filters, "
              "each project's other open items closed behind a count row that opens them, "
              "a waiting round and a waiting todo item grouped by project under the summary line, its steps counted, "

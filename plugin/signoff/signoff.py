@@ -50,6 +50,7 @@ MAX_ATTACHMENT = 256 * 1024
 MAX_ATTACHMENTS = 2 * 1024 * 1024  # one round's together
 MAX_ITEM_ATTACHMENTS = 20
 MAX_ROUND_ATTACHMENTS = 200  # each one is a file read at start
+MAX_ITEM_COMMANDS = 10
 MAX_MARKS = 50
 HISTORY_BUDGET = 200 * 1024 * 1024
 HISTORY_TEXT_BUDGET = 16 * 1024 * 1024  # all attachments on the past-decisions page
@@ -85,10 +86,11 @@ OTHER, SKIP = "_other", "_skip"
 TOP_KEYS = ("version", "title", "tab", "intro", "notice", "lang", "items", "free_text")
 TOP_REQUIRED = ("version", "title", "items")
 ITEM_KEYS = ("id", "group", "title", "description", "cost", "images", "select", "options", "recommended", "comment",
-             "other", "skippable", "marks", "sensitive", "criteria", "attachments")
+             "other", "skippable", "marks", "sensitive", "criteria", "attachments", "commands")
 ITEM_REQUIRED = ("id", "title", "options")
 IMAGE_KEYS = ("src", "html", "caption", "alt", "boxes")
 ATTACHMENT_KEYS = ("src", "caption")
+COMMAND_KEYS = ("text", "lang", "caption")
 OUTCOME_KEYS = ("log", "line", "date")
 OPTION_KEYS = ("id", "label", "detail", "facts")
 CRITERION_KEYS = ("id", "label")
@@ -323,6 +325,22 @@ def _item(item, n, folder, images, used, lenient=False):
         raise DecisionsError("%s: more than %d attachments in this round" % (where, MAX_ROUND_ATTACHMENTS))
     for k, att in enumerate(attachments, 1):
         _attachment(att, folder, "%s, attachment %d" % (where, k), used, lenient)
+    if "commands" in item:
+        commands = item["commands"]
+        if not isinstance(commands, list) or not 1 <= len(commands) <= MAX_ITEM_COMMANDS:
+            raise DecisionsError("%s: 'commands' must be a list of 1 to %d" % (where, MAX_ITEM_COMMANDS))
+        for k, cmd in enumerate(commands, 1):
+            cwhere = "%s, command %d" % (where, k)
+            _keys(cmd, COMMAND_KEYS, ("text",), cwhere)
+            for key in COMMAND_KEYS:
+                _text(cmd, key, cwhere)
+            if not cmd["text"].strip():
+                raise DecisionsError("%s: 'text' is empty" % cwhere)
+            # The user pastes it into a terminal, so what the page shows must be all that runs: no control
+            # character but tab and newline, no format character (bidi overrides, zero-width marks).
+            hidden = next((c for c in cmd["text"] if c not in "\t\n" and unicodedata.category(c) in ("Cc", "Cf")), None)
+            if hidden is not None:
+                raise DecisionsError("%s: 'text' holds an invisible character, U+%04X" % (cwhere, ord(hidden)))
 
 
 def load_decisions(path, lenient=False):
@@ -668,14 +686,15 @@ MD_LABELS = {
            "done": "Done", "yes": "yes", "no": "no", "skipped": "Skipped", "other": "Other", "rec": "recommended",
            "not_rec": "not recommended", "nothing": "nothing chosen", "none": "(none)", "private": "(private)",
            "anything": "Anything else", "recommended": "recommendation, not changed", "accept_all": "Accept all",
-           "user": "the user", "notification": "recommendation, accepted from a notification", "unknown": "unknown", "yes_at": "yes, %s", "changed": "no, changed after it was accepted"},
+           "user": "the user", "notification": "recommendation, accepted from a notification", "unknown": "unknown", "yes_at": "yes, %s", "changed": "no, changed after it was accepted",
+           "command": "Command"},
     "hu": {"choice": "Választás", "source": "Forrás", "comment": "Megjegyzés", "mark": "Jelölés %d, %d. kép, %s "
            "(x, y, sz, m, %%-ban): %s", "attachment": "Melléklet", "saved": "Mentve", "accepted": "Elfogadva",
            "done": "Kész", "yes": "igen", "no": "nem", "skipped": "Kihagyva", "other": "Egyéb", "rec": "javasolt",
            "not_rec": "nem javasolt", "nothing": "nincs választás", "none": "(nincs)", "private": "(privát)",
            "anything": "Bármi más", "recommended": "a javaslat, változatlanul", "accept_all": "Javaslatok elfogadása",
            "user": "a felhasználó", "notification": "a javaslat, értesítésből elfogadva", "unknown": "ismeretlen", "yes_at": "igen, %s",
-           "changed": "nem, elfogadás után módosítva"},
+           "changed": "nem, elfogadás után módosítva", "command": "Parancs"},
 }
 
 
@@ -741,6 +760,10 @@ def answers_markdown(decisions, record):
             name = md_text(att["src"].replace("\n", " "))
             caption = att.get("caption", "").replace("\n", " ")
             out.append("- %s: %s" % (lb["attachment"], "%s (%s)" % (md_text(caption), name) if caption.strip() else name))
+        for cmd in item.get("commands", []):  # for reading, not pasting: md_text drops indentation and blank lines
+            caption = cmd.get("caption", "").replace("\n", " ")
+            out.append("- %s%s: %s" % (lb["command"], " (%s)" % md_text(caption) if caption.strip() else "",
+                                       md_text(cmd["text"])))
         out.append("")
     title = decisions["free_text"].get("title") or lb["anything"]
     out += ["## " + md_text(title.replace("\n", " ")), "", md_text(record["free_text"], lb["none"]), "",

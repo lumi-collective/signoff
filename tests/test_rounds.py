@@ -722,6 +722,21 @@ class Page(unittest.TestCase):
         self.assertIn("oldRound: 'Open 2+ days'", en)
         self.assertIn("oldRound: '2+ napja nyitva'", hu)
 
+    def test_the_code_block_helpers_are_shared_by_both_pages(self):
+        # An item's commands use the inbox's code block, so codeBlock and what it calls sit above the inbox's part,
+        # where the Hungarian test above sees their labels; renderItem builds one per command.
+        script = self.page[self.page.index("var data = JSON.parse"):]
+        shared = script[:script.index("// ---- The inbox.")]
+        for name in ("function codeBlock(", "function copier(", "var DELETERS = ", "function relativeDelete("):
+            self.assertIn(name, shared)
+            self.assertEqual(script.count(name), 1, name)
+        self.assertNotIn("|| 'code'", shared[shared.index("function codeBlock("):shared.index("function copier(")])
+        item = script[script.index("function renderItem("):]
+        item = item[:item.index("\n  }\n")]
+        self.assertIn("codeBlock(", item)
+        self.assertLess(item.index("'desc'"), item.index("codeBlock("))
+        self.assertLess(item.index("codeBlock("), item.index("'shots'"))
+
     def test_an_orphan_round_says_its_run_has_ended_in_english_and_hungarian(self):
         # The run is what is known gone: after Ctrl+C or the idle timeout its session may well live on.
         labels = self.page[self.page.index("var LABELS = {"):self.page.index("var data = JSON.parse")]

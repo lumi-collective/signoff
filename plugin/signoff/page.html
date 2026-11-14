@@ -427,7 +427,7 @@ button.icon svg,.side .ic{fill:none;stroke:currentColor;stroke-width:1.6;stroke-
 .ic-copy{margin-left:4px;padding:0 2px;font-size:11.5px;text-decoration:none}
 .ic-warn,.md-warn{color:var(--boxtext);font-size:12.5px;font-weight:600}
 .ic-warn{margin-left:6px}
-.md .md-warn{margin:0;padding:6px 12px;border-top:1px solid var(--box);background:var(--boxsoft)}
+.md .md-warn,.cmds .md-warn{margin:0;padding:6px 12px;border-top:1px solid var(--box);background:var(--boxsoft)}
 .ib-copytext{margin:10px 0 0;padding:3px 12px;font-size:12.5px}
 .ib-list{list-style:none;margin:0;padding:0 8px}
 .ib-main{position:relative;display:grid;grid-template-columns:26px minmax(0,1fr) auto;grid-template-areas:"mono title when" "mono sub sub";
@@ -630,6 +630,9 @@ body.run .bar #status{min-width:0;font-size:12px}
 body.run .item{padding:20px 22px}
 .item legend{margin-bottom:8px}
 .q .shots{margin:4px 0 14px}
+.cmds{margin:0 0 14px}
+.cmds .md-code{margin:0 0 10px}
+.cmd-cap{margin:0 0 4px;font-size:13px;font-weight:600;color:var(--soft)}
 .margin{margin:4px 0 14px;padding:10px 14px;border-radius:8px;background:var(--sel);border-left:3px solid var(--accent)}
 .m-head{margin:0 0 4px;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}
 .margin .rec{display:block;margin:0;padding:0;border:0;border-radius:0;background:none;color:var(--text);font-size:14.5px;font-weight:650}
@@ -854,7 +857,7 @@ body.run.focusing .rp>.item[data-item]:not(.cur),body.run.focusing .rp>h2.group,
       kItemShort: 'item', kOptionShort: 'option', kLeave: 'leave Focus or close the sidebar; or this list',
       opened: 'Opened {d} · {t} ago', openedNow: 'Opened {d} · just now', oldRound: 'Open 2+ days',
       oldNote: 'Its questions may be out of date: if in doubt, ask the agent before you answer.',
-      oldOpenFor: 'This round has been open for {t}.'},
+      oldOpenFor: 'This round has been open for {t}.', codeLang: 'code'},
     hu: {done: 'Kész', doneRounds: 'Kész ({n} kör)', acceptShort: 'Javaslatok elfogadása', acceptRest: '',
       undo: 'Elfogadás visszavonása', recommended: 'Javasolt', cost: 'Költség',
       comment: 'Megjegyzés (nem kötelező)', many: 'Több is választható.', other: 'Egyéb', otherText: 'Egyéb: a te válaszod',
@@ -914,7 +917,10 @@ body.run.focusing .rp>.item[data-item]:not(.cur),body.run.focusing .rp>h2.group,
       kFocus: 'Fókusz: egyszerre egy tétel', kFocusShort: 'fókusz', kKeysShort: 'billentyűk',
       minutes: '{n} perce', underMinute: 'kevesebb mint egy perce', hours: '{n} órája', days: '{n} napja',
       opened: 'Megnyitva: {d} · {t}', openedNow: 'Megnyitva: {d} · épp most', oldRound: '2+ napja nyitva',
-      oldNote: 'A kérdései elavulhattak: ha bizonytalan vagy, kérdezd meg az ágenst, mielőtt válaszolsz.'}
+      oldNote: 'A kérdései elavulhattak: ha bizonytalan vagy, kérdezd meg az ágenst, mielőtt válaszolsz.',
+      copy: 'Másolás', copied: 'Másolva', copyFailed: 'Nem sikerült másolni: jelöld ki a szöveget',
+      copyLabel: 'A(z) {l} blokk másolása', relDelete: 'Relatív útvonal: futtatás előtt ellenőrizd a mappát',
+      codeLang: 'kód'}
   };
   var data = JSON.parse(document.getElementById('signoff-data').textContent);
   var historyMode = data.mode === 'history';
@@ -1247,32 +1253,11 @@ body.run.focusing .rp>.item[data-item]:not(.cur),body.run.focusing .rp>h2.group,
       closeSide: closeSide, sideState: sideState};
   }
 
-  // ---- The inbox. Todo items come as a tree from the server; every part becomes an element with textContent,
-  // so the agent's HTML is text, and only http(s) links are made. ----
-  var ALERTS = ['note', 'tip', 'important', 'warning', 'caution'];  // class names, so the list stays closed
-  function inlines(nodes, into, plain) {
-    (nodes || []).forEach(function (n) {
-      if (n.t === 'code') {
-        into.append(el('code', 'ic', n.v));
-        if (!plain) {  // plain: a title (inside a button) or a link's text: no button there
-          into.append(copier(String(n.v), L.copyCode, 'link ic-copy'));
-          if (relativeDelete(n.v)) into.append(el('span', 'ic-warn', '⚠ ' + L.relDelete));
-        }
-      } else if (n.t === 'b') into.append(inlines(n.c, el('strong'), plain));
-      else if (n.t === 'link' && !plain && /^https?:\/\//i.test(String(n.href))) {
-        var a = inlines(n.c, el('a'), 'link');
-        a.href = n.href;
-        a.target = '_blank';
-        a.rel = 'noopener noreferrer';
-        into.append(a);
-      } else if (n.t === 'link') inlines(n.c, into, plain);
-      else into.append(document.createTextNode(String(n.v || '')));
-    });
-    return into;
-  }
+  // A code block: a todo item's in the inbox, an item's command on a round's page. Its Copy is named by the caption
+  // (a command's), else the language.
   function codeBlock(b) {
     var box = el('div', 'md-code'), bar = el('div', 'md-bar'), lang = String(b.lang || ''), text = String(b.text);
-    bar.append(el('span', 'md-lang', lang || 'code'), copier(text, fmt(L.copyLabel, {l: lang || 'code'})));
+    bar.append(el('span', 'md-lang', lang || L.codeLang), copier(text, fmt(L.copyLabel, {l: String(b.caption || '') || lang || L.codeLang})));
     var pre = el('pre');
     pre.tabIndex = 0;  // it scrolls sideways, so the keyboard must reach it
     pre.append(el('code', '', text));
@@ -1280,7 +1265,7 @@ body.run.focusing .rp>.item[data-item]:not(.cur),body.run.focusing .rp>h2.group,
     if (/^(|text|bash|sh|zsh|shell|console|powershell|pwsh|cmd|bat)$/i.test(lang) && relativeDelete(text)) box.append(el('p', 'md-warn', '⚠ ' + L.relDelete));
     return box;
   }
-  // A Copy button: the text exactly, nothing added (a function gives it at the click). The inbox never runs a
+  // A Copy button: the text exactly, nothing added (a function gives it at the click). Signoff never runs a
   // command, it only hands it over.
   function copier(text, label, cls, caption) {
     var copy = el('button', cls || '', caption || L.copy);
@@ -1310,6 +1295,30 @@ body.run.focusing .rp>.item[data-item]:not(.cur),body.run.focusing .rp>h2.group,
         return w !== '' && !/^(-|\d*[<>&]|[\/~$%\\]|[A-Za-z]:[\\\/])/.test(w);
       });
     });
+  }
+
+  // ---- The inbox. Todo items come as a tree from the server; every part becomes an element with textContent,
+  // so the agent's HTML is text, and only http(s) links are made. ----
+  var ALERTS = ['note', 'tip', 'important', 'warning', 'caution'];  // class names, so the list stays closed
+  function inlines(nodes, into, plain) {
+    (nodes || []).forEach(function (n) {
+      if (n.t === 'code') {
+        into.append(el('code', 'ic', n.v));
+        if (!plain) {  // plain: a title (inside a button) or a link's text: no button there
+          into.append(copier(String(n.v), L.copyCode, 'link ic-copy'));
+          if (relativeDelete(n.v)) into.append(el('span', 'ic-warn', '⚠ ' + L.relDelete));
+        }
+      } else if (n.t === 'b') into.append(inlines(n.c, el('strong'), plain));
+      else if (n.t === 'link' && !plain && /^https?:\/\//i.test(String(n.href))) {
+        var a = inlines(n.c, el('a'), 'link');
+        a.href = n.href;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        into.append(a);
+      } else if (n.t === 'link') inlines(n.c, into, plain);
+      else into.append(document.createTextNode(String(n.v || '')));
+    });
+    return into;
   }
   function blocks(list, into) {
     (list || []).forEach(function (b) {
@@ -2775,6 +2784,14 @@ body.run.focusing .rp>.item[data-item]:not(.cur),body.run.focusing .rp>h2.group,
     legend.append(h);
     field.append(legend, q);
     if (item.description) q.append(el('p', 'desc', item.description));
+    if (item.commands && item.commands.length) {  // to run before deciding: the inbox's code block, Copy and all
+      var cmds = el('div', 'cmds');
+      item.commands.forEach(function (c) {
+        if (c.caption) cmds.append(el('p', 'cmd-cap', c.caption));
+        cmds.append(codeBlock(c));
+      });
+      q.append(cmds);
+    }
     if (item.images && item.images.length) {
       var shots = el('div', 'shots');
       item.images.forEach(function (img, k) { shots.append(media(ri, img, item, k)); });

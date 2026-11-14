@@ -444,11 +444,35 @@ class Exits(unittest.TestCase):
         data = sample_decisions()
         data["items"][0]["images"][0]["src"] = "mockups/a.svg"  # never served: it can carry scripts
         svg.write(data)
-        for args in ([], ["--no-such-option"], [str(rounds.path / "missing.json")], [str(rounds.target)],
-                     [str(svg.target)]):
+        bad_commands = []
+        for commands in ([], [{"text": "ls", "run": True}], [{"text": "ls‮ -l"}]):  # the last: a bidi override
+            folder = Folder()
+            self.addCleanup(folder.cleanup)
+            data = sample_decisions()
+            data["items"][0]["commands"] = commands
+            folder.write(data)
+            bad_commands.append([str(folder.target)])
+        for args in [[], ["--no-such-option"], [str(rounds.path / "missing.json")], [str(rounds.target)],
+                     [str(svg.target)]] + bad_commands:
             done = subprocess.run(COMMAND + args + ["--no-open"], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                   universal_newlines=True, encoding="utf-8", timeout=30)
             self.assertEqual((done.returncode, done.stdout), (1, ""), (args, done.stderr))
+            if args in bad_commands:
+                self.assertTrue(done.stderr.strip(), args)
+
+    def test_an_items_commands_go_to_the_page_as_written(self):
+        folder = Folder()
+        self.addCleanup(folder.cleanup)
+        data = sample_decisions()
+        commands = [{"text": "echo '<b>x</b>'\n\tls", "lang": "bash", "caption": "Look"}, {"text": "rm -rf build"}]
+        data["items"][0]["commands"] = commands
+        folder.write(data)
+        run = Run(folder.target)
+        self.addCleanup(run.stop)
+        body = run.request("GET", run.open())[1]
+        page = json.loads(re.search(rb'id="signoff-data">(.*?)</script>', body, re.S).group(1))
+        self.assertEqual(page["rounds"][0]["decisions"]["items"][0]["commands"], commands)
+        self.assertNotIn(b"<b>x</b>", body)  # inside the data block it is escaped, never markup
 
     def test_idle_timeout_exits_2(self):
         for saved in (False, True):

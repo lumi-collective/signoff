@@ -40,7 +40,8 @@ Beside each round, `round-NN.answers.json`, from the first change on the page:
 Every save from the page also writes `round-NN.answers.md`, the same answers as Markdown for people, all text
 escaped; an answers file another program wrote has no fresh copy. Its
 labels follow the round's `lang` (`en` or `hu`; anything else gets English), and an empty comment leaves no
-line. Agents read the JSON.
+line. An item's commands get a line each, for reading, not for pasting: the copy drops their indentation and
+blank lines. Agents read the JSON.
 
 **Done is final:** a round whose answers say `done: true` is shown read only from then on and never written
 again. If its round file has changed since (the SHA-256 no longer matches), Signoff refuses to start (exit code

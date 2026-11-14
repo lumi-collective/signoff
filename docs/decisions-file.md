@@ -59,6 +59,7 @@ JSON, one file per round. [`plugin/signoff/schema.json`](../plugin/signoff/schem
 | `criteria` | item | no | what the options are compared on: a list of `id` and `label`, in row order. Adds the facts as chips on the cards and a **Cards / Table** toggle |
 | `facts` | option | no | the option's value per criterion, keyed by criterion `id`: `text`, and optional `tone` `good`, `mid` or `bad` (shown as ▲, ● or ▼ with the text); only the item's own criteria; a missing one shows "–" in the table |
 | `attachments` | item | no | text files shown under the options, each in a box that starts closed: `src` (inside the round's folder; `.md` or `.txt`, UTF-8, up to 256 KiB) and optional `caption`; up to 20 an item. Read at start and shown as plain text; the Markdown copy names them only |
+| `commands` | item | no | commands for the user to run before deciding, 1 to 10: each `text` (line breaks and tabs kept; any other control or format character, such as a bidi override or a zero-width mark, is refused), optional `lang` (shown in the block's bar) and `caption` (a line above it). Shown under the description as code blocks with Copy; Signoff never runs them |
 
 Unknown keys are refused, so a typo shows up at once instead of being ignored. Text is plain: no Markdown, links
-or HTML.
+or HTML. `commands` needs Signoff 0.5.0 or newer; an older one refuses the round.

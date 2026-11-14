@@ -35,3 +35,9 @@
   2 MiB in the page, where `<`, `>` and `&` count 6 bytes each. The page shows it under the
   options in a box that starts closed, as plain text. The whole file goes on the page, and the past-decisions
   view shows it again later, so attach nothing secret. `sensitive` does not hide it: it is your text.
+- `commands` when the user should run something before deciding (a check, a preview):
+  `"commands": [{"text": "make docs && open build/index.html", "lang": "bash", "caption": "Build the docs"}]`,
+  1 to 10 an item. The page shows each under the description as a code block with Copy (it copies `text`
+  exactly) and a warning under one that deletes a relative path; Signoff never runs it. `text` keeps line breaks
+  and tabs; any other control or format character (a bidi override, a zero-width mark) makes the round fail to
+  load. A command to run **after Done** goes in a todo item instead, where the inbox shows it with Copy.

@@ -118,6 +118,49 @@ class DecisionsFile(unittest.TestCase):
         signoff.load_decisions(self.folder.decisions)
         self.assertLess(time.perf_counter() - start, 1.0)
 
+    def test_commands_load_as_written(self):
+        data = sample_decisions()
+        cmds = [{"text": "make docs\n  open build/index.html", "lang": "bash", "caption": "Build the docs"},
+                {"text": "rm -rf build"}]
+        data["items"][0]["commands"] = cmds
+        self.folder.write(data)
+        items = signoff.load_decisions(self.folder.decisions)[0]["items"]
+        self.assertEqual(items[0]["commands"], cmds)
+        self.assertNotIn("commands", items[1])  # no default: an item without it is as before
+        data["items"][1]["commands"] = [{"text": "x"}] * signoff.MAX_ITEM_COMMANDS
+        self.folder.write(data)
+        self.assertEqual(len(signoff.load_decisions(self.folder.decisions)[0]["items"][1]["commands"]), 10)
+
+    def test_commands_bad_shapes_name_the_item_and_entry(self):
+        def cmds(value):
+            return lambda d: d["items"][1].update(commands=value)
+        for value in ("make docs", {"text": "x"}, [], [{"text": "x"}] * (signoff.MAX_ITEM_COMMANDS + 1)):
+            msg = self.broken(cmds(value))
+            self.assertIn("item 2 (filters)", msg)
+            self.assertIn("'commands'", msg)
+        for entry, word in (({"lang": "bash"}, "missing 'text'"), ({"text": ""}, "empty"), ({"text": "  \n"}, "empty"),
+                            ({"text": 3}, "string"), ({"text": "x", "lang": 1}, "string"),
+                            ({"text": "x", "caption": ["a"]}, "string"), ({"text": "x", "run": True}, "unknown key"),
+                            ("ls", "object")):
+            msg = self.broken(cmds([{"text": "ok"}, entry]))
+            self.assertIn("item 2 (filters), command 2", msg, entry)
+            self.assertIn(word, msg, entry)
+
+    def test_a_command_with_an_invisible_character_is_refused(self):
+        # The user pastes it into a terminal: what the page shows must be what runs. Tab and newline are fine.
+        for char in ("‮", "​", "⁦", "﻿", "­", "\r", "\x1b", "\x00", "\x7f", "\x85"):
+            msg = self.broken(lambda d: d["items"][0].update(commands=[{"text": "ls" + char + " -l"}]))
+            self.assertIn("item 1 (layout), command 1", msg, repr(char))
+            self.assertIn("U+%04X" % ord(char), msg, repr(char))
+            self.assertNotIn(char, msg, repr(char))  # named, never written raw to a terminal
+        msg = self.broken(lambda d: d["items"][0].update(commands=[{"text": "make\r\nls"}]))  # CRLF too
+        self.assertIn("U+000D", msg)
+        data = sample_decisions()
+        data["items"][0]["commands"] = [{"text": "if true;\n\tthen ls; fi", "caption": "​not pasted"}]
+        self.folder.write(data)
+        self.assertEqual(signoff.load_decisions(self.folder.decisions)[0]["items"][0]["commands"][0]["text"],
+                         "if true;\n\tthen ls; fi")
+
     def test_tab_is_optional_text(self):
         data = sample_decisions()
         data["tab"] = "Layout"
@@ -654,6 +697,21 @@ class MarkdownLanguage(unittest.TestCase):
             decisions, dict(record, changed_after_accept=True)))
         self.assertIn("\n(nincs)\n", signoff.answers_markdown(decisions, record))  # an empty free text
 
+    def test_commands_are_one_escaped_line_each(self):
+        # The copy is for reading: what the user was told to run, nothing rendered as Markdown or HTML.
+        self.decisions["items"][0]["commands"] = [
+            {"text": "echo <b>x</b> `id` | tee"}, {"text": "# note\n1. step", "caption": "Set *up* <i>"}]
+        md = self.md("")
+        self.assertIn("- Command: echo \\<b\\>x\\</b\\> \\`id\\` \\| tee\n", md)
+        self.assertIn("- Command (Set \\*up\\* \\<i\\>): \\# note  \n  1\\. step\n", md)
+        self.assertNotIn("<b>", md)
+        hu = self.md("", lang="hu")
+        self.assertIn("- Parancs: echo \\<b\\>", hu)
+        self.assertIn("- Parancs (Set \\*up\\* \\<i\\>): ", hu)
+        self.assertNotIn("Command", hu)
+        del self.decisions["items"][0]["commands"]
+        self.assertNotIn("Command", self.md(""))
+
     def test_private_stays_hidden_in_every_language(self):
         self.decisions["items"][0]["attachments"] = self.attached
         for lang, hidden in (("en", "(private)"), ("hu", "(privát)")):
@@ -702,6 +760,15 @@ class SchemaFile(unittest.TestCase):
         self.assertFalse(att["additionalProperties"])
         self.assertEqual(self.defs["item"]["properties"]["attachments"]["items"], {"$ref": "#/$defs/attachment"})
         self.assertEqual(self.defs["item"]["properties"]["attachments"]["maxItems"], signoff.MAX_ITEM_ATTACHMENTS)
+
+    def test_command(self):
+        cmd = self.defs["command"]
+        self.assertEqual(set(cmd["properties"]), set(signoff.COMMAND_KEYS))
+        self.assertEqual(cmd["required"], ["text"])
+        self.assertFalse(cmd["additionalProperties"])
+        listed = self.defs["item"]["properties"]["commands"]
+        self.assertEqual(listed["items"], {"$ref": "#/$defs/command"})
+        self.assertEqual((listed["minItems"], listed["maxItems"]), (1, signoff.MAX_ITEM_COMMANDS))
 
     def test_criteria_and_facts(self):
         criterion, fact = self.defs["criterion"], self.defs["fact"]
