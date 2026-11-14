@@ -336,7 +336,9 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   `todo.md` under the root in `projects/<id>.json` that is a file inside the root, at most `MAX_TODO` bytes; or,
   when that file has a `todo` key (set by hand), the file it names and no other (`project_todo`): a string, checked
   as a picture's path is (`_inside`: no control character, no drive or network path, inside the resolved root
-  with links followed, an absolute path too), and a regular file. A bad key, or one naming no file, keeps the
+  with links followed, an absolute path too), and a regular file. Its `file` on the page is the resolved name
+  relative to the root, each control, format, line-separator or lone surrogate character a space (`_one_line`:
+  a link's target skipped the key's check). A bad key, or one naming no file, keeps the
   project on the list with fixed text for `file` and `error` (`TODO_KEY_FILE`, `TODO_KEY_ERROR`), never the
   value; a message or Later on that project gets 409. A project whose root is gone shows no todo file. An
   open item is `- [ ] text` (`*` and `+` too) with its indented lines; one waiting on the user starts

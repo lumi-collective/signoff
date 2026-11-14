@@ -77,15 +77,25 @@ agent marks one as waiting on you right after the checkbox, in English:
 ```
 
 To keep the list in another file, add a `todo` key to the project's file in the Signoff home, a path relative to
-the project's root. The hooks write that file once and never again, so the key stays. Find the file by its `root`:
+the project's root. The hooks write that file once and never again, so the key stays. To find the file, run this
+from a clone of this repository with the project's folder as `pwd -P` prints it there (the file keeps a name that
+is not ASCII as an escape, so a plain `grep` may miss it):
 
 ```bash
-grep -l '"root": "/path/to/project"' "$(signoff inbox home)"/projects/*.json
+python3 -I - "$(python3 -I plugin/signoff/signoff.py inbox home)" /path/to/project <<'EOF'
+import json, pathlib, sys
+for f in sorted(pathlib.Path(sys.argv[1], "projects").glob("*.json")):
+    if json.loads(f.read_text(encoding="utf-8")).get("root") == sys.argv[2]:
+        print(f)
+EOF
 ```
 
-and add the key beside the others, for example `"todo": "docs/tasks.md"`. That file alone is then read: when it is
-not a file inside the root (a link is followed and must stay inside too), the inbox shows "the todo path in its
-project file not read: it names no file inside the project" and reads none of the three names.
+Add the key beside the others, for example `"todo": "docs/tasks.md"`, then check the file is still JSON with
+`python3 -m json.tool <that file>`: one slip, such as a trailing comma, makes the inbox skip the project whole (its
+todo items, its sessions, its vulnerabilities and its count). To start over, delete the file; the next session in
+the project writes a fresh one, without the key. With the key, that file alone is read: when it is not a file
+inside the root (a link is followed and must stay inside too), the inbox shows "the todo path in its project file
+not read: it names no file inside the project" and reads none of the three names.
 
 An item and the items indented under it are one row, a chain: the items under it are its steps, never rows of their
 own, and the row says how many are done (`1 of 3 steps done`). The row waits on you when the item or one of its open

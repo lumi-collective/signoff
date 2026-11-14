@@ -1176,7 +1176,10 @@ def project_todo(p):
         # shortcut: the check and read_todo_file's open are two steps, as for TODO_FILES: a link swapped in between
         # can point out of the root. Open each part with O_NOFOLLOW if that bites.
         if path and stat.S_ISREG(path.stat().st_mode):
-            return path, path.relative_to(root).as_posix(), None
+            # The name on disk (a link's target) skipped the key's check: a lone surrogate (a name not UTF-8 on
+            # Linux) would fail the list page's UTF-8, and a control or bidi character is no use there.
+            file = path.relative_to(root).as_posix()
+            return path, _one_line(file, len(file)), None
     except (ValueError, OSError, RuntimeError):  # DecisionsError is a ValueError; a name too long for stat, OSError
         pass
     return None, TODO_KEY_FILE, TODO_KEY_ERROR

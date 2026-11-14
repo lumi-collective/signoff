@@ -400,6 +400,22 @@ class TodoPathKey(unittest.TestCase):
     def test_a_key_on_a_project_whose_folder_is_gone_shows_nothing(self):
         self.assertEqual(self.get("notes/tasks.md", self.base / "gone"), (None, None, None))
 
+    def test_the_name_shown_is_one_line_of_plain_characters(self):
+        # The key's text is checked; the name on disk it leads to (a link's target) is not, so it is cleaned.
+        odd = self.root / "notes" / "a\x1bb‮c d.md"
+        odd.write_text("- [ ] odd\n", encoding="utf-8")
+        (self.root / "link.md").symlink_to(odd)
+        self.assertEqual(self.get("link.md"), (odd, "notes/a b c d.md", None))
+        self.assertEqual(self.get("notes/a‮b.md")[1:], (signoff.TODO_KEY_FILE, signoff.TODO_KEY_ERROR))
+        (self.root / "notes" / "a‮b.md").write_text("- [ ] odd\n", encoding="utf-8")
+        self.assertEqual(self.get("notes/a‮b.md")[1], "notes/a b.md")
+        surrogate = self.root / "notes" / "x\udcff.md"  # a lone surrogate, as Linux gives a name not UTF-8
+        with mock.patch.object(signoff, "_inside", lambda f, s, w: surrogate), \
+                mock.patch.object(Path, "stat", lambda p, *a, **k: os.stat(str(odd))):
+            path, file, error = self.get("whatever.md")
+        self.assertEqual((path, file, error), (surrogate, "notes/x .md", None))
+        file.encode("utf-8")  # the list page encodes its data as UTF-8
+
 
 def entry(folder, rounds, project=None, mode="waiter", pid=None, **extra):
     data = {"schema": 1, "run": os.urandom(8).hex(), "project": project, "folder": str(folder), "rounds": rounds,
@@ -958,6 +974,21 @@ class InboxTodoKey(InboxTest):
             for ref in ("SECRET item", self.PLAIN_REF):
                 self.assertEqual(self.send(page, self.message(ref=ref))[0].status, 409, (value, ref))
         self.assertEqual(self.requests(), [])
+
+    def test_a_name_that_is_not_utf8_keeps_the_list_loading(self):
+        # Linux gives a name that is not UTF-8 a lone surrogate; macOS makes no such file, so the name is put in at
+        # the key's check and the file's stat, for the key only.
+        (self.root / "notes").mkdir()
+        real = self.root / "notes" / "tasks.md"
+        real.write_text("- [ ] Custom task\n", encoding="utf-8")
+        odd = self.root / "notes" / "x\udcff.md"
+        inside, stat_ = signoff._inside, Path.stat
+        self.key("notes/odd.md")
+        self.start()
+        with mock.patch.object(signoff, "_inside", lambda f, s, w: odd if w == "todo" else inside(f, s, w)), \
+                mock.patch.object(Path, "stat", lambda p, *a, **k: stat_(real if p == odd else p, *a, **k)):
+            data, _ = self.view(self.open()[1])
+        self.assertEqual(data["projects"][0]["file"], "notes/x .md")
 
 
 class InboxChains(InboxTest):
