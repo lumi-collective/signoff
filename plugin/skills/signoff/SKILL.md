@@ -38,8 +38,8 @@ How to batch:
 - To act on a round before the others are answered, run each alone, all at once in the background:
   `signoff <folder>/round-NN.json`. Each wakes you at its own Done.
 - A round that depends on another's answers is a new run after that one finished (next number).
-  While other rounds of the folder are open, run it alone too: a folder run exits 1. A folder run shows
-  finished rounds read only.
+  While other rounds of the folder are open, run it alone: a folder run takes them in. A folder run shows
+  done rounds read only.
 - Never edit a round that is done (its answers file says `done: true`); ask again in a new round.
 
 ```json
