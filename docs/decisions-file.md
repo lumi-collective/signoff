@@ -60,10 +60,12 @@ JSON, one file per round. [`plugin/signoff/schema.json`](../plugin/signoff/schem
 | `facts` | option | no | the option's value per criterion, keyed by criterion `id`: `text`, and optional `tone` `good`, `mid` or `bad` (shown as ▲, ● or ▼ with the text); only the item's own criteria; a missing one shows "–" in the table |
 | `attachments` | item | no | text files shown under the options, each in a box that starts closed: `src` (inside the round's folder; `.md` or `.txt`, UTF-8, up to 256 KiB) and optional `caption`; up to 20 an item. Read at start and shown as plain text; the Markdown copy names them only |
 | `commands` | item | no | commands for the user to run before deciding, 1 to 10: each `text`, optional `lang` (shown in the block's bar: letters, digits and `+#._-`, up to 20) and `caption` (a line above it). Shown under the description as wrapped code blocks with Copy; Signoff never runs them. A round fails to load when a `text` starts or ends with a space or line break (a trailing one runs on paste), has more than 4000 characters or 60 lines, or when any of the three holds a known invisible or blank character (see below) |
+| `blocking` | item | no | your next step waits on this item: the page marks it **Agent waits on this** in its title and the sidebar, and the Summary gets an **Agent waits** filter; default `false`. Not in the answers file |
 
 Unknown keys are refused, so a typo shows up at once instead of being ignored. Text is plain: no Markdown, links
-or HTML. `commands` needs Signoff 0.5.0 or newer; an older one refuses the round, and so does an inbox still
-running from an older plugin: after updating, restart the inbox (`signoff inbox stop`, then open it again).
+or HTML. `commands` and `blocking` need Signoff 0.5.0 or newer; an older one refuses the round, and so does an
+inbox still running from an older plugin: after updating, restart the inbox (`signoff inbox stop`, then open it
+again).
 
 An invisible or blank character in a command is a control character other than tab and newline; a format, line
 or paragraph separator, surrogate, private-use or unassigned one; one of Unicode's default-ignorable code points

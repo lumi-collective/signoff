@@ -45,3 +45,5 @@
   `caption` may still hold an emoji). `lang` is a short word: up to 20 letters, digits or `+#._-`. The user
   should read a command before running it, so keep it short. A command to run **after Done** goes in a todo item
   instead, where the inbox shows it with Copy.
+- `blocking: true` on an item your next step waits on. The page marks it ("Agent waits on this") and the Summary
+  can show only those. Mark few, or the mark means nothing.

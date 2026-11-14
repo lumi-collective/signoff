@@ -86,8 +86,8 @@ How to batch:
   user's own setup). The item starts marked Private; the user can untick it, or tick Private on any item. It
   only acts on an item with a text field: `comment`, `other` or `marks`.
 - `tab`, `other`, `skippable`, `comment`, `boxes`, boards, `marks`, `group`, `lang`, `notice`, `criteria`,
-  `facts`, `attachments` and `commands` are in [fields.md](fields.md): read it before you use one.
-- All text is plain text. Line breaks are kept; HTML and Markdown are shown as typed.
+  `facts`, `attachments`, `commands` and `blocking` are in [fields.md](fields.md): read it before you use one.
+- All text is plain: line breaks are kept; HTML and Markdown show as typed.
 - The full format is in `${CLAUDE_PLUGIN_ROOT}/signoff/schema.json`.
 
 ## 2. Run it in the background

@@ -743,6 +743,16 @@ class Page(unittest.TestCase):
         self.assertIn("overflow-wrap:anywhere", rule)
         self.assertIn("codeBlock(c, true)", item)
 
+    def test_the_agent_waits_mark_and_its_filter_have_both_languages(self):
+        # show_blocking is read as L['show_' + k], which the Hungarian test above does not see.
+        labels = self.page[self.page.index("var LABELS = {"):self.page.index("var data = JSON.parse")]
+        en, hu = labels[:labels.index("hu: {")], labels[labels.index("hu: {"):]
+        for part in ("blocking: 'Agent waits on this'", "blockingShort: 'agent waits'", "show_blocking: 'Agent waits'"):
+            self.assertIn(part, en)
+        for part in ("blocking: 'Erre vár az ágens'", "blockingShort: 'erre vár'", "show_blocking: 'Erre vár az ágens'"):
+            self.assertIn(part, hu)
+        self.assertIn("['all', 'comment', 'differs', 'blocking']", self.page)
+
     def test_an_orphan_round_says_its_run_has_ended_in_english_and_hungarian(self):
         # The run is what is known gone: after Ctrl+C or the idle timeout its session may well live on.
         labels = self.page[self.page.index("var LABELS = {"):self.page.index("var data = JSON.parse")]

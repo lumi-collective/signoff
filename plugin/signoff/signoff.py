@@ -101,7 +101,8 @@ OTHER, SKIP = "_other", "_skip"
 TOP_KEYS = ("version", "title", "tab", "intro", "notice", "lang", "items", "free_text")
 TOP_REQUIRED = ("version", "title", "items")
 ITEM_KEYS = ("id", "group", "title", "description", "cost", "images", "select", "options", "recommended", "comment",
-             "other", "skippable", "marks", "sensitive", "criteria", "attachments", "commands")
+             "other", "skippable", "marks", "sensitive", "criteria", "attachments", "commands",
+             "blocking")
 ITEM_REQUIRED = ("id", "title", "options")
 IMAGE_KEYS = ("src", "html", "caption", "alt", "boxes")
 ATTACHMENT_KEYS = ("src", "caption")
@@ -285,9 +286,10 @@ def _item(item, n, folder, images, used, lenient=False):
     item.setdefault("skippable", False)
     item.setdefault("marks", False)
     item.setdefault("sensitive", False)
+    item.setdefault("blocking", False)
     if item["select"] not in SELECT_VALUES:
         raise DecisionsError("%s: 'select' must be \"one\" or \"many\"" % where)
-    for key in ("comment", "other", "skippable", "marks", "sensitive"):
+    for key in ("comment", "other", "skippable", "marks", "sensitive", "blocking"):
         if not isinstance(item[key], bool):
             raise DecisionsError("%s: %r must be true or false" % (where, key))
     criteria = {}  # criterion ids as keys: in order for the error text, and a fast lookup for each fact

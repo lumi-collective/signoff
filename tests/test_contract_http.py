@@ -454,6 +454,12 @@ class Exits(unittest.TestCase):
             data["items"][0]["commands"] = commands
             folder.write(data)
             bad_commands.append([str(folder.target)])
+        folder = Folder()
+        self.addCleanup(folder.cleanup)
+        data = sample_decisions()
+        data["items"][0]["blocking"] = "yes"
+        folder.write(data)
+        bad_commands.append([str(folder.target)])  # not a command, but checked the same way: exit 1 with a message
         for args in [[], ["--no-such-option"], [str(rounds.path / "missing.json")], [str(rounds.target)],
                      [str(svg.target)]] + bad_commands:
             done = subprocess.run(COMMAND + args + ["--no-open"], stdout=subprocess.PIPE, stderr=subprocess.PIPE,

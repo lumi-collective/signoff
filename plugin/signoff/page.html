@@ -294,6 +294,7 @@ textarea{border-radius:7px;border-color:var(--line2)}
 .summary-list li:not([hidden])~li{border-top:1px solid var(--line)}
 .summary-filter{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;margin:16px 0 0}
 .summary-filter .seg{max-width:100%}
+.summary-filter .seg.four{flex-wrap:wrap}
 .summary-filter .seg button{flex:0 1 auto;overflow-wrap:normal}
 .summary-note{margin:6px 0 2px;padding:1px 0 1px 10px;border-left:2px solid var(--accent);color:var(--text);font-size:13.5px;
   white-space:pre-line;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden}
@@ -674,6 +675,8 @@ body.run.focusing .rp>.item[data-item]:not(.cur),body.run.focusing .rp>h2.group,
 .ss .flags{grid-column:3;grid-row:1;display:flex;flex-wrap:wrap;gap:4px;justify-content:flex-end}
 .ss .flags .badge{margin:0}
 .badge.warn{background:none;color:var(--boxtext);box-shadow:inset 0 0 0 1px var(--box)}
+.wg{margin-right:4px;font-size:.8em}
+h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
 .ss .summary-note,.ss .summary-private,.ss .note-more{grid-column:1/3}
 .ss .summary-done{justify-content:flex-end;margin:24px 0 0;padding-top:16px;border-top:2px solid var(--text)}
 .ss-note{margin:0 auto 0 0;font-size:13px;color:var(--soft)}
@@ -857,7 +860,8 @@ body.run.focusing .rp>.item[data-item]:not(.cur),body.run.focusing .rp>h2.group,
       kItemShort: 'item', kOptionShort: 'option', kLeave: 'leave Focus or close the sidebar; or this list',
       opened: 'Opened {d} · {t} ago', openedNow: 'Opened {d} · just now', oldRound: 'Open 2+ days',
       oldNote: 'Its questions may be out of date: if in doubt, ask the agent before you answer.',
-      oldOpenFor: 'This round has been open for {t}.', codeLang: 'code'},
+      oldOpenFor: 'This round has been open for {t}.', codeLang: 'code',
+      blocking: 'Agent waits on this', blockingShort: 'agent waits', show_blocking: 'Agent waits'},
     hu: {done: 'Kész', doneRounds: 'Kész ({n} kör)', acceptShort: 'Javaslatok elfogadása', acceptRest: '',
       undo: 'Elfogadás visszavonása', recommended: 'Javasolt', cost: 'Költség',
       comment: 'Megjegyzés (nem kötelező)', many: 'Több is választható.', other: 'Egyéb', otherText: 'Egyéb: a te válaszod',
@@ -920,7 +924,7 @@ body.run.focusing .rp>.item[data-item]:not(.cur),body.run.focusing .rp>h2.group,
       oldNote: 'A kérdései elavulhattak: ha bizonytalan vagy, kérdezd meg az ágenst, mielőtt válaszolsz.',
       copy: 'Másolás', copied: 'Másolva', copyFailed: 'Nem sikerült másolni: jelöld ki a szöveget',
       copyLabel: 'A(z) {l} blokk másolása', relDelete: 'Relatív útvonal: futtatás előtt ellenőrizd a mappát',
-      codeLang: 'kód'}
+      codeLang: 'kód', blocking: 'Erre vár az ágens', blockingShort: 'erre vár', show_blocking: 'Erre vár az ágens'}
   };
   var data = JSON.parse(document.getElementById('signoff-data').textContent);
   var historyMode = data.mode === 'history';
@@ -2772,6 +2776,13 @@ body.run.focusing .rp>.item[data-item]:not(.cur),body.run.focusing .rp>h2.group,
     return wrap;
   }
 
+  // An item the agent's next step waits on: a glyph for the eye and a word for everyone, never colour alone.
+  function waitMark(cls, word) {
+    var s = el('span', cls), g = el('span', 'wg', '■');
+    g.setAttribute('aria-hidden', 'true');
+    s.append(g, word);
+    return s;
+  }
   // An item: the question, its text and pictures; the agent's recommendation and the cost in the margin (between the
   // question and the options when the window is narrow); then the options and the rest.
   function renderItem(ri, item, n) {
@@ -2782,6 +2793,7 @@ body.run.focusing .rp>.item[data-item]:not(.cur),body.run.focusing .rp>h2.group,
     var legend = el('legend');
     var h = el('h3');
     h.append(el('span', 'num', (n + 1) + '.'), document.createTextNode(item.title));
+    if (item.blocking) h.append(' ', waitMark('badge warn', L.blocking));  // the space keeps the name two words apart
     legend.append(h);
     field.append(legend, q);
     if (item.description) q.append(el('p', 'desc', item.description));
@@ -3333,7 +3345,9 @@ body.run.focusing .rp>.item[data-item]:not(.cur),body.run.focusing .rp>h2.group,
     cards.forEach(function (card, n) {
       var li = el('li'), b = el('button', 'nav');
       b.type = 'button';
-      b.append(el('span', 'n', String(n + 1)), el('span', 'nl', rounds[active].decisions.items[n].title));
+      var item = rounds[active].decisions.items[n];
+      b.append(el('span', 'n', String(n + 1)), el('span', 'nl', item.title));
+      if (item.blocking) b.append(waitMark('st', L.blockingShort));
       b.addEventListener('click', function () {
         sh.closeSide(false);
         goItem(n);
@@ -3499,7 +3513,7 @@ body.run.focusing .rp>.item[data-item]:not(.cur),body.run.focusing .rp>h2.group,
   }
   // Every item of the given rounds with its choice, its flags and its comment, under a filter that only hides rows.
   function summaryRows(holder, list, heads) {
-    var counts = {all: 0, comment: 0, differs: 0}, boxes = [];
+    var counts = {all: 0, comment: 0, differs: 0, blocking: 0}, boxes = [];
     var bar = el('div', 'summary-filter'), seg = el('div', 'seg');
     seg.setAttribute('role', 'group');
     seg.setAttribute('aria-label', L.show);
@@ -3542,10 +3556,12 @@ body.run.focusing .rp>.item[data-item]:not(.cur),body.run.focusing .rp>h2.group,
         }
         var marks = el('span', 'flags');  // one cell on the sheet
         flags.forEach(function (f) { marks.append(el('span', 'badge' + (f === L.differs ? ' warn' : ''), f)); });
+        if (item.blocking) marks.append(waitMark('badge', L.blocking));  // the agent's mark, not a flag on the answer
         if (priv) marks.append(el('span', 'badge private', L.privateBadge));
         if (marks.firstChild) li.append(marks);
         if (flags.length) li.classList.add('flag');
-        li.dataset.show = ['all'].concat(note ? ['comment'] : [], rec.length && !same ? ['differs'] : []).join(' ');
+        li.dataset.show = ['all'].concat(note ? ['comment'] : [], rec.length && !same ? ['differs'] : [],
+          item.blocking ? ['blocking'] : []).join(' ');
         li.dataset.show.split(' ').forEach(function (k) { counts[k]++; });
         ul.append(li);
       });
@@ -3581,7 +3597,9 @@ body.run.focusing .rp>.item[data-item]:not(.cur),body.run.focusing .rp>h2.group,
       none.hidden = any;
       fitNotes();  // rows shown again were skipped while hidden, maybe at another width
     }
-    ['all', 'comment', 'differs'].forEach(function (k) {
+    ['all', 'comment', 'differs', 'blocking'].forEach(function (k) {
+      if (k === 'blocking' && !counts.blocking) return;  // a round without the mark looks as it did
+      if (k === 'blocking') seg.classList.add('four');  // four labels outgrow a phone, so they wrap as buttons
       var b = el('button', '', L['show_' + k] + '\xa0' + counts[k]);  // a narrow screen wraps the label, never the count
       b.type = 'button';
       b.dataset.show = k;

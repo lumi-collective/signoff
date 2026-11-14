@@ -1095,6 +1095,122 @@ INBOX_TODO = """# Todo
 """
 
 
+# The round's marks for the agent's blocking items: each title's badge (its glyph hidden from screen readers), each
+# sidebar item's last word, and any "undefined" a missing label would show.
+BLOCKING = """(function () {
+  var cards = document.querySelectorAll('#panel-0 .item[data-item]');
+  return {badges: Array.prototype.map.call(cards, function (c) { var b = c.querySelector('h3 .badge');
+      return b ? [b.textContent, b.firstChild.getAttribute('aria-hidden')] : null; }),
+    outline: Array.prototype.map.call(document.querySelectorAll('.outline .nav'), function (b) {
+      var s = b.querySelector('.st'); return s ? s.textContent : null; }),
+    titles: Array.prototype.map.call(document.querySelectorAll('.outline .nl'), function (n) { return n.textContent; }),
+    undef: document.body.innerText.indexOf('undefined') >= 0};
+})()"""
+SHOWN_TITLES = ("Array.prototype.filter.call(document.querySelectorAll(%s), function (li) { return !li.hidden && "
+                "!li.closest('[hidden]'); }).map(function (li) { return li.querySelector('.link').textContent; })")
+
+
+def ax_name(browser, selector):
+    """The accessible name Chrome computes for the element, as a screen reader gets it."""
+    root = browser.call("DOM.getDocument", depth=0)["root"]["nodeId"]
+    node = browser.call("DOM.querySelector", nodeId=root, selector=selector)["nodeId"]
+    check(node, "no element %s" % selector)
+    return browser.call("Accessibility.getPartialAXTree", nodeId=node, fetchRelatives=False)["nodes"][0]["name"]["value"]
+
+
+def run_blocking(work):
+    """Items the agent waits on: a badge with a word in the title and in the sidebar's list, a fourth Summary filter
+    that shows only them, in English and Hungarian, Done exits 0; a done round keeps its marks, and an open round
+    without the key keeps three filters."""
+    for lang in ("en", "hu"):
+        topic = work / ("2026-01-09-blocking-" + lang)
+        topic.mkdir()
+        for sub in ("mockups", "boards", "notes"):
+            shutil.copytree(str(DEMO / sub), str(topic / sub))
+        data = json.loads((DEMO / "round-03.json").read_text(encoding="utf-8"))
+        data["items"][1]["blocking"] = data["items"][3]["blocking"] = True
+        data["lang"] = lang
+        target = topic / "decisions.json"
+        target.write_text(json.dumps(data), encoding="utf-8")
+        word, short, show = (("Agent waits on this", "agent waits", "Agent waits") if lang == "en"
+                             else ("Erre vár az ágens", "erre vár", "Erre vár az ágens"))
+        server, out, err, browser = serve(target, str(work / ("profile-blocking-" + lang)))
+        try:
+            wait_for("the page", lambda: browser.js("!!document.getElementById('summary-rows')"))
+            got = browser.js(BLOCKING)
+            mark = ["■" + word, "true"]
+            check(got["badges"] == [None, mark, None, mark], "the title badges (%s): %r" % (lang, got["badges"]))
+            check(got["outline"] == [None, "■" + short, None, "■" + short], "the sidebar marks (%s): %r" % (lang, got))
+            check(got["titles"] == [it["title"] for it in data["items"]] and not got["undef"],
+                  "the sidebar titles stay as written, and no label is missing: %r" % got)
+            name = ax_name(browser, "#panel-0 .item[data-item=theme] h3")
+            check(word in name and "■" not in name, "the title's accessible name: %r" % name)
+            name = ax_name(browser, ".outline li:nth-child(2) .nav")
+            check(short in name and "■" not in name, "the sidebar button's accessible name: %r" % name)
+            labels = filter_labels(browser, "#summary-block")
+            check(len(labels) == 4 and labels[0].endswith(" 4") and labels[3] == show + " 2",
+                  "the Summary's filters (%s): %r" % (lang, labels))
+            check(browser.js("document.querySelector('#summary-block .seg').getAttribute('role')") == "group",
+                  "the filters stay a group")
+            # Four labels outgrow a phone (Hungarian's most): they wrap as whole buttons, none cut off.
+            browser.call("Emulation.setDeviceMetricsOverride", width=390, height=844, deviceScaleFactor=1, mobile=False)
+            time.sleep(0.5)
+            fit = browser.js("(function () { var s = document.querySelector('#summary-block .seg'); "
+                             "return [s.scrollWidth, s.clientWidth]; })()")
+            check(fit[0] <= fit[1], "the four filters fit their box at 390 px (%s): %r" % (lang, fit))
+            browser.call("Emulation.setDeviceMetricsOverride", width=1280, height=900, deviceScaleFactor=1, mobile=False)
+            time.sleep(0.3)
+            browser.click("#summary-block .summary-filter button:nth-of-type(4)")
+            rows = browser.js(SHOWN_TITLES % json.dumps("#summary-block .summary-list li"))
+            check(rows == ["2. " + data["items"][1]["title"], "4. " + data["items"][3]["title"]],
+                  "the fourth filter shows only the marked items: %r" % rows)
+            check(browser.js("document.querySelector('#summary-block .summary-filter button:nth-of-type(4)')"
+                             ".getAttribute('aria-pressed')") == "true", "the fourth filter is pressed")
+            badges = browser.js("Array.prototype.map.call(document.querySelectorAll('#summary-block .flags .badge'), "
+                                "function (b) { return b.textContent; })")
+            check(badges == ["■" + word] * 2, "the Summary rows' badges: %r" % badges)
+            browser.click("#done")
+            answers = finished(server, out, err, [topic / "decisions.answers.json"])[0]
+            check(not any("blocking" in a for a in answers["answers"].values()), "the answers hold no blocking key")
+        except E2EError:
+            sys.stderr.write("--- Signoff stderr ---\n" + "".join(err))
+            raise
+        finally:
+            kill(server)
+            kill(browser.proc)
+
+    # Round 1 done with two marked items, round 2 open without: the done round keeps its marks, and round 2's block,
+    # which lists only the open round, keeps today's three filters.
+    topic = work / "2026-01-09-blocking-mixed"
+    topic.mkdir()
+    for sub in ("mockups", "boards", "notes"):
+        shutil.copytree(str(DEMO / sub), str(topic / sub))
+    first = json.loads((DEMO / "round-03.json").read_text(encoding="utf-8"))
+    first["items"][1]["blocking"] = first["items"][3]["blocking"] = True
+    (topic / "round-01.json").write_text(json.dumps(first), encoding="utf-8")
+    shutil.copyfile(str(DEMO / "round-04.json"), str(topic / "round-02.json"))
+    sha = hashlib.sha256((topic / "round-01.json").read_bytes()).hexdigest()
+    (topic / "round-01.answers.json").write_text(json.dumps({
+        "version": 1, "done": True, "saved": "2026-01-09T10:00:00Z", "free_text": "",
+        "decisions": {"file": "round-01.json", "sha256": sha}, "answers": {}}), encoding="utf-8")
+    server, out, err, browser = serve(topic, str(work / "profile-blocking-mixed"))
+    try:
+        wait_for("the page", lambda: browser.js("!!document.getElementById('summary-rows')"))
+        labels = filter_labels(browser, "#summary-block")
+        check(labels == ["All 2", "With comment 0", "Not the recommendation 0"],
+              "a round without the key keeps three filters: %r" % labels)
+        browser.click("#tab-0")
+        got = browser.js(BLOCKING)
+        check(got["badges"] == [None, ["■Agent waits on this", "true"], None, ["■Agent waits on this", "true"]],
+              "a done round keeps its marks: %r" % got)
+    except E2EError:
+        sys.stderr.write("--- Signoff stderr ---\n" + "".join(err))
+        raise
+    finally:
+        kill(server)
+        kill(browser.proc)
+
+
 def run_inbox(work):
     """The inbox: first nothing waits, so the empty state shows, and its To do button and the sidebar filter the list.
     Then a waiting run's round and a todo item marked waiting on you. The item opens beside the list to its Markdown: the
@@ -2221,6 +2337,7 @@ def run():
     run_attachment(work)
     run_commands(work)
     run_commands_elsewhere(work)
+    run_blocking(work)
     if WINDOWS:
         print("SKIP: the inbox (it needs a Unix socket; not on Windows yet)", flush=True)
     else:
@@ -2355,6 +2472,8 @@ def main():
           "an item's commands sit between its text and pictures as code blocks, unrendered, wrapped, Copy exact, a "
           "relative rm warns whatever the lang, Hungarian labels, exit 0, escaped in the Markdown copy, and on a done "
           "round and --history Copy is exact too; "
+          "items the agent waits on: a badge in the title and the sidebar, a fourth Summary filter showing only them, "
+          "Hungarian too, exit 0, three filters without the key; "
           + ("" if WINDOWS else "inbox: the empty state, the sidebar's view and project filters, "
              "each project's other open items closed behind a count row that opens them, "
              "a waiting round and a waiting todo item grouped by project under the summary line, its steps counted, "

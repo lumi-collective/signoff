@@ -218,6 +218,17 @@ class DecisionsFile(unittest.TestCase):
             msg = self.broken(lambda d: d["items"][0].update(commands=[{"text": "ls", "lang": lang}]))
             self.assertIn("'lang'", msg, repr(lang))
 
+    def test_blocking_defaults_to_false_and_must_be_a_bool(self):
+        data = sample_decisions()
+        data["items"][0]["blocking"] = True
+        self.folder.write(data)
+        items = signoff.load_decisions(self.folder.decisions)[0]["items"]
+        self.assertEqual((items[0]["blocking"], items[1]["blocking"]), (True, False))
+        for value in ("yes", 1, None, []):
+            msg = self.broken(lambda d, value=value: d["items"][1].update(blocking=value))
+            self.assertIn("item 2 (filters)", msg, value)
+            self.assertIn("'blocking' must be true or false", msg, value)
+
     def test_tab_is_optional_text(self):
         data = sample_decisions()
         data["tab"] = "Layout"
@@ -801,6 +812,8 @@ class SchemaFile(unittest.TestCase):
         self.assertEqual(set(item["required"]), set(signoff.ITEM_REQUIRED))
         self.assertEqual(item["properties"]["select"]["enum"], list(signoff.SELECT_VALUES))
         self.assertEqual(item["properties"]["id"]["pattern"], signoff.ID_PATTERN.pattern)
+        self.assertEqual((item["properties"]["blocking"]["type"], item["properties"]["blocking"]["default"]),
+                         ("boolean", False))
 
     def test_image_and_option(self):
         self.assertEqual(set(self.defs["image"]["properties"]), set(signoff.IMAGE_KEYS))

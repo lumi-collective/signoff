@@ -43,6 +43,8 @@
   deletes with a relative path, whatever its language. A long line wraps, a command is at most 4000 characters
   and 60 lines, and the known invisible and blank characters are refused. Signoff never runs it: read a command
   before running it.
+- **Agent waits on this.** An item the agent's next step waits on carries that badge after its title, and "agent
+  waits" after its name in the sidebar, each with a ■ before the words. Answer those first.
 - **Private** beside a comment marks what you write on that item as private: the agent is asked not to
   repeat it, and the Markdown copy and the Summary hide it. The agent ticks it in advance where an answer may
   hold personal data; you can tick or untick it on any item. It is a request to the agent, not encryption.
@@ -56,7 +58,7 @@
   departed from the recommendation, chose Other or Skip, drew marks or wrote a comment, and a link back to each
   item; Done sits under a rule at its end. A comment is quoted in its row, cut to three lines,
   with a **Full text** button for the rest. The filter above the list shows **All**, **With comment** or **Not the
-  recommendation**, each with its count. A Private comment shows as "Private comment, hidden here.", with a
+  recommendation**, each with its count, and **Agent waits** when an item is marked so. A Private comment shows as "Private comment, hidden here.", with a
   "private" badge.
 - **One round left open.** When only one round is still open, the same list sits above a second **Done** button at
   the end of that round, so you check your answers and finish in one click.
