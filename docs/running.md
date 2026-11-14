@@ -75,7 +75,7 @@ checks that the inbox holds its rounds' locks, as it does for every round it sho
 inbox did not take them in, as an inbox an older Signoff started (it keeps running after an update) refuses a round
 with a key it does not know: the run says so on stderr, to restart the inbox (`signoff inbox stop`, then
 `signoff inbox open`) and run the same command again, and exits 1. An inbox that does not look, or a round lock
-another run holds, leaves the run waiting.
+another run holds, leaves the run waiting, and so does an inbox from 0.3.0, which does not touch `inbox.lock`.
 
 With `inbox.lock` there, the plugin's hooks also note each Claude Code session in the home, so the inbox can show
 whether a session is working, idle or waiting on you, from what the session itself reported. `projects/<id>.json`

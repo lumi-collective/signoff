@@ -53,9 +53,9 @@
   (default 1), with at most 10,000 steps between them; `unit` is up to 16 characters, one line. `recommended`
   (a number) is required, in the range and on its step. `skippable` and `comment` work as on any item; `other`, `marks` and `criteria` do not. The
   answer is a JSON number (see [answers.md](answers.md)). Needs Signoff 0.5.0 or newer; an inbox an older one
-  started refuses the round, and the run then exits 1 (see [answers.md](answers.md)).
+  started refuses the round, and the user restarts it (see [answers.md](answers.md)).
 - `context` (top level) when several sessions or projects may ask at once: one line saying which session asks
   and what it was working on, such as `"context": "feat/parser session: splitting the tokenizer"`. At most 120
   characters, no line break or tab; a longer value makes the round fail to load. The round's page shows it at
   the top and its inbox row after the tab. Never a prompt, a transcript, a secret or a path. Needs Signoff 0.5.0
-  or newer; an inbox an older one started refuses the round, and the run then exits 1.
+  or newer; an inbox an older one started refuses the round, and the user restarts it.

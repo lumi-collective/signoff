@@ -607,7 +607,8 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   them in (an inbox an older Signoff started refuses a round with a key it does not know, and locks nothing): one
   stderr line saying to restart the inbox and run the command again, and exit 1 with nothing on stdout. Any lock
   held (the inbox's, or another run's while the inbox shows the rounds read only), a file system that cannot
-  lock, or an inbox gone meanwhile: it waits as before. No look, no verdict, so a slow inbox only makes it later.
+  lock, or an inbox gone meanwhile: it waits as before. No look, no verdict, so a slow inbox only makes it later
+  (and an inbox from 0.3.0, which touches nothing, gets none).
   Every run and waiter writes `runs/<run>.json`
   (`schema, run, project, folder, rounds, mode, pid, started`; never a token or a link) at start and adds
   `ended` when it exits by itself, on Ctrl+C, SIGTERM or SIGHUP, with `exit`, its exit code (1 start link reused
