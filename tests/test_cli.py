@@ -725,6 +725,98 @@ class CliInbox(unittest.TestCase):
         self.assertIn("ended", self.entry_of(proc))
         self.assertFalse((self.rounds.path / "round-02.json.lock").exists())
 
+    def looking(self):
+        """An inbox's looks: inbox.lock's time changes every 0.3 s, as a live inbox touches it at the start of each."""
+        stop = threading.Event()
+
+        def touch():
+            while not stop.wait(0.3):
+                os.utime(str(self.home / "inbox.lock"))
+        t = threading.Thread(target=touch, daemon=True)
+        t.start()
+        self.addCleanup(t.join)
+        self.addCleanup(stop.set)  # cleanups run last first: stop, then join
+
+    def refused(self, proc, began):
+        out, err = self.finish(proc)
+        self.assertEqual((proc.returncode, out), (1, ""), err)
+        self.assertLess(time.monotonic() - began, 15)
+        self.assertIn("did not take", err)
+        self.assertIn("signoff inbox stop", err)
+        self.assertNotIn("Traceback", err)
+        self.assertEqual(self.entry_of(proc)["exit"], 1)
+        self.assertFalse(self.rounds.answers(1).exists())
+
+    @unittest.skipIf(sys.platform == "win32", "the inbox does not run on Windows")
+    def test_a_waiter_whose_rounds_a_looking_inbox_never_locks_exits_1(self):
+        # An inbox from before a key the rounds use refuses them, says so in its own log only and locks nothing.
+        self.hold(self.home / "inbox.lock")
+        self.looking()
+        began = time.monotonic()
+        self.refused(self.start(), began)
+        self.assertEqual(list(self.rounds.path.glob("*.lock")), [])  # it made no lock file of its own
+
+    @unittest.skipIf(sys.platform == "win32", "the inbox does not run on Windows")
+    def test_a_waiter_keeps_waiting_while_a_round_lock_is_held(self):
+        # The inbox took the rounds in (it holds every lock), or another run holds one and it shows them read only.
+        self.hold(self.home / "inbox.lock")
+        self.looking()
+        for held in ((2,), (1, 2)):
+            with self.subTest(held=held):
+                fds = [signoff.try_lock(self.rounds.path / ("round-%02d.json.lock" % n)) for n in held]
+                proc = self.start()
+                self.assertIn("inbox", proc.stderr.readline())
+                time.sleep(3.5)  # many looks: it judged after two
+                self.assertIsNone(proc.poll(), "a waiter whose rounds are held keeps waiting")
+                if held == (1, 2):
+                    self.finish_outside()
+                    out, err = self.finish(proc)
+                    self.assertEqual((proc.returncode, out), (0, self.paths()), err)
+                else:
+                    proc.kill()
+                    proc.communicate()
+                for fd in fds:
+                    signoff.unlock(fd)
+
+    def test_a_waiter_on_an_inbox_that_does_not_look_keeps_waiting(self):
+        # No look, no verdict: an inbox that holds its lock but never touches it (stuck, or these tests' stand-in).
+        self.hold(self.home / "inbox.lock")
+        proc = self.start()
+        self.assertIn("inbox", proc.stderr.readline())
+        time.sleep(3.5)
+        self.assertIsNone(proc.poll())
+
+    @unittest.skipIf(sys.platform == "win32", "the inbox does not run on Windows")
+    def test_a_waiter_on_a_real_0_4_0_inbox_that_refuses_its_round_exits_1(self):
+        # The inbox the user started before updating keeps running: 0.4.0's own code, from git, refuses `commands`.
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        old = Path(tmp.name)
+        for name in ("signoff.py", "page.html", "schema.json"):
+            try:
+                found = subprocess.run(["git", "-C", str(ROOT), "show", "v0.4.0:plugin/signoff/" + name],
+                                       stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=30)
+            except (OSError, subprocess.SubprocessError):
+                found = None
+            if found is None or found.returncode:
+                self.skipTest("needs git and the v0.4.0 tag (a shallow clone has neither)")
+            (old / name).write_bytes(found.stdout)
+        data = json.loads(self.rounds.round(1).read_text(encoding="utf-8"))
+        data["items"][1]["commands"] = [{"text": "ls -l"}]
+        self.rounds.write(1, data)
+        inbox = track(subprocess.Popen([sys.executable, "-I", "-B", str(old / "signoff.py"), "inbox", "serve"],
+                                       stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, universal_newlines=True,
+                                       encoding="utf-8", env=self.env))
+        deadline = time.monotonic() + 30
+        while not signoff.inbox_alive(self.home):
+            self.assertIsNone(inbox.poll(), "the 0.4.0 inbox did not start")
+            self.assertLess(time.monotonic(), deadline, "the 0.4.0 inbox did not start")
+            time.sleep(0.1)
+        began = time.monotonic()
+        self.refused(self.start(), began)
+        signoff.inbox_request(self.home, "stop")
+        self.assertIn("unknown key 'commands'", inbox.communicate(timeout=20)[1])
+
     def test_the_lock_never_meets_a_lock_file_of_another_tool(self):
         # A decisions file named yarn.json sits beside yarn.lock: the round's lock is yarn.json.lock.
         yarn = self.rounds.path / "yarn.json"

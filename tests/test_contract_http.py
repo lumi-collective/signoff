@@ -1331,5 +1331,88 @@ class InboxRows(unittest.TestCase):
         self.assertIsNone(self.proc.poll())
 
 
+@unittest.skipIf(sys.platform == "win32", "the inbox's control socket is a Unix socket; no inbox on Windows yet")
+class InboxWaiter(unittest.TestCase):
+    """A run while an inbox lives is a waiter. Once inbox.lock's time has changed twice since the run noted itself
+    (the inbox touches it at each look, before it reads runs/), a round lock nobody holds means the inbox did not
+    take the round in, as one from before a key the round uses: the run says so on stderr and exits 1."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        base = os.path.realpath(tmp.name)
+        self.home, self.folder = os.path.join(base, "home"), os.path.join(base, "topic")
+        os.makedirs(self.home, mode=0o700)
+        os.makedirs(self.folder)
+        with open(os.path.join(self.folder, "round-01.json"), "w", encoding="utf-8") as f:
+            json.dump({"version": 1, "title": "Commands", "items": [{
+                "id": "pick", "title": "Which one?", "select": "one", "recommended": "a",
+                "options": [{"id": "a", "label": "A"}, {"id": "b", "label": "B"}],
+                "commands": [{"text": "ls -l"}]}]}, f)
+        self.lock = os.path.join(self.folder, "round-01.json.lock")
+        self.env = dict(os.environ, SIGNOFF_INBOX_HOME=self.home)
+
+    def child(self, *args):
+        proc = subprocess.Popen(COMMAND + list(args), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                universal_newlines=True, encoding="utf-8", errors="replace", env=self.env)
+
+        def stop():
+            if proc.poll() is None:
+                proc.kill()
+            proc.communicate()
+        self.addCleanup(stop)
+        return proc
+
+    def test_a_waiter_whose_round_the_inbox_does_not_take_in_exits_1(self):
+        import fcntl
+        fd = os.open(os.path.join(self.home, "inbox.lock"), os.O_RDWR | os.O_CREAT, 0o600)
+        self.addCleanup(os.close, fd)
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)  # an inbox lives here, looks, and locks no round
+        stop = threading.Event()
+
+        def look():
+            while not stop.wait(0.3):
+                os.utime(os.path.join(self.home, "inbox.lock"))
+        looks = threading.Thread(target=look, daemon=True)
+        looks.start()
+        self.addCleanup(looks.join)
+        self.addCleanup(stop.set)
+        proc = self.child(self.folder, "--no-open")
+        out, err = proc.communicate(timeout=30)
+        self.assertEqual((proc.returncode, out), (1, ""), err)
+        self.assertIn("signoff inbox stop", err)
+        self.assertNotIn("http://", err)
+        self.assertFalse(os.path.exists(self.lock))
+        self.assertFalse(os.path.exists(os.path.join(self.folder, "round-01.answers.json")))
+
+    def test_a_waiter_whose_round_a_live_inbox_took_in_keeps_waiting(self):
+        self.child("inbox", "serve")
+        deadline = time.monotonic() + 30
+        while True:
+            try:
+                with socket.socket(socket.AF_UNIX) as s:
+                    s.connect(os.path.join(self.home, "inbox.sock"))
+                break
+            except OSError:
+                self.assertLess(time.monotonic(), deadline, "the inbox did not start")
+                time.sleep(0.1)
+        proc = self.child(self.folder, "--no-open")
+        seen, deadline = set(), time.monotonic() + 30
+        while len(seen) < 5:  # four looks since the run started, then one more poll of the waiter's
+            seen.add(os.stat(os.path.join(self.home, "inbox.lock")).st_mtime_ns)
+            self.assertLess(time.monotonic(), deadline, "the inbox did not look")
+            self.assertIsNone(proc.poll(), proc.poll() is not None and proc.communicate())
+            time.sleep(0.1)
+        time.sleep(1.5)
+        self.assertIsNone(proc.poll(), proc.poll() is not None and proc.communicate())
+        import fcntl
+        fd = os.open(self.lock, os.O_RDWR)
+        try:
+            with self.assertRaises(BlockingIOError):  # the inbox holds it: it took the round in
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        finally:
+            os.close(fd)
+
+
 if __name__ == "__main__":
     unittest.main()

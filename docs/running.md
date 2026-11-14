@@ -18,7 +18,7 @@ write `py -3` for `python3`.
 | Exit code | Meaning | stdout |
 |---|---|---|
 | 0 | Done: `done` is `true` in every round that was open, from the page or from another program | each open round's answers file, one absolute path per line, in tab order |
-| 1 | invalid input (stderr names the file, the item and the field), every round already done, a round open in another Signoff run (once the inbox has run), the start link used twice, or a Python older than 3.9 | nothing |
+| 1 | invalid input (stderr names the file, the item and the field), every round already done, a round open in another Signoff run (once the inbox has run), the start link used twice, a running inbox that did not take the round in (see below), or a Python older than 3.9 | nothing |
 | 2 | the idle timeout passed; the answers so far are kept with `done: false` | the answers files written so far, one per line, or nothing |
 | 130 | stopped with Ctrl+C, or with SIGTERM or SIGHUP on macOS and Linux (a signal ignored at the start, as under `nohup`, stays ignored); the answers so far are kept | nothing |
 
@@ -70,7 +70,12 @@ later writes covers them; where the topic folder already had its own (one an old
 in git as untracked files until you add `*.json.lock` to it. While the
 inbox is open, a run opens no page and starts no server: it
 waits, with no idle timeout, until the answers the inbox writes are done, then exits with the same codes and
-stdout.
+stdout. Once the inbox has looked at the runs twice since the run started (it does every two seconds), the run
+checks that the inbox holds its rounds' locks, as it does for every round it shows. When no one holds any, the
+inbox did not take them in, as an inbox an older Signoff started (it keeps running after an update) refuses a round
+with a key it does not know: the run says so on stderr, to restart the inbox (`signoff inbox stop`, then
+`signoff inbox open`) and run the same command again, and exits 1. An inbox that does not look, or a round lock
+another run holds, leaves the run waiting.
 
 With `inbox.lock` there, the plugin's hooks also note each Claude Code session in the home, so the inbox can show
 whether a session is working, idle or waiting on you, from what the session itself reported. `projects/<id>.json`

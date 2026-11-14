@@ -8,7 +8,9 @@ once how to get it (Windows: the Python install manager from python.org, which b
 
 If any round is invalid, Signoff exits at once with code 1 and says on stderr which file, which item and which
 field is wrong. Fix the file and run it again. It also exits 1 when every round in the folder is done already,
-or when a round is open in another Signoff run: tell the user, and do not start a second one.
+or when a round is open in another Signoff run: tell the user, and do not start a second one. When stderr says
+the running inbox did not take the round in, it is most likely an inbox an older Signoff started: tell the user to restart it
+(`signoff inbox stop`, then `signoff inbox open`), and once the user has, run the same command again.
 
 ## 3. Read the answers
 

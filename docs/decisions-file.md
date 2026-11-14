@@ -66,8 +66,9 @@ JSON, one file per round. [`plugin/signoff/schema.json`](../plugin/signoff/schem
 
 Unknown keys are refused, so a typo shows up at once instead of being ignored. Text is plain: no Markdown, links
 or HTML. `commands`, `blocking`, `select: "number"` with `range`, and `context` need Signoff 0.5.0 or newer; an
-older one refuses the round, and so does an inbox still running from an older plugin: after updating, restart the inbox
-(`signoff inbox stop`, then open it again).
+older one refuses the round, and so does an inbox an older one started, which keeps running after an update. A
+run waiting on such an inbox notices within a few seconds, says on stderr to restart the inbox (`signoff inbox
+stop`, then `signoff inbox open`) and run the same command again, and exits 1.
 
 An invisible or blank character in a command is a control character other than tab and newline; a format, line
 or paragraph separator, surrogate, private-use or unassigned one; one of Unicode's default-ignorable code points

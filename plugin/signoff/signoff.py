@@ -3733,14 +3733,50 @@ def _serve(server, args, what):
     return "done" if server.finished.is_set() else "timeout"
 
 
-def _wait(rounds):
+def _lock_time(home):
+    try:
+        return os.stat(str(home / "inbox.lock")).st_mtime_ns
+    except OSError:
+        return None
+
+
+def _inbox_refused(rounds, home):
+    """Whether the live inbox shows none of these open rounds: it locks every round of a run it takes in (0.4.0 did
+    too), and a round it refuses (one from before a key the round uses) gets no lock. Any lock held, a file system
+    that cannot lock, or an inbox gone since: no, as the waiter then waits as before."""
+    for r in rounds:
+        try:
+            fd = try_lock(r.path.with_name(r.path.name + ".lock"), create=False)
+        except FileNotFoundError:
+            continue
+        except OSError:
+            return False
+        if fd is None:
+            return False
+        unlock(fd)  # held for a moment only: the inbox took its locks at the look that saw this run, or never
+    return bool(rounds) and inbox_alive(home)
+
+
+def _wait(rounds, home=None):
     """Waiter mode: the inbox serves the page and writes the answers, so this run only looks at its answers files,
-    once a second, with no idle timeout. Returns 'done' or 'stopped'."""
+    once a second, with no idle timeout. With the inbox's home, once inbox.lock's time has changed twice since the
+    run noted itself (the inbox touches it at each look, before it reads runs/, so a whole look has seen the entry),
+    it checks once that the inbox took the rounds in. No look, no verdict: a slow inbox only makes it later. Returns
+    'done', 'refused' or 'stopped'."""
+    stamp, looks = (_lock_time(home), 0) if home else (None, None)
     try:
         while not all(r.finished for r in rounds):
             time.sleep(1.0)
             for r in rounds:
                 _reread(r)
+            if looks is not None:
+                now = _lock_time(home)
+                if now is not None and now != stamp:
+                    stamp, looks = now, looks + 1
+                if looks >= 2:
+                    looks = None
+                    if _inbox_refused([r for r in rounds if not r.finished], home):
+                        return "refused"
     except KeyboardInterrupt:
         return "stopped"
     return "done"
@@ -4150,7 +4186,7 @@ def main(argv=None):
         if waiter:
             print("signoff: the inbox is open, so the questions are there; waiting for the answers in %s (Ctrl+C "
                   "stops it)" % folder, file=sys.stderr, flush=True)
-            result = _wait(rounds)
+            result = _wait(rounds, home)
         else:
             def poll():  # an answers file another program finished with Done ends the run, as a Done on the page does
                 while not server.finished.wait(1.0):
@@ -4163,7 +4199,7 @@ def main(argv=None):
     finally:
         stopping.append(None)
         if result != "done":  # a Done ends the entry only once its paths are out, below
-            end({"reused": EXIT_ERROR, "timeout": EXIT_TIMEOUT, "stopped": 130}.get(result))
+            end({"reused": EXIT_ERROR, "refused": EXIT_ERROR, "timeout": EXIT_TIMEOUT, "stopped": 130}.get(result))
         if locks:
             server.lock.acquire()  # kept until exit: a save in flight ends, and none starts, before the inbox may write
         for fd in locks:
@@ -4173,6 +4209,11 @@ def main(argv=None):
     if result == "stopped":
         print("signoff: stopped; the answers so far are kept", file=sys.stderr)
         return 130
+    if result == "refused":
+        print("signoff: the Signoff inbox that is running did not take this round in, so the user cannot see it; it "
+              "is likely older than this Signoff. Restart it (signoff inbox stop, then signoff inbox open) and run "
+              "the same command again", file=sys.stderr, flush=True)
+        return EXIT_ERROR
     paths = [r.answers_path for r in rounds if not r.readonly]
     if result == "reused":
         print("signoff: the answers so far are kept, but read them before you trust them. If an answers file now says "

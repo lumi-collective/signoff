@@ -3120,7 +3120,7 @@ class InboxOrphan(InboxTest):
         err, waited = io.StringIO(), []
         with mock.patch.dict(os.environ, {"SIGNOFF_INBOX_HOME": str(self.home)}), \
                 mock.patch.object(signoff, "inbox_alive", side_effect=[False, True]), \
-                mock.patch.object(signoff, "_wait", side_effect=lambda rounds: waited.append(rounds) or "stopped"), \
+                mock.patch.object(signoff, "_wait", side_effect=lambda rounds, home: waited.append(rounds) or "stopped"), \
                 mock.patch.object(sys, "stderr", err):
             code = signoff.main([str(self.topic), "--no-open"])
         self.assertEqual((code, len(waited)), (130, 1), err.getvalue())
