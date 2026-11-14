@@ -167,7 +167,8 @@ class Additions(ServerTest):
         self.assertIn("Keep one", md)
         self.assertIn("not recommended", md)
         self.assertIn("Date (recommended), Tag (recommended)", md)
-        self.assertIn("\\*bold\\* \\_x\\_ \\[link\\](http://e.example) \\<b\\>tag\\</b\\> # head \\`code\\` \\| pipe", md)
+        # The URL's colon too: GFM links a bare URL even inside parentheses.
+        self.assertIn("\\*bold\\* \\_x\\_ \\[link\\](http\\://e.example) \\<b\\>tag\\</b\\> # head \\`code\\` \\| pipe", md)
         self.assertIn("\n  1\\. not a list", md)
         self.assertIn("free \\*text\\*", md)
         self.assertTrue(md.rstrip().endswith("Done: no"))

@@ -1055,6 +1055,73 @@ class MarkdownLanguage(unittest.TestCase):
             self.assertEqual(md.count(hidden), 3, lang)
             self.assertIn("notes/cut.md", md)
 
+    def test_every_field_goes_through_the_escape(self):
+        md = self.md("see &#x202e; ~~x~~ https://a.example \u202eabc")
+        self.assertIn("- Comment: see \\&#x202e; \\~\\~x\\~\\~ https\\://a.example U+202Eabc\n", md)
+        self.assertNotIn("\u202e", md)
+
+
+class MarkdownEscape(unittest.TestCase):
+    """md_text's output, pinned: in a GFM viewer it shows the source's characters and renders nothing. The strings
+    were checked against GitHub's renderer (gh api /markdown, mode gfm) when this table was written."""
+
+    CASES = [
+        # Inline markup and HTML, as before.
+        ("<b>x</b> *y* _z_ [l](u) `c` |t| \\", "\\<b\\>x\\</b\\> \\*y\\* \\_z\\_ \\[l\\](u) \\`c\\` \\|t\\| \\\\"),
+        # Character references: an & before # or a letter or digit, so none decodes.
+        ("&#x202e; &amp; &copy &#9 A & B && R&D", "\\&#x202e; \\&amp; \\&copy \\&#9 A & B && R\\&D"),
+        # Strikethrough: every tilde (GFM takes one or two).
+        ("~~x~~ ~y~", "\\~\\~x\\~\\~ \\~y\\~"),
+        ("~~~", "\\~\\~\\~"),
+        ("cd ~/notes", "cd \\~/notes"),
+        # Bare URLs: the colon before // and the dot after www.
+        ("see https://example.com/a?b=1 and www.example.com", "see https\\://example.com/a?b=1 and www\\.example.com"),
+        ("HTTPS://X.Y ftp://x.y file:///etc", "HTTPS\\://X.Y ftp\\://x.y file\\:///etc"),
+        ("at 10:30, a:/b, mailto:x", "at 10:30, a:/b, mailto:x"),
+        # Known limit: no Markdown escape stops a GFM viewer linking an email address; the link text is the address.
+        ("a@b.example", "a@b.example"),
+        # Format and control characters: visible as U+XXXX, so nothing reorders or hides the line.
+        ("a\u202eb", "aU+202Eb"),
+        ("\u2066x\u2069 \u200b \ufeff \u00ad", "U+2066xU+2069 U+200B U+FEFF U+00AD"),
+        ("a\x00b\x7f\x1b[31m", "aU+0000bU+007FU+001B\\[31m"),
+        ("\ud800", "U+D800"),
+        ("a\tb", "a\tb"),
+        # Block markers at the start of a line, the md_text join (a hard break) in between.
+        ("# x", "\\# x"),
+        ("see issue ##", "see issue \\##"),  # a heading's closing sequence would be dropped
+        ("C# and a # b", "C# and a # b"),
+        ("- x", "\\- x"),
+        ("+ x", "\\+ x"),
+        ("1. x", "1\\. x"),
+        ("1) x", "1\\) x"),
+        ("> x", "\\> x"),
+        ("a\n=", "a  \n  \\="),
+        ("a\n==", "a  \n  \\=="),
+        ("a\n-", "a  \n  \\-"),
+        ("a\n--", "a  \n  \\--"),
+        ("-- -", "\\-- -"),
+        ("---", "\\---"),
+        ("+", "\\+"),
+        ("-", "\\-"),
+        # Readable: what does not render stays as written.
+        ("-5 degrees, --flag, +1, =x, a = b", "-5 degrees, --flag, +1, =x, a = b"),
+        ("árvíztűrő tükörfúrógép 👍🏽", "árvíztűrő tükörfúrógép 👍🏽"),
+        # Line breaks inside a comment stay hard breaks; leading spaces and blank lines go.
+        ("one\n  two\n\nthree", "one  \n  two  \n  three"),
+        ("one\u2028two", "one  \n  two"),
+    ]
+
+    def test_cases(self):
+        for text, want in self.CASES:
+            with self.subTest(text=text):
+                self.assertEqual(signoff.md_text(text), want)
+
+    def test_no_control_or_format_character_survives(self):
+        import unicodedata
+        hostile = [chr(c) for c in range(0x110000) if unicodedata.category(chr(c)) in ("Cc", "Cf", "Cs")]
+        out = signoff.md_text("x".join(hostile))
+        self.assertEqual([c for c in out if c not in "\t\n" and unicodedata.category(c) in ("Cc", "Cf", "Cs")], [])
+
 
 class SchemaFile(unittest.TestCase):
     """schema.json documents the format; this keeps it in step with the checks in signoff.py."""

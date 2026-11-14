@@ -832,9 +832,13 @@ def read_board(path):
     return data
 
 
-_MD_INLINE = re.compile(r"([\\`*_\[\]<>|])")
-# At the start of a line: a heading, a quote, a list item, a thematic break or setext underline, a code fence.
-_MD_LINE_START = re.compile(r"^(#|[-+](?=\s)|[-=~](?=[-=~]{2})|\d+(?=[.)]))")
+# Inline markup, HTML, a quote, a code fence, strikethrough, an & that could start a character reference, a #
+# run that would close a heading, and what makes a bare URL a link in GFM: the colon of "<scheme>://" and the dot
+# of "www.".
+_MD_INLINE = re.compile(r"([\\`*_\[\]<>|~]|&(?=[#A-Za-z0-9])|(?<=\s)#(?=#*$)|(?<=[A-Za-z0-9]):(?=//)|(?<=www)\.)")
+# At the start of a line: a heading, a list item (an empty one too), a thematic break or setext underline, an
+# ordered list item.
+_MD_LINE_START = re.compile(r"^(#|[-+](?=\s|$)|-(?=[-\s]*$)|=(?==*$)|\d+(?=[.)]))")
 
 
 MD_LABELS = {
@@ -865,10 +869,13 @@ def md_labels(decisions):
 def md_text(text, none="(none)"):
     """Plain text for Markdown. Inline markup characters and HTML brackets are backslash-escaped everywhere;
     block markers only at the start of a line. Leading spaces are dropped (no code blocks), and line breaks
-    become hard breaks inside the same block."""
+    become hard breaks inside the same block. A control (but tab), format or lone surrogate character shows as
+    U+XXXX: a bidi override would reverse the rest of the line, and a zero-width one would hide."""
     out = []
     for line in text.splitlines():
-        line = _MD_INLINE.sub(r"\\\1", line.strip())
+        line = "".join("U+%04X" % ord(c) if c != "\t" and unicodedata.category(c) in ("Cc", "Cf", "Cs") else c
+                       for c in line.strip())
+        line = _MD_INLINE.sub(r"\\\1", line)
         m = _MD_LINE_START.match(line)
         if m:
             # Escape the marker itself; for "1." or "1)" the escape goes before the dot or bracket.
