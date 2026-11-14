@@ -31,6 +31,7 @@ import threading
 import time
 import unicodedata
 import webbrowser
+from decimal import Decimal
 from pathlib import Path, PureWindowsPath
 
 HERE = Path(__file__).resolve().parent
@@ -69,6 +70,7 @@ DEFAULT_IGNORABLE = ((0x00AD, 0x00AD), (0x034F, 0x034F), (0x061C, 0x061C), (0x11
                      (0x1D173, 0x1D17A), (0xE0000, 0xE0FFF))
 MAX_STEPS = 10000  # a number item's values from min to max
 MAX_SCALE = 10 ** 12  # a number item's largest value, in steps: a float holds the grid to a 500th of a step
+MAX_VALUE = 10 ** 15  # a number item's largest value: a float holds every whole number up to it, and no sum overflows
 MAX_UNIT = 16  # characters in a number item's unit
 MAX_MARKS = 50
 HISTORY_BUDGET = 200 * 1024 * 1024
@@ -162,14 +164,28 @@ def _finite(v):
 def _on_grid(rng, v):
     """v is a finite number in the range and a whole number of steps from min, give or take float rounding: the
     page sends the value its slider holds, as a decimal string turned into a float."""
-    if not _finite(v) or not rng["min"] <= v <= rng["max"]:
+    if not _finite(v) or abs(v) > MAX_VALUE or not rng["min"] <= v <= rng["max"]:
         return False
+    try:  # the loader's bounds keep these finite; a range built some other way must still only say no
+        k = round((v - rng["min"]) / rng["step"])
+        return abs(v - rng["min"] - k * rng["step"]) <= 1e-9 * rng["step"] + 2e-15 * max(abs(rng["min"]), abs(v))
+    except (ArithmeticError, ValueError):
+        return False
+
+
+def _snap(rng, v):
+    """The grid point nearest v, as a decimal reader of min and step has it: 0.1 + 2 * 0.1 is 0.30000000000000004
+    in floats, so a float is rounded to the decimal places min and step are written with."""
     k = round((v - rng["min"]) / rng["step"])
-    return abs(v - rng["min"] - k * rng["step"]) <= 1e-9 * rng["step"] + 2e-15 * max(abs(rng["min"]), abs(v))
+    if isinstance(rng["min"], int) and isinstance(rng["step"], int):
+        return rng["min"] + k * rng["step"]
+    places = max(-Decimal(repr(float(x))).as_tuple().exponent for x in (rng["min"], rng["step"]))
+    return round(rng["min"] + k * rng["step"], max(places, 0))
 
 
 def _num_text(item, v, unit_text=str):
-    """A number item's value as people read it: a whole number without a point or an exponent, then the unit."""
+    """A number item's value as people read it, then the unit: a whole number without a point or an exponent,
+    within MAX_VALUE, so at most 16 digits and a sign."""
     text = "%d" % v if float(v).is_integer() else repr(float(v))
     unit = item["range"].get("unit")
     return text + " " + unit_text(unit) if unit else text
@@ -189,8 +205,6 @@ def _number_item(item, where):
     _keys(rng, RANGE_KEYS, ("min", "max"), rwhere)
     rng.setdefault("step", 1)
     for key in ("min", "max", "step"):
-        if not _number(rng[key]):
-            raise DecisionsError("%s: %r must be a number" % (rwhere, key))
         if not _finite(rng[key]):
             raise DecisionsError("%s: %r must be a finite number" % (rwhere, key))
     if not rng["min"] < rng["max"]:
@@ -207,6 +221,8 @@ def _number_item(item, where):
         steps = math.inf
     if steps > MAX_STEPS:
         raise DecisionsError("%s: more than %d steps from 'min' to 'max'" % (rwhere, MAX_STEPS))
+    if max(abs(rng["min"]), abs(rng["max"])) > MAX_VALUE:
+        raise DecisionsError("%s: 'min' and 'max' must lie between -1e15 and 1e15" % rwhere)
     _text(rng, "unit", rwhere)
     unit = rng.get("unit", "")
     if len(unit) > MAX_UNIT or any(unicodedata.category(c) in ("Cc", "Cf", "Zl", "Zp") for c in unit):
@@ -216,6 +232,7 @@ def _number_item(item, where):
     if not _on_grid(rng, item["recommended"]):
         raise DecisionsError("%s: 'recommended' must be a number from %s to %s, on a step of %s"
                              % (where, rng["min"], rng["max"], rng["step"]))
+    item["recommended"] = _snap(rng, item["recommended"])  # what the page's slider saves for it
 
 
 def _box_ok(box):

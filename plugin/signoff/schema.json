@@ -33,7 +33,7 @@
       "allOf": [
         {
           "if": { "properties": { "select": { "const": "number" } }, "required": ["select"] },
-          "then": { "required": ["range", "recommended"], "properties": { "options": false, "criteria": false, "other": { "const": false }, "marks": { "const": false } } },
+          "then": { "required": ["range", "recommended"], "properties": { "options": false, "criteria": false, "other": { "const": false }, "marks": { "const": false }, "recommended": { "type": "number" } } },
           "else": { "required": ["options"], "properties": { "range": false } }
         }
       ],
@@ -72,8 +72,8 @@
       "required": ["min", "max"],
       "additionalProperties": false,
       "properties": {
-        "min": { "type": "number", "description": "Less than max." },
-        "max": { "type": "number" },
+        "min": { "type": "number", "minimum": -1e15, "maximum": 1e15, "description": "Less than max." },
+        "max": { "type": "number", "minimum": -1e15, "maximum": 1e15 },
         "step": { "type": "number", "exclusiveMinimum": 0, "default": 1, "description": "The values are min plus a whole number of steps." },
         "unit": { "type": "string", "maxLength": 16, "description": "Shown after the value, such as % or HUF. One line." }
       }

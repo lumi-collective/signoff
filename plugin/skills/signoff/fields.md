@@ -49,8 +49,8 @@
   can show only those. Mark few, or the mark means nothing.
 - `"select": "number"` when the answer is a number (a budget, a share, a count), not made-up buckets:
   `"range": {"min": 0, "max": 50, "step": 5, "unit": "%"}` and `"recommended": 20`, with no `options`. The page
-  shows a slider and a number field. `min` is less than `max`; `step` is more than 0 (default 1), with at most
-  10,000 steps between them; `unit` is up to 16 characters, one line. `recommended` is required, in the range
-  and on its step. `skippable` and `comment` work as on any item; `other`, `marks` and `criteria` do not. The
+  shows a slider and a number field. `min` is less than `max`, both from -10^15 to 10^15; `step` is more than 0
+  (default 1), with at most 10,000 steps between them; `unit` is up to 16 characters, one line. `recommended`
+  (a number) is required, in the range and on its step. `skippable` and `comment` work as on any item; `other`, `marks` and `criteria` do not. The
   answer is a JSON number (see [answers.md](answers.md)). Needs Signoff 0.5.0 or newer; after updating, the
   user restarts the inbox (`signoff inbox stop`, then open it again).

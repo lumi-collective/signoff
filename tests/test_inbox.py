@@ -1775,6 +1775,12 @@ class InboxOffer(InboxTest):
         cases = [("value and unit", [one_round(dict(num))], None, "2.5 %"),
                  ("no unit, a big whole number", [one_round(dict(bare))], None, "1234500"),
                  ("zero", [one_round(dict(num, recommended=0))], None, "0 %"),
+                 ("a noisy recommendation, as its grid point",
+                  [one_round(dict(num, range={"min": 0.1, "max": 1, "step": 0.1}, recommended=0.30000000000000004))],
+                  None, "0.3"),
+                 ("the longest, never cut", [one_round(dict(num, range={
+                     "min": -10 ** 15, "max": -10 ** 15 + 10 ** 7, "step": 1000, "unit": "u" * 15 + "Z"},
+                     recommended=-999999999999000))], None, "-999999999999000 " + "u" * 15 + "Z"),
                  ("sensitive", [one_round(dict(num, sensitive=True))], None, None),
                  ("moved by the user is decided", [one_round(dict(num), question("q"))],
                   {1: record({"n": {"choice": 0, "source": "user"}})}, "Alpha"),

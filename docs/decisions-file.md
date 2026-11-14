@@ -52,8 +52,8 @@ JSON, one file per round. [`plugin/signoff/schema.json`](../plugin/signoff/schem
 | `html` | board | no | one self-contained HTML file inside the folder, up to 2 MiB: inline CSS and JS, `data:` images; it reads `?theme=light` or `?theme=dark` from its URL |
 | `select` | item | no | `one` (radio buttons, default), `many` (checkboxes) or `number` (a slider and a number field) |
 | `options` | item | `one`, `many` | each: `id`, `label`, optional `detail`; at least two for `one`. Refused on a `number` item |
-| `range` | item | `number` | a number item's values: `min` and `max` (`min` less than `max`), optional `step` (more than 0, default 1; at most 10,000 steps from `min` to `max`, and both within 10^12 steps of 0) and `unit` (shown after the value, up to 16 characters, one line). Only on a `number` item, which takes no `other`, `marks` or `criteria` |
-| `recommended` | item | `number` | an option id (`one`), a list of them (`many`), or a number on the range's step (`number`, required there); preselected and labelled |
+| `range` | item | `number` | a number item's values: `min` and `max` (`min` less than `max`, both from -10^15 to 10^15), optional `step` (more than 0, default 1; at most 10,000 steps from `min` to `max`, and both within 10^12 steps of 0) and `unit` (shown after the value, up to 16 characters, one line). Only on a `number` item, which takes no `other`, `marks` or `criteria` |
+| `recommended` | item | `number` | an option id (`one`), a list of them (`many`), or a number on the range's step (`number`, required there; taken as its grid point, so `0.30000000000000004` on a step of 0.1 is 0.3); preselected and labelled |
 | `comment` | item | no | a comment box, default `true` |
 | `other`, `skippable`, `marks` | item | no | add **Other** with a text field, add **Skip**, let the user draw marks; each default `false` |
 | `sensitive` | item | no | the answer may hold personal data: the item starts marked **Private**, which the user can untick; only on an item with a text field (`comment`, `other` or `marks`); default `false` |

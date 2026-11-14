@@ -491,7 +491,9 @@ class Exits(unittest.TestCase):
                   "recommended": 5}
         for bad in (dict(number, recommended=5.5), dict(number, range={"min": 10, "max": 0}),
                     {k: v for k, v in number.items() if k != "recommended"},
-                    dict(number, options=[{"id": "a", "label": "A"}, {"id": "b", "label": "B"}])):
+                    dict(number, options=[{"id": "a", "label": "A"}, {"id": "b", "label": "B"}]),
+                    # Bounds a float cannot do the grid's arithmetic on: a message, never a crash.
+                    dict(number, range={"min": -10 ** 308, "max": 10 ** 308, "step": 10 ** 305}, recommended=9e307)):
             folder = Folder()
             self.addCleanup(folder.cleanup)
             data = sample_decisions()
@@ -505,6 +507,7 @@ class Exits(unittest.TestCase):
             self.assertEqual((done.returncode, done.stdout), (1, ""), (args, done.stderr))
             if args in bad_commands:
                 self.assertTrue(done.stderr.strip(), args)
+                self.assertNotIn("Traceback", done.stderr, args)
 
     def test_an_items_commands_go_to_the_page_as_written(self):
         folder = Folder()

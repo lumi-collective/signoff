@@ -3055,8 +3055,9 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
     if (mirrors[key(ri, item)]) mirrors[key(ri, item)]();
     if (item.select !== 'number') return;
     var n = values.filter(function (v) { return typeof v === 'number'; })[0];
-    // Skipped: the slider still shows a value, the recommendation, for when Skip is unticked.
-    setNumber(ri, item, n !== undefined ? n : values.indexOf(SKIP) >= 0 ? item.recommended : null);
+    // Skipped: the slider still shows a value, the recommendation, for when Skip is unticked; read only, where
+    // nothing can be unticked, no value at all.
+    setNumber(ri, item, n !== undefined ? n : values.indexOf(SKIP) >= 0 && !rounds[ri].readonly ? item.recommended : null);
   }
 
   function renderPanel(ri) {

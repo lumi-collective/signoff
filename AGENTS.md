@@ -199,8 +199,9 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   is not `sensitive`. The reply is `{offer: null}` or `{offer: {id, project, round, question, answer}}`: `id` 32
   hex digits; `project` the project's name as the list shows it (a run outside any project: its decisions
   folder's name, the login name when that folder is the home itself), the other three the decisions file's own
-  texts (a number item's answer: its `recommended`, a whole number without a point, then a space and the unit
-  when it has one). Each is one line (every control, format and line-separator character a space), cut to
+  texts (a number item's answer: its `recommended` as its grid point, a whole value without a point or an
+  exponent, any other as Python's shortest repr, then a space and the unit when it has one; with the range's
+  bounds of 1e15 and a 16-character unit it never reaches the cut). Each is one line (every control, format and line-separator character a space), cut to
   `MAX_OFFER_TEXT`. Signoff adds no path, link or token of its own, and replaces the project's folder with its
   name and the user's home with `~` (as the OSV section does), but does not filter the agent's text: a URL in it
   stays, and so does the folder written through a link (the inbox knows only its real path). The inbox keeps an offer in memory only (its run, round,

@@ -4,6 +4,7 @@ import json
 import os
 import time
 import unittest
+from decimal import Decimal
 
 from support import ROOT, Folder, sample_decisions, signoff
 
@@ -657,6 +658,9 @@ class NumberItem(unittest.TestCase):
             # A float cannot tell 1e15 from 1e15 + 0.5 apart well enough to keep a step of 1.
             (number_item(range={"min": 1e15, "max": 1e15 + 10, "step": 1}, recommended=1e15), "'step'"),
             (number_item(range={"min": -5e12, "max": -5e12 + 3, "step": 1}, recommended=-5e12), "'step'"),
+            # Within MAX_SCALE steps, yet past what a float holds: the grid's arithmetic would overflow.
+            (number_item(range={"min": -10 ** 308, "max": 10 ** 308, "step": 10 ** 305}, recommended=9e307), "1e15"),
+            (number_item(range={"min": 0, "max": 2 * 10 ** 15, "step": 10 ** 12}, recommended=0), "1e15"),
             (number_item(range=[0, 10]), "'range'"),
             (number_item(range={"min": 0}), "missing 'max'"),
             (number_item(range={"min": 0, "max": 10, "scale": "log"}), "unknown key"),
@@ -687,6 +691,21 @@ class NumberItem(unittest.TestCase):
         item = self.load(number_item(range={"min": 0, "max": 10, "unit": "x" * signoff.MAX_UNIT}, recommended=0,
                                      skippable=True, sensitive=True, comment=False))
         self.assertTrue(item["skippable"])
+        item = self.load(number_item(range={"min": -10 ** 15, "max": -10 ** 15 + 10 ** 7, "step": 1000},
+                                     recommended=-999999999999000))  # the bound itself
+        self.assertEqual(item["recommended"], -999999999999000)
+
+    def test_recommended_is_kept_as_its_grid_point(self):
+        # The page saves the slider's value, which the browser writes as min + k * step in decimal: a noisy
+        # recommendation would then never equal the answer.
+        for rng, rec, want in (({"min": 0.1, "max": 1, "step": 0.1}, 0.30000000000000004, 0.3),
+                               ({"min": 0.1, "max": 1, "step": 0.1}, 0.7, 0.7),
+                               ({"min": -10, "max": 10, "step": 0.5}, 2.5000000000000004, 2.5),
+                               ({"min": 0, "max": 1e-3, "step": 1e-7}, 3 * 1e-7, 3e-7),
+                               ({"min": 0, "max": 100, "step": 5}, 40, 40)):
+            item = self.load(number_item(range=rng, recommended=rec))
+            self.assertEqual(item["recommended"], want, rng)
+            self.assertIs(type(item["recommended"]), type(want), rng)
 
 
 class NumberAnswers(unittest.TestCase):
@@ -735,6 +754,28 @@ class NumberAnswers(unittest.TestCase):
             self.check(2.5, other="x")
         with self.assertRaises(ValueError):
             self.check(2.5, marks=[])
+
+    def test_values_a_browser_sends_far_from_0_are_on_the_grid(self):
+        # The slider's value is min + k * step worked out in decimal, then read as a float: far from 0 it is
+        # off the float grid by more than a millionth of a step, which the check must take.
+        lo = 1e8 + 0.1  # without the tolerance's term for the value's size, 8000 of these are refused
+        self.decisions["items"][3]["range"] = {"min": lo, "max": lo + 1000, "step": 0.1}
+        refused = []
+        for k in range(10001):
+            v = float(Decimal(repr(lo)) + k * Decimal("0.1"))
+            try:
+                self.check(v, key="share")
+            except ValueError:
+                refused.append(v)
+        self.assertEqual(refused, [])
+
+    def test_bounds_near_a_floats_limit_never_raise_anything_but_value_error(self):
+        # A range past the loader's bound, as an older file or a hand-built one could hold: the check must refuse,
+        # not overflow.
+        self.decisions["items"][3]["range"] = {"min": -10 ** 308, "max": 10 ** 308, "step": 10 ** 305}
+        for choice in (9e307, -9e307, 1.7e308, 10 ** 308):
+            with self.assertRaises(ValueError):
+                self.check(choice, key="share")
 
     def test_a_saved_body_with_nan_from_json_is_refused(self):
         # json.loads reads NaN and Infinity, which JSON itself does not have.
@@ -1011,6 +1052,9 @@ class SchemaFile(unittest.TestCase):
         self.assertFalse(rng["additionalProperties"])
         self.assertEqual(rng["properties"]["unit"]["maxLength"], signoff.MAX_UNIT)
         self.assertEqual(rng["properties"]["step"]["default"], 1)
+        for key in ("min", "max"):
+            self.assertEqual((rng["properties"][key]["minimum"], rng["properties"][key]["maximum"]),
+                             (-signoff.MAX_VALUE, signoff.MAX_VALUE))
         item = self.defs["item"]
         self.assertEqual(item["properties"]["range"], {"$ref": "#/$defs/range"})
         self.assertIn({"type": "number"}, item["properties"]["recommended"]["oneOf"])
@@ -1018,6 +1062,7 @@ class SchemaFile(unittest.TestCase):
         (rule,) = item["allOf"]
         self.assertEqual(rule["if"], {"properties": {"select": {"const": "number"}}, "required": ["select"]})
         self.assertEqual(rule["then"]["required"], ["range", "recommended"])
+        self.assertEqual(rule["then"]["properties"]["recommended"], {"type": "number"})
         self.assertEqual(rule["else"]["required"], ["options"])
 
     def test_image_and_option(self):

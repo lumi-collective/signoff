@@ -1377,6 +1377,14 @@ def run_number(work):
         "version": 1, "done": True, "saved": "2026-01-09T10:00:00Z", "free_text": "",
         "decisions": {"file": "round-01.json", "sha256": sha},
         "answers": {"budget": {"choice": -4.5, "comment": "", "source": "user"}}}), encoding="utf-8")
+    # A done round answered Skip: no value and no Recommended tag, only Skip ticked.
+    (topic / "round-03.json").write_text(json.dumps({"version": 1, "title": "Skipped one", "items": NUMBER_ITEMS[:1]}),
+                                         encoding="utf-8")
+    sha = hashlib.sha256((topic / "round-03.json").read_bytes()).hexdigest()
+    (topic / "round-03.answers.json").write_text(json.dumps({
+        "version": 1, "done": True, "saved": "2026-01-09T10:00:00Z", "free_text": "",
+        "decisions": {"file": "round-03.json", "sha256": sha},
+        "answers": {"budget": {"choice": "_skip", "comment": "", "source": "user"}}}), encoding="utf-8")
     server, out, err, browser = serve(topic, str(work / "profile-number-done"))
     try:
         wait_for("the page", lambda: browser.js("!!document.getElementById('tab-0')"))
@@ -1388,6 +1396,11 @@ def run_number(work):
                          "getComputedStyle(document.getElementById('r0-i0-n')).visibility]")
         check(got == [True, True, "-4.5", "", "1", "hidden", "visible"],
               "a done round's number items, no slider where nothing was saved: %r" % got)
+        browser.click("#tab-2")
+        got = browser.js("[document.getElementById('r2-i0-skip').checked, document.getElementById('r2-i0-v').value, "
+                         "getComputedStyle(document.getElementById('r2-i0-n')).visibility, "
+                         "getComputedStyle(document.getElementById('r2-i0-rt')).visibility]")
+        check(got == [True, "", "hidden", "hidden"], "a done round answered Skip shows no value and no tag: %r" % got)
     except E2EError:
         sys.stderr.write("--- Signoff stderr ---\n" + "".join(err))
         raise
