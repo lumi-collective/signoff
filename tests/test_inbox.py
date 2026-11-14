@@ -659,6 +659,17 @@ class InboxPage(InboxTest):
         self.assertEqual([w["since"] for w in rows], ["2023-11-14T22:13:20Z"])
         self.assertTrue(all(signoff.SAVED_PATTERN.fullmatch(w["since"]) for w in data["waiting"]))
 
+    def test_a_waiting_round_carries_its_file_time_as_opened_and_its_run_start_as_since(self):
+        # The 2-day warning reads the round file's time; the row's clock and sort stay on the run's start.
+        when = int(time.time()) - 3 * 86400
+        os.utime(str(self.topic / "round-01.json"), (when, when))
+        e = self.register()
+        self.start()
+        rows = [w for w in self.view(self.open()[1])[0]["waiting"] if w["kind"] == "round"]
+        self.assertEqual(rows[0]["opened"], time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(when)))
+        self.assertTrue(signoff.SAVED_PATTERN.fullmatch(rows[1]["opened"]))
+        self.assertEqual([w["since"] for w in rows], [e["started"]] * 2)
+
     def test_runs_outside_a_project_that_ended_or_died_are_not_waiting(self):
         # A project run that ended or died leaves orphan rounds instead (InboxOrphan); an old one leaves nothing.
         def register(**kw):
@@ -3027,8 +3038,9 @@ class InboxOrphan(InboxTest):
         for text in (str(self.root), str(self.home), str(self.topic), "round-01.json", e["run"]):
             self.assertNotIn(text.encode(), body)
         row = self.rounds_waiting(page)[0]
-        self.assertEqual(sorted(row), ["color", "group", "held", "items", "kind", "mono", "name", "orphan",
+        self.assertEqual(sorted(row), ["color", "group", "held", "items", "kind", "mono", "name", "opened", "orphan",
                                        "project", "since", "tab", "title"])
+        self.assertTrue(signoff.SAVED_PATTERN.fullmatch(row["opened"]))  # a time, never a path
         state = (self.home / "state.json").read_bytes()
         for text in (str(self.root), self.topic.name, "Round", e["run"]):
             self.assertNotIn(text.encode(), state)

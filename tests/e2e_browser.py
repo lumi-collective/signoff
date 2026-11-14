@@ -299,6 +299,14 @@ def finished(server, out, err, expected):
 
 
 PALETTE = "document.documentElement.getAttribute('data-palette')"
+# The open round's age as shown: the header's time, its 2-day pill and the note at the top of the round's panel (each
+# false when not shown).
+ROUND_AGE = """(function () {
+  var t = document.getElementById('opened'), p = document.getElementById('old-round');
+  var n = document.querySelector('.rp:not([hidden]) > .old-note');
+  return {time: t.checkVisibility() && t.textContent, datetime: t.dateTime, title: t.title,
+    pill: p.checkVisibility() && p.textContent, note: !!n && n.checkVisibility() && n.textContent};
+})()"""
 
 
 def press(browser, key, code, vk, modifiers=0, text=""):
@@ -420,6 +428,8 @@ def run_phone(work):
     data = json.loads((DEMO / "round-02.json").read_text(encoding="utf-8"))
     data["lang"] = "hu"
     (topic / "decisions.json").write_text(json.dumps(data), encoding="utf-8")
+    old = time.time() - 3 * 86400  # asked three days ago: the header's time, its pill and the panel's note
+    os.utime(str(topic / "decisions.json"), (old, old))
     shown = ("Array.prototype.filter.call(document.querySelectorAll('#panel-0 .item[data-item]'), "
              "function (c) { return c.checkVisibility(); }).length")
     server, out, err, browser = serve(topic / "decisions.json", str(work / "profile-phone"), size=(390, 844))
@@ -437,6 +447,11 @@ def run_phone(work):
         text = browser.js("document.body.innerText")
         check("undefined" not in text and "Fókusz" in text and "Javasolt".upper() in text.upper(),
               "a Hungarian round should show Hungarian labels: %r" % text[:400])
+        age = browser.js(ROUND_AGE)
+        check(age["time"].startswith("Megnyitva: ") and age["time"].endswith(" · 3 nap ezelőtt") and age["datetime"]
+              == time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(int(old))) and age["title"]
+              and age["pill"] == "2+ napja nyitva" and age["note"].startswith("A kérdései elavulhattak"),
+              "an old Hungarian round in Focus: its time, pill and note: %r" % age)
         browser.click(".ib-fbar button:nth-of-type(2)")  # Next
         check(browser.js("document.querySelector('.item.cur') === document.querySelectorAll('#panel-0 .item')[1] && %s"
                          % shown) == 1, "Next should show the second item alone")
@@ -484,6 +499,12 @@ def run_single(work):
               "the header should name the project folder %r" % work.name)
         check(browser.js("document.title") == work.name + " · " + data["title"], "the tab title should start with the "
               "project name: %r" % browser.js("document.title"))
+        # The project line also says when the round was asked: a fresh one, with no pill and no note.
+        age = browser.js(ROUND_AGE)
+        check(re.fullmatch(r"Opened .+ · just now", age["time"]) and re.fullmatch(
+              r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", age["datetime"]) and age["title"] and age["pill"] is False
+              and age["note"] is False and browser.js("document.getElementById('project-line').innerText")
+              == work.name + age["time"], "a fresh round's opening time in the header: %r" % age)
         browser.click("#r0-i0-o%d" % option)
         browser.click("#r0-i1-c")
         browser.call("Input.insertText", text=comment)
@@ -593,12 +614,22 @@ def run_readonly(work):
         "version": 1, "done": True, "saved": "2026-01-07T10:00:00Z", "free_text": "",
         "decisions": {"file": "round-01.json", "sha256": sha},
         "answers": {first["id"]: {"choice": first["recommended"], "comment": "", "private": True}}}), encoding="utf-8")
+    old = time.time() - 3 * 86400
+    for name in ("round-01.json", "round-02.json"):
+        os.utime(str(topic / name), (old, old))
     server, out, err, browser = serve(topic, str(work / "profile-readonly"))
     try:
         wait_for("the page", lambda: browser.js("!!document.getElementById('r1-i0-p')"))
         state = browser.js("[document.querySelectorAll('#panel-0 .sens').length, document.getElementById('r0-i0-p').checked, "
                            "document.getElementById('r0-i0-p').disabled, document.querySelectorAll('#panel-1 .sens').length]")
         check(state == [0, True, True, 1], "a done round should show Private without the hint: %r" % state)
+        # Both asked three days ago: the open round warns, the done one shows only its time.
+        age = browser.js(ROUND_AGE)
+        check(age["pill"] == "Open 2+ days" and age["note"], "the old open round should warn: %r" % age)
+        browser.click("#tab-0")
+        age = browser.js(ROUND_AGE)
+        check(re.fullmatch(r"Opened .+ · 3 days ago", age["time"]) and age["pill"] is False and age["note"] is False,
+              "a done round shows its time and no warning: %r" % age)
     except E2EError:
         sys.stderr.write("--- Signoff stderr ---\n" + "".join(err))
         raise
@@ -1955,6 +1986,90 @@ def run_offer(work):
         end_inbox(inbox, script, env, home)
 
 
+def run_round_age(work):
+    """A round asked three days ago and a fresh one, each waited on by a run started now: the old row carries the
+    2-day pill (from the round file's time, not the run's start, so both rows read "just now") and its open row the
+    note; the old round's page shows its time, the pill and the note, in Focus too; the fresh one's only its time."""
+    sys.path.insert(0, str(ROOT / "plugin" / "signoff"))
+    import signoff
+    home, root = work / "age-home", work / "age-project"
+    (root / ".git").mkdir(parents=True)
+    topics = []
+    for name, title in (("2026-01-01-old", "An old round"), ("2026-01-02-fresh", "A fresh round")):
+        topic = root / ".signoff" / name
+        topic.mkdir(parents=True)
+        data = json.loads((DEMO / "round-04.json").read_text(encoding="utf-8"))
+        data["title"] = title
+        (topic / "round-01.json").write_text(json.dumps(data), encoding="utf-8")
+        topics.append(topic)
+    old = time.time() - 3 * 86400
+    os.utime(str(topics[0] / "round-01.json"), (old, old))
+    pid = signoff.project_id(root.resolve())
+    (home / "projects").mkdir(parents=True, mode=0o700)
+    (home / "projects" / (pid + ".json")).write_text(json.dumps(
+        {"schema": 1, "id": pid, "root": str(root.resolve()), "name": "age-project"}), encoding="utf-8")
+    env = dict(os.environ, SIGNOFF_INBOX_HOME=str(home))
+    script = [sys.executable, "-I", "-B", str(ROOT / "plugin" / "signoff" / "signoff.py")]
+    inbox_err, err, waiters = [], [], []
+    inbox = spawn(script + ["inbox", "serve"], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                  universal_newlines=True, encoding="utf-8", errors="replace")
+    threading.Thread(target=pump, args=(inbox.stderr, inbox_err), daemon=True).start()
+    browser = None
+    try:
+        start = wait_for("a start link from the inbox", lambda: inbox_link(inbox, inbox_err, script, env, home))
+        for topic in topics:  # the old round's run first, so its row is the first (oldest) one
+            mine = []
+            waiter = spawn(script + [str(topic), "--no-open"], env=env, stdout=subprocess.DEVNULL,
+                           stderr=subprocess.PIPE, universal_newlines=True, encoding="utf-8", errors="replace")
+            threading.Thread(target=pump, args=(waiter.stderr, mine), daemon=True).start()
+            waiters.append(waiter)
+            wait_for("the run to wait on the inbox", lambda: any("inbox is open" in l for l in mine))
+            err += mine
+            time.sleep(1.1)  # `started` is in whole seconds: the second run's must come after the first's
+        browser = Browser(str(work / "profile-age"))
+        browser.call("Emulation.setDeviceMetricsOverride", width=1280, height=900, deviceScaleFactor=1, mobile=False)
+        browser.call("Page.enable")
+        browser.call("Page.navigate", url=start)
+        rows = wait_for("both round rows", lambda: browser.js(
+            "(function () { var a = document.querySelectorAll('a.ib-main'); return a.length === 2 && "
+            "Array.prototype.map.call(a, function (m) { var p = m.querySelector('.pill.old'); return [m.querySelector("
+            "'.ib-title').textContent, m.querySelector('time.ib-when').textContent, !!p && p.checkVisibility() && "
+            "p.textContent, m.textContent.indexOf('Open 2+ days') >= 0]; }); })()"))
+        check(rows == [["An old round", "just now", "Open 2+ days", True], ["A fresh round", "just now", False, False]],
+              "only the old round's row has the pill, in the link's own text: %r" % rows)
+        note = browser.js("Array.prototype.map.call(document.querySelectorAll('#ib-detail .ib-vuln-note'), "
+                          "function (p) { return p.textContent; })")
+        check(browser.js("document.querySelector('#ib-detail h2').textContent") == "An old round"
+              and note == ["This round has been open for 3 days. Its questions may be out of date: if in doubt, "
+                           "ask the agent before you answer."], "the old round's open row says why: %r" % note)
+        links = browser.js("Array.prototype.map.call(document.querySelectorAll('a.ib-main'), function (a) {"
+                           " return a.href; })")
+        browser.call("Page.navigate", url=links[0])
+        wait_for("the old round's page", lambda: browser.js("!!document.getElementById('done')"))
+        age = browser.js(ROUND_AGE)
+        check(re.fullmatch(r"Opened .+ · 3 days ago", age["time"]) and age["datetime"] == time.strftime(
+              "%Y-%m-%dT%H:%M:%SZ", time.gmtime(int(old))) and age["title"] and age["pill"] == "Open 2+ days"
+              and age["note"] == "Its questions may be out of date: if in doubt, ask the agent before you answer.",
+              "the old round's header and panel: %r" % age)
+        press(browser, "f", "KeyF", 70, text="f")
+        check(browser.js("document.body.classList.contains('focusing')") and browser.js(ROUND_AGE)["note"],
+              "the note stays in Focus")
+        browser.call("Page.navigate", url=links[1])
+        wait_for("the fresh round's page", lambda: browser.js("!!document.getElementById('done')"))
+        age = browser.js(ROUND_AGE)
+        check(re.fullmatch(r"Opened .+ · just now", age["time"]) and age["pill"] is False and age["note"] is False,
+              "the fresh round shows its time only: %r" % age)
+    except E2EError:
+        sys.stderr.write("--- inbox stderr ---\n" + "".join(inbox_err) + "--- run stderr ---\n" + "".join(err))
+        raise
+    finally:
+        if browser:
+            kill(browser.proc)
+        for waiter in waiters:
+            kill(waiter)
+        end_inbox(inbox, script, env, home)
+
+
 def run():
     work = Path(tempfile.mkdtemp(prefix="signoff-e2e-"))
     WORK.append(work)
@@ -1976,6 +2091,7 @@ def run():
         run_inbox_search(work)
         run_live(work)
         run_offer(work)
+        run_round_age(work)
     topic = work / "2026-01-05-settings"
     topic.mkdir()
     shutil.copytree(str(DEMO / "mockups"), str(topic / "mockups"))
@@ -2092,8 +2208,9 @@ def main():
         cleanup()
     print("PASS: every round in examples/ (demo rounds, decisions.json, --history) shows its items, options, "
           "recommendations and answers in light and dark; a phone opens in Focus, Next, the margin above the options, "
-          "Esc, Hungarian labels; "
-          "1 round, comment quoted above Done, filter, Private hides it, one-click Done, exit 0; "
+          "Esc, Hungarian labels, an old round's time, pill and note in Hungarian; "
+          "an old done round shows its time with no warning; "
+          "1 round, its opening time in the header, comment quoted above Done, filter, Private hides it, one-click Done, exit 0; "
           "project name in the header and the tab title; --history search finds answers and comments, never a private one, "
           "and its picker previews in the tab only, and once it stops a picture that fails says so; "
           "table view: chips, toggle, a pick in the table saved and shown on the cards, exit 0; "
@@ -2127,7 +2244,9 @@ def main():
              "session of another project reloads the page by itself under its own project's heading, the groups "
              "following the order; "
              "an answer from a notification: the socket's offer, its start link opens the item in Focus (a hash naming "
-             "nothing is ignored), accept wakes the waiting run, exit 0, source notification; ") +
+             "nothing is ignored), accept wakes the waiting run, exit 0, source notification; "
+             "a round asked 3 days ago: the 2-day pill on its row (from the file's time, the clock on the run's "
+             "start) and the note in its open row, its page's opening time, pill and note, in Focus too; ") +
           "2 rounds in the sidebar with their items, the margin recommendation, Focus with f, j and Esc, "
           "a non-recommended pick, both accepted, Summary filter, the sign-off sheet, Done, exit 0, "
           "2 answers paths on stdout")

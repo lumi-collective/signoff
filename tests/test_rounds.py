@@ -114,6 +114,40 @@ class Loading(unittest.TestCase):
             folder.cleanup()
 
 
+class Opened(unittest.TestCase):
+    """Each round's opening time is its file's time: a re-run keeps it, an edit moves it, a bad one is null."""
+
+    def setUp(self):
+        self.rounds = Rounds(2)
+        self.addCleanup(self.rounds.cleanup)
+
+    def opened(self):
+        run = Running(self.rounds)
+        try:
+            return [r["opened"] for r in run.server.view()["rounds"]]
+        finally:
+            run.stop()
+
+    def test_the_round_file_time_is_sent_and_survives_a_rerun(self):
+        when = int(time.time()) - 3 * 86400
+        os.utime(str(self.rounds.round(1)), (when, when))
+        stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(when))
+        first = self.opened()
+        self.assertEqual(first[0], stamp)
+        self.assertTrue(signoff.SAVED_PATTERN.fullmatch(first[1]))
+        self.assertEqual(self.opened(), first)  # a second run on the same folder
+
+    def test_an_edit_moves_it_and_a_time_ahead_of_now_is_null(self):
+        when = int(time.time()) - 3 * 86400
+        os.utime(str(self.rounds.round(1)), (when, when))
+        old = self.opened()[0]
+        self.rounds.write(1, json.loads(self.rounds.round(1).read_text(encoding="utf-8")))
+        self.assertNotEqual(self.opened()[0], old)
+        ahead = int(time.time()) + 3600
+        os.utime(str(self.rounds.round(2)), (ahead, ahead))
+        self.assertIsNone(self.opened()[1])
+
+
 class Tabs(unittest.TestCase):
     def setUp(self):
         self.rounds = Rounds(3)
@@ -671,6 +705,22 @@ class Page(unittest.TestCase):
         used = set(re.findall(r"\bL\.(\w+)", script.replace(inbox, "")))
         self.assertTrue(used and used <= en, used - en)
         self.assertEqual(used - hu, set())
+
+    def test_the_round_age_helpers_and_labels_are_shared_by_both_pages(self):
+        # lasted() and OLD_ROUND serve the round's page and the inbox, so they sit above the inbox's part, and the
+        # round's page labels they use exist in both languages (the test above then covers lasted's).
+        script = self.page[self.page.index("var data = JSON.parse"):]
+        shared = script[:script.index("// ---- The inbox.")]
+        self.assertIn("function lasted(stamp)", shared)
+        self.assertIn("var OLD_ROUND = 2 * 86400000", shared)
+        self.assertEqual(script.count("function lasted("), 1)
+        labels = self.page[self.page.index("var LABELS = {"):self.page.index("var data = JSON.parse")]
+        en, hu = labels[:labels.index("hu: {")], labels[labels.index("hu: {"):]
+        for key in ("opened", "openedNow", "oldRound", "oldNote", "minutes", "hours", "days", "underMinute"):
+            self.assertRegex(en, r"\b%s: '" % key)
+            self.assertRegex(hu, r"\b%s: '" % key)
+        self.assertIn("oldRound: 'Open 2+ days'", en)
+        self.assertIn("oldRound: '2+ napja nyitva'", hu)
 
     def test_an_orphan_round_says_its_run_has_ended_in_english_and_hungarian(self):
         # The run is what is known gone: after Ctrl+C or the idle timeout its session may well live on.

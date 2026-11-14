@@ -514,7 +514,7 @@ body.focusing #ib-detail{padding:18px max(28px,calc(50% - 400px)) 40px}
 .ib-vuln-facts{margin:2px 0 6px;font-size:12.5px;color:var(--quiet);overflow-wrap:anywhere}
 .ib-vuln-sent{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .ib-vuln-note{margin:0 0 12px;color:var(--soft);overflow-wrap:anywhere}
-.pill.lvl-high,.pill.lvl-critical{background:var(--boxsoft);color:var(--boxtext)}
+.pill.lvl-high,.pill.lvl-critical,.pill.old{background:var(--boxsoft);color:var(--boxtext)}
 .ib-fbar,.ib-close{display:none}
 body.focusing .ib-fbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 18px;padding:0 0 12px;border-bottom:1px solid var(--line);
   font-size:13px;color:var(--quiet)}
@@ -600,6 +600,8 @@ body.run .head-intro{display:none}
 body.run .head-text{display:flex;flex-direction:column;min-width:0}
 body.run h1{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 body.run .project{order:2;padding:0;margin:2px 0 0;font-size:12px;font-weight:500;color:var(--quiet)}
+#project:not(:empty)+#opened::before{content:" · "}
+.project .pill{margin-left:6px}
 body.run .back{margin:0 0 2px}
 body.run>header>.mono{flex:none;margin:0}
 @media (min-width:1001px){body.hist:not(.side-off){grid-template-columns:300px minmax(0,1fr)}}
@@ -692,7 +694,7 @@ body.run.focusing .rp>.item[data-item]:not(.cur),body.run.focusing .rp>h2.group,
 </head>
 <body>
 <header>
-  <div class="head-text"><p class="project" id="project" hidden></p><h1 id="title"></h1><p class="intro head-intro" id="intro"></p></div>
+  <div class="head-text"><p class="project" id="project-line" hidden><span id="project"></span><time id="opened" hidden></time><span class="pill old" id="old-round" hidden></span></p><h1 id="title"></h1><p class="intro head-intro" id="intro"></p></div>
   <div class="actions"><span id="status" role="status" aria-live="polite">Not saved yet</span>
     <button type="button" id="accept-all"><span class="accept"><span id="accept-short">Accept all</span><span class="wide" id="accept-rest"> recommendations</span></span><span class="undo" hidden>Undo accept all</span></button>
     <span class="progress" id="progress" hidden></span>
@@ -848,7 +850,10 @@ body.run.focusing .rp>.item[data-item]:not(.cur),body.run.focusing .rp>h2.group,
       noFix: 'no fix yet', handFailed: 'Not handed over: {m}', notAnswering: 'the inbox is not answering',
       agentRecommends: 'Agent recommends', outline: 'In this round', itemOf: 'Item {i} of {n}', roundOf: 'Round {i} of {n}',
       answersN: '{n} answers', signNote: 'Done sends every answer to the agent.', stChanged: 'changed',
-      kItemShort: 'item', kOptionShort: 'option', kLeave: 'leave Focus or close the sidebar; or this list'},
+      kItemShort: 'item', kOptionShort: 'option', kLeave: 'leave Focus or close the sidebar; or this list',
+      opened: 'Opened {d} · {t} ago', openedNow: 'Opened {d} · just now', oldRound: 'Open 2+ days',
+      oldNote: 'Its questions may be out of date: if in doubt, ask the agent before you answer.',
+      oldOpenFor: 'This round has been open for {t}.'},
     hu: {done: 'Kész', doneRounds: 'Kész ({n} kör)', acceptShort: 'Javaslatok elfogadása', acceptRest: '',
       undo: 'Elfogadás visszavonása', recommended: 'Javasolt', cost: 'Költség',
       comment: 'Megjegyzés (nem kötelező)', many: 'Több is választható.', other: 'Egyéb', otherText: 'Egyéb: a te válaszod',
@@ -905,7 +910,10 @@ body.run.focusing .rp>.item[data-item]:not(.cur),body.run.focusing .rp>h2.group,
       answersN: '{n} válasz', signNote: 'A Kész minden választ elküld az ágensnek.', stChanged: 'módosult',
       kItemShort: 'tétel', kOptionShort: 'lehetőség', kLeave: 'kilépés a Fókuszból vagy az oldalsáv bezárása; vagy ez a lista',
       sidebar: 'Oldalsáv', focus: 'Fókusz', prev: 'Előző', next: 'Következő', leaveFocus: 'Kilépés a Fókuszból',
-      kFocus: 'Fókusz: egyszerre egy tétel', kFocusShort: 'fókusz', kKeysShort: 'billentyűk'}
+      kFocus: 'Fókusz: egyszerre egy tétel', kFocusShort: 'fókusz', kKeysShort: 'billentyűk',
+      minutes: '{n} perc', underMinute: 'kevesebb mint egy perc', hours: '{n} óra', days: '{n} nap',
+      opened: 'Megnyitva: {d} · {t} ezelőtt', openedNow: 'Megnyitva: {d} · épp most', oldRound: '2+ napja nyitva',
+      oldNote: 'A kérdései elavulhattak: ha bizonytalan vagy, kérdezd meg az ágenst, mielőtt válaszolsz.'}
   };
   var data = JSON.parse(document.getElementById('signoff-data').textContent);
   var historyMode = data.mode === 'history';
@@ -959,6 +967,17 @@ body.run.focusing .rp>.item[data-item]:not(.cur),body.run.focusing .rp>h2.group,
   var code = lang.toLowerCase().split('-')[0];
   var L = Object.prototype.hasOwnProperty.call(LABELS, code) ? LABELS[code] : LABELS.en;
   function fmt(s, vals) { return s.replace(/\{(\w+)\}/g, function (m, k) { return vals[k]; }); }
+  function lasted(stamp) {  // how long since then, roughly: a session's wait, a round's age
+    var m = Math.floor((Date.now() - new Date(stamp).getTime()) / 60000);
+    if (isNaN(m)) return '';
+    if (m < 1) return L.underMinute;
+    if (m < 60) return fmt(L.minutes, {n: m});
+    return m < 2880 ? fmt(L.hours, {n: Math.floor(m / 60)}) : fmt(L.days, {n: Math.floor(m / 1440)});
+  }
+  // A round asked this long ago may hold questions the agent has moved past: its page and its inbox row say so.
+  // shortcut: judged at render only; a tab left open past it shows the warning at its next reload.
+  var OLD_ROUND = 2 * 86400000;
+  function oldRound(stamp) { return !!stamp && Date.now() - new Date(stamp).getTime() >= OLD_ROUND; }
 
   function el(tag, cls, text) {
     var e = document.createElement(tag);
@@ -1766,13 +1785,6 @@ body.run.focusing .rp>.item[data-item]:not(.cur),body.run.focusing .rp>h2.group,
       clocks.push({t: t, stamp: o.stamp});
       return t;
     }
-    function lasted(stamp) {  // how long since then, roughly: the row says how long a session has waited
-      var m = Math.floor((Date.now() - new Date(stamp).getTime()) / 60000);
-      if (isNaN(m)) return '';
-      if (m < 1) return L.underMinute;
-      if (m < 60) return fmt(L.minutes, {n: m});
-      return m < 2880 ? fmt(L.hours, {n: Math.floor(m / 60)}) : fmt(L.days, {n: Math.floor(m / 1440)});
-    }
     // A live Claude Code session's row (hooks' sessions/ files): the user answers in the session itself. The server
     // sends `attach`, the session id's first 8 hex digits, for a background session only; the page never makes one.
     function live(w, note) {
@@ -1867,16 +1879,19 @@ body.run.focusing .rp>.item[data-item]:not(.cur),body.run.focusing .rp>h2.group,
     waiting.forEach(function (w) {
       if (w.kind === 'round') {
         var run = 'run/' + Number(w.group) + '/', tab = w.tab && w.tab !== w.title ? w.tab : '';
-        row(s, w, as(w.held ? {kind: L.heldKind, cls: 'k-t', glyph: '◇'}
+        var aged = oldRound(w.opened);  // the round file's time; the row's clock stays on its run's start
+        var r = row(s, w, as(w.held ? {kind: L.heldKind, cls: 'k-t', glyph: '◇'}
           : w.orphan ? {kind: L.orphanKind, cls: 'k-q', glyph: '◆'} : Q, {title: w.title, sub: tab,
           find: function () { return w.items || []; }, stamp: w.since, href: run, fill: function (box) {
             if (tab) box.append(el('p', '', tab));
             if (w.held) box.append(el('p', 'ib-vuln-note', L.held));
             else if (w.orphan) box.append(el('p', 'ib-vuln-note', L.orphan));
+            if (aged) box.append(el('p', 'ib-vuln-note', fmt(L.oldOpenFor, {t: lasted(w.opened)}) + ' ' + L.oldNote));
             var go = el('a', 'ib-go', L.openRound);
             go.href = run;
             box.append(go);
           }}));
+        if (aged) r.go.querySelector('.ib-sub').append(el('span', 'pill old', L.oldRound));
       } else if (w.kind === 'session') {
         row(s, w, as(W, as(live(w, function (box) { box.append(el('p', '', L.sessionNote)); }), {stamp: w.since})));
       } else todoRow(s, w, w.project, w, as(W, {stamp: w.since}));
@@ -2955,6 +2970,7 @@ body.run.focusing .rp>.item[data-item]:not(.cur),body.run.focusing .rp>h2.group,
     }
     if (d.lang) panel.lang = String(d.lang).replace(/_/g, '-');
     if (r.readonly && r.answers && r.answers.done) panel.append(el('p', 'readonly-note', L.readonly + (r.saved ? ' ' + when(r.saved) : '')));
+    if (!r.readonly && oldRound(r.opened)) panel.append(el('p', 'readonly-note warn old-note', L.oldNote));
     var group = null;
     d.items.forEach(function (item, n) {
       if (item.group && item.group !== group) panel.append(el('h2', 'group', item.group));
@@ -3135,11 +3151,12 @@ body.run.focusing .rp>.item[data-item]:not(.cur),body.run.focusing .rp>h2.group,
   }
   var project = String((historyMode ? data.root : data.project) || '');  // a folder name from the server, never a path
   byId('project').textContent = project;
-  byId('project').hidden = !project;
+  byId('project-line').hidden = !project;
+  byId('old-round').textContent = L.oldRound;
   if (data.inbox) {  // a run's rounds opened from the inbox: the way back, and why they may be read only
     var back = el('a', 'back', '← ' + L.inbox);
     back.href = '../../';
-    byId('project').before(back);
+    byId('project-line').before(back);
     if (data.held) {
       byId('banner').textContent = L.held;
       byId('banner').classList.add('on');
@@ -3149,7 +3166,22 @@ body.run.focusing .rp>.item[data-item]:not(.cur),body.run.focusing .rp>h2.group,
       byId('banner').classList.add('on');
     }
   }
-  function showHeader(d) {
+  // r: the round shown, whose opening time goes on the project line (the Summary and the past-decisions page: none).
+  function showHeader(d, r) {
+    var at = r && r.opened && new Date(r.opened), opened = byId('opened');
+    opened.hidden = !at || isNaN(at);
+    if (!opened.hidden) {
+      var day;
+      try {
+        day = at.toLocaleString(root.lang, {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'});
+      } catch (e) { day = r.opened; }
+      var t = lasted(r.opened);
+      opened.textContent = t === L.underMinute ? fmt(L.openedNow, {d: day}) : fmt(L.opened, {d: day, t: t});
+      opened.dateTime = r.opened;
+      opened.title = when(r.opened);
+    }
+    byId('old-round').hidden = opened.hidden || r.readonly || !oldRound(r.opened);
+    byId('project-line').hidden = !project && opened.hidden;
     byId('title').textContent = d.title;
     document.title = project ? project + ' · ' + d.title : d.title;
     byId('intro').textContent = d.intro || '';
@@ -3356,7 +3388,7 @@ body.run.focusing .rp>.item[data-item]:not(.cur),body.run.focusing .rp>h2.group,
       return;
     }
     var d = rounds[ri].decisions;
-    showHeader(d);
+    showHeader(d, rounds[ri]);
     acceptButton.hidden = rounds[ri].readonly || !d.items.some(hasRec);
     label(!!undo[ri]);
     fitNotes();  // the single round's summary block was skipped while its panel was hidden

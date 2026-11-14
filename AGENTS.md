@@ -498,8 +498,10 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   drawer, picker, help or Focus, no selected text, the focus not in a field, and not within 15 seconds of this
   page's own load. The open row, the filter, the search and both scrolls come back from `sessionStorage`, once. Otherwise a bar at the top of the list says how many are new, with a Reload button, and
   the key bar says it too; the poll tries again each time. Each Waiting on you row says how long ago it changed
-  (`since`: a round's run start, a session's `waiting_at`, a todo item's file time; the exact time in the tooltip),
-  and its rows sit under one heading per project (a run outside any project under its folder's name), the
+  (`since`: a round's run start, a session's `waiting_at`, a todo item's file time; the exact time in the tooltip);
+  a round's row whose `opened` (its round file's time, as on its page) is `OLD_ROUND` (2 days) old or more also
+  gets the pill "Open 2+ days" inside its link, and its open row a note saying how long and why, judged at render
+  only, never moving `since`, the sort or the search. Its rows sit under one heading per project (a run outside any project under its folder's name), the
   header's line saying how many wait in how many projects (a run outside any project counts in no project). Two buttons order the rows within each project: oldest
   first (the default), newest first; the choice is `sort` in `prefs.json` (a stored `project`, the old By project,
   reads as oldest first), the order only changes on screen (j and k follow it). To do shows each project's rows
@@ -539,7 +541,11 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   the progress, Focus, Accept all recommendations and Done. The Summary is the sign-off sheet. f is Focus (one
   item at a time; the round's tail after its last item), Esc leaves it or closes the drawer; a page loaded at
   760 px or less opens in Focus. A `#focus=<round>/<item>` hash opens that round's item in Focus; one that names
-  no round and item of the page is ignored. The past-decisions page puts its list in the sidebar and has no Focus. The page
+  no round and item of the page is ignored. The header's project line also says when the open round was asked
+  (`opened` in each round of the page data: its round file's time, read with its hash at load, `null` when not
+  `0 < mtime <= now`) as a `<time>` with the full time as its title; an open round (not read only) that old by
+  `OLD_ROUND` or more adds the pill there and a `readonly-note warn` at the top of its panel. The Summary and the
+  past-decisions page show no time. The past-decisions page puts its list in the sidebar and has no Focus. The page
   data gets `mono` (`mono`, `color`: the inbox's monogram for the project's name) on a run and the past-decisions
   page, never more. Every label a round's page uses has English and Hungarian (a test reads the page for each `L.name`; a
   key built at run time, such as `L['st_' + s]`, it does not see).

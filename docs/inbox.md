@@ -37,7 +37,9 @@ When the count changes, the page reloads itself, keeping the open row, the filte
 loses nothing: nothing typed and unsent in a message box, no sheet, sidebar drawer, Appearance or Focus open, the
 cursor not in a field. Otherwise a bar at the top of the list says how many are new, with a Reload button.
 Each row in Waiting on you says how long ago it last changed (a round: when its run started; a session: when it
-began to wait; a todo item: when its file last changed), the exact time on hover. The two buttons under the
+began to wait; a todo item: when its file last changed), the exact time on hover. A round asked 2 days ago or
+more (its round file's time, as its page shows it) also says **Open 2+ days**, and its open row says how long and
+that its questions may be out of date. The two buttons under the
 heading order the rows oldest first or newest first, within each project, and the projects by their first row, so
 the oldest (or newest) row is always at the top; the choice is kept in `prefs.json`.
 

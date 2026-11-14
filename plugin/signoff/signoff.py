@@ -1406,6 +1406,9 @@ class Round:
     def _load(self):
         self.decisions, self.images = load_decisions(self.path)
         self.sha256 = hashlib.sha256(read_regular(self.path, MAX_DECISIONS)).hexdigest()
+        # When the round was asked: its file's time, which no re-run moves (Signoff never writes a round file).
+        at = (_mtime(self.path) or 0) / 1e9
+        self.opened = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(at)) if 0 < at <= time.time() else None
         self.answers_path = answers_path_for(self.path)
         self.markdown_path = self.answers_path.with_name(self.answers_path.stem + ".md")
         self.saved = self.saved_at = None
@@ -1687,7 +1690,8 @@ class _Rounds:
                 closed = r.readonly or r.finished or not self.writable
                 rounds.append({"decisions": dict(r.decisions, items=items), "answers": r.saved, "saved": r.saved_at,
                                "readonly": closed, "accepted": bool(r.meta.get("accepted")) or closed,
-                               "changed": bool(r.meta.get("changed_after_accept")), "rev": r.rev})
+                               "changed": bool(r.meta.get("changed_after_accept")), "rev": r.rev,
+                               "opened": r.opened})
         return {"mode": "rounds", "project": self.project, "rounds": rounds}
 
     def store(self, index, state, rev=None):
@@ -3114,7 +3118,8 @@ class InboxServer(_Server):
                     else:
                         waiting.append(dict(_who(g.entry.get("project"), g.name), kind="round", group=n,
                                             title=r.decisions["title"], tab=r.decisions.get("tab"),
-                                            since=g.entry["started"], held=not g.writable, orphan=g.orphan,
+                                            since=g.entry["started"], opened=r.opened, held=not g.writable,
+                                            orphan=g.orphan,
                                             items=[it["title"][:MAX_ROW_TEXT] for it in r.decisions["items"][:MAX_ROW_ITEMS]]))
                         # What a todo item may name to link here: its topic folder and file, in its own project.
                         opened.setdefault((g.entry.get("project"), r.path.parent.name + "/" + r.path.name),
