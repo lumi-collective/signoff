@@ -538,7 +538,9 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   its question, text and pictures, a margin with the recommendation (the recommended labels, and the option's detail when one is recommended)
   and the cost (between the question and the options under 1100 px), then the options, numbered for the 1 to 9
   keys. An item's commands (between its text and pictures) are the inbox's code blocks (`codeBlock`, above the
-  inbox's part of the script), with Copy and the relative-delete hint. The key bar holds the save state, why Done waits, and the open round's Accept this round; the header keeps
+  inbox's part of the script), with Copy and the relative-delete hint whatever their `lang`; every code block
+  wraps (`pre-wrap`, `overflow-wrap:anywhere`), so all that Copy takes is in sight, and `_command()` refuses what
+  wrapping cannot show (invisible characters, blank-line and space runs, edge white space). The key bar holds the save state, why Done waits, and the open round's Accept this round; the header keeps
   the progress, Focus, Accept all recommendations and Done. The Summary is the sign-off sheet. f is Focus (one
   item at a time; the round's tail after its last item), Esc leaves it or closes the drawer; a page loaded at
   760 px or less opens in Focus. A `#focus=<round>/<item>` hash opens that round's item in Focus; one that names

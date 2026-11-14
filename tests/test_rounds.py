@@ -736,6 +736,12 @@ class Page(unittest.TestCase):
         self.assertIn("codeBlock(", item)
         self.assertLess(item.index("'desc'"), item.index("codeBlock("))
         self.assertLess(item.index("codeBlock("), item.index("'shots'"))
+        # Every code block wraps, a todo item's too: a line longer than the block shows whole, so Copy takes
+        # nothing the eye did not see. And a command warns of a relative delete whatever its lang.
+        rule = re.search(r"\n\.md-code pre\{([^}]*)\}", self.page).group(1)
+        self.assertIn("white-space:pre-wrap", rule)
+        self.assertIn("overflow-wrap:anywhere", rule)
+        self.assertIn("codeBlock(c, true)", item)
 
     def test_an_orphan_round_says_its_run_has_ended_in_english_and_hungarian(self):
         # The run is what is known gone: after Ctrl+C or the idle timeout its session may well live on.

@@ -572,7 +572,7 @@ body.focusing .ib-fbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;ma
 .md-bar{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 6px 4px 12px;border-bottom:1px solid var(--line);
   font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--quiet)}
 .md-bar button{padding:3px 10px;font:600 12.5px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
-.md-code pre{margin:0;padding:10px 12px;overflow-x:auto;white-space:pre;font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--text)}
+.md-code pre{margin:0;padding:10px 12px;white-space:pre-wrap;overflow-wrap:anywhere;font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--text)}
 .md-code pre:focus-visible{outline:3px solid var(--focus);outline-offset:-3px}
 .md-list{margin:6px 0;padding-left:22px}
 .md-list li.task{list-style:none;margin-left:-20px}
@@ -1254,15 +1254,16 @@ body.run.focusing .rp>.item[data-item]:not(.cur),body.run.focusing .rp>h2.group,
   }
 
   // A code block: a todo item's in the inbox, an item's command on a round's page. Its Copy is named by the caption
-  // (a command's), else the language.
-  function codeBlock(b) {
+  // (a command's), else the language. It wraps, so every character Copy takes is in sight. command: a round's
+  // command, which goes to a terminal whatever its lang, so the delete hint does not depend on it.
+  function codeBlock(b, command) {
     var box = el('div', 'md-code'), bar = el('div', 'md-bar'), lang = String(b.lang || ''), text = String(b.text);
     bar.append(el('span', 'md-lang', lang || L.codeLang), copier(text, fmt(L.copyLabel, {l: String(b.caption || '') || lang || L.codeLang})));
     var pre = el('pre');
-    pre.tabIndex = 0;  // it scrolls sideways, so the keyboard must reach it
+    pre.tabIndex = 0;  // the keyboard reaches it, to select from it
     pre.append(el('code', '', text));
     box.append(bar, pre);
-    if (/^(|text|bash|sh|zsh|shell|console|powershell|pwsh|cmd|bat)$/i.test(lang) && relativeDelete(text)) box.append(el('p', 'md-warn', '⚠ ' + L.relDelete));
+    if ((command || /^(|text|bash|sh|zsh|shell|console|powershell|pwsh|cmd|bat)$/i.test(lang)) && relativeDelete(text)) box.append(el('p', 'md-warn', '⚠ ' + L.relDelete));
     return box;
   }
   // A Copy button: the text exactly, nothing added (a function gives it at the click). Signoff never runs a
@@ -2788,7 +2789,7 @@ body.run.focusing .rp>.item[data-item]:not(.cur),body.run.focusing .rp>h2.group,
       var cmds = el('div', 'cmds');
       item.commands.forEach(function (c) {
         if (c.caption) cmds.append(el('p', 'cmd-cap', c.caption));
-        cmds.append(codeBlock(c));
+        cmds.append(codeBlock(c, true));
       });
       q.append(cmds);
     }

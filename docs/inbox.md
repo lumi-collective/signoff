@@ -112,7 +112,7 @@ the next step now. When an item's text names a round open in a run the inbox sho
 a path ending `<topic folder>/round-07.json`, the opened row has **Open round**.
 
 An item's row shows its first line; opened, it shows the rest of its text, each waiting step marked: code blocks with a Copy button that copies
-the command exactly, inline code (each span with its own Copy), tables, GitHub alerts and http(s) links. Copy text
+the command exactly (a long line wraps, so all of it is in sight), inline code (each span with its own Copy), tables, GitHub alerts and http(s) links. Copy text
 under the item takes the whole item as plain text. A command that deletes (`rm`, `rmdir`, `trash`, `del`,
 `Remove-Item`) with a path that is not absolute gets the warning "Relative path: check the folder before running";
 it only warns. HTML in the file shows as text, and the inbox never runs a command.

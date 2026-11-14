@@ -922,8 +922,19 @@ def run_attachment(work):
 
 
 COMMANDS = [{"text": "rm -rf build && make docs\n  echo '<b>done</b>'", "lang": "bash", "caption": "Rebuild the docs"},
-            {"text": "rm -rf /tmp/build"}]
-# Each command block under the item: where it sits, its caption, bar, Copy's name, the text and its warning.
+            {"text": "rm -rf /tmp/build"},
+            {"text": "rm -rf cache && echo " + "a" * 300, "lang": "python"}]  # warns whatever its lang; wraps
+
+
+def clipboard_text(browser):
+    """The clipboard as text. Blink on Windows may write a line break as CRLF; the check stays exact elsewhere."""
+    clip = browser.call("Runtime.evaluate", expression="navigator.clipboard.readText()", awaitPromise=True,
+                        returnByValue=True).get("result", {}).get("value")
+    return clip.replace("\r\n", "\n") if WINDOWS and isinstance(clip, str) else clip
+
+
+# Each command block under the item: where it sits, its caption, bar, Copy's name, the text and its warning, and
+# whether all of it is in sight (no line runs past the block's edge).
 COMMAND_BLOCKS = """(function () {
   var q = document.querySelector('.rp:not([hidden]) .item .q'), kids = Array.prototype.slice.call(q.children);
   var cmds = q.querySelector('.cmds'), at = kids.indexOf(cmds);
@@ -934,7 +945,7 @@ COMMAND_BLOCKS = """(function () {
         lang: c.querySelector('.md-lang').textContent, copy: c.querySelector('.md-bar button').textContent,
         name: c.querySelector('.md-bar button').getAttribute('aria-label'), text: pre.textContent,
         children: pre.firstChild.children.length, tab: pre.tabIndex, warn: w && w.textContent,
-        warnBox: !!w && getComputedStyle(w).paddingTop !== '0px'};
+        warnBox: !!w && getComputedStyle(w).paddingTop !== '0px', wraps: pre.scrollWidth <= pre.clientWidth};
     }), bold: q.querySelectorAll('b').length, undef: document.body.innerText.indexOf('undefined') >= 0};
 })()"""
 
@@ -966,14 +977,15 @@ def run_commands(work):
                                 else ("Másolás", "kód", "⚠ Relatív útvonal: futtatás előtt ellenőrizd a mappát"))
             name = "Copy the {l} block" if lang == "en" else "A(z) {l} blokk másolása"
             want = [{"caption": "Rebuild the docs", "lang": "bash", "copy": copy, "name": name.format(l="Rebuild the docs"),
-                     "text": COMMANDS[0]["text"], "children": 0, "tab": 0, "warn": warn, "warnBox": True},
+                     "text": COMMANDS[0]["text"], "children": 0, "tab": 0, "warn": warn, "warnBox": True, "wraps": True},
                     {"caption": None, "lang": code, "copy": copy, "name": name.format(l=code), "text": COMMANDS[1]["text"],
-                     "children": 0, "tab": 0, "warn": None, "warnBox": False}]
+                     "children": 0, "tab": 0, "warn": None, "warnBox": False, "wraps": True},
+                    {"caption": None, "lang": "python", "copy": copy, "name": name.format(l="python"),
+                     "text": COMMANDS[2]["text"], "children": 0, "tab": 0, "warn": warn, "warnBox": True, "wraps": True}]
             check(got["blocks"] == want, "the command blocks (%s): %r" % (lang, got["blocks"]))
             if lang == "en":
                 browser.click(".cmds .md-code .md-bar button")
-                clip = browser.call("Runtime.evaluate", expression="navigator.clipboard.readText()", awaitPromise=True,
-                                    returnByValue=True).get("result", {}).get("value")
+                clip = clipboard_text(browser)
                 check(clip == COMMANDS[0]["text"], "Copy should put the command on the clipboard exactly: %r" % clip)
                 check(browser.js("document.querySelector('.cmds .md-bar button').textContent") == "Copied",
                       "the button should say it copied")
@@ -991,7 +1003,57 @@ def run_commands(work):
             kill(browser.proc)
 
 
-RELEASE ="Release 1.0 for 2026-01-10-inbox / round-01"
+def run_commands_elsewhere(work):
+    """A round done in an earlier run, and the same round on the past-decisions page, still show its commands, and
+    Copy puts the exact text on the clipboard."""
+    root = work / "cmd-proj"
+    topic = root / ".signoff" / "2026-01-09-commands"
+    topic.mkdir(parents=True)
+    shutil.copytree(str(DEMO / "mockups"), str(topic / "mockups"))
+    data = json.loads((DEMO / "round-01.json").read_text(encoding="utf-8"))
+    data["items"] = data["items"][:1]
+    data["items"][0]["commands"] = COMMANDS
+    (topic / "round-01.json").write_text(json.dumps(data), encoding="utf-8")
+    (topic / "round-02.json").write_text(json.dumps(dict(data, title="Another round", items=[
+        dict(data["items"][0], commands=[{"text": "ls"}])])), encoding="utf-8")
+    item = data["items"][0]
+    (topic / "round-01.answers.json").write_text(json.dumps({
+        "version": 1, "done": True, "saved": "2026-01-09T10:00:00Z", "free_text": "",
+        "decisions": {"file": "round-01.json", "sha256": hashlib.sha256((topic / "round-01.json").read_bytes()).hexdigest()},
+        "answers": {item["id"]: {"choice": item["recommended"], "comment": ""}}}), encoding="utf-8")
+    for where, target, history in (("a done round", topic, False), ("past decisions", root, True)):
+        server, out, err, browser = serve(target, str(work / ("profile-cmd-" + ("history" if history else "done"))),
+                                          history=history)
+        try:
+            if history:
+                wait_for("the list", lambda: browser.js("!!document.querySelector('.h-entry')"))
+                browser.js("Array.prototype.filter.call(document.querySelectorAll('.h-entry'), function (b) { "
+                           "return b.textContent.indexOf('round-01.json') >= 0; })[0].click()")
+            else:
+                wait_for("the tabs", lambda: browser.js("!!document.getElementById('tab-0')"))
+                browser.click("#tab-0")
+                check(browser.js("!!document.querySelector('.rp:not([hidden]) .readonly-note')"),
+                      "the done round should show read only")
+            browser.call("Browser.grantPermissions", origin=browser.js("location.origin"),
+                         permissions=["clipboardReadWrite", "clipboardSanitizedWrite"])
+            block = ".rp:not([hidden]) .cmds .md-code"
+            wait_for("the commands on " + where, lambda: browser.js("!!document.querySelector(%s)" % json.dumps(block)))
+            texts = browser.js("Array.prototype.map.call(document.querySelectorAll(%s), function (c) { "
+                               "return c.querySelector('pre').textContent; })" % json.dumps(block))
+            check(texts == [c["text"] for c in COMMANDS], "%s should show the commands: %r" % (where, texts))
+            browser.click(block + " .md-bar button")
+            clip = clipboard_text(browser)
+            check(clip == COMMANDS[0]["text"], "Copy on %s should put the command on the clipboard exactly: %r"
+                  % (where, clip))
+        except E2EError:
+            sys.stderr.write("--- Signoff stderr ---\n" + "".join(err))
+            raise
+        finally:
+            kill(server)
+            kill(browser.proc)
+
+
+RELEASE = "Release 1.0 for 2026-01-10-inbox / round-01"
 INBOX_TODO = """# Todo
 
 - [ ] (waiting on you: run the backup) Check <b>the backup</b> before the release
@@ -1217,6 +1279,8 @@ def run_inbox(work):
         check(marks == {"spans": ["rm -rf build", "rm -rf /tmp/build", "rm x"], "copies": 2, "inline": [warning],
                         "blocks": [["rm -rf build && ls", warning], ["rm -rf /tmp/build", None], ["del cache", None]]},
               "a relative delete warns, an absolute one does not: %r" % marks)
+        check(browser.js("Array.prototype.every.call(document.querySelectorAll('#ib-detail .md-code pre'), function (p) "
+                         "{ return getComputedStyle(p).whiteSpace === 'pre-wrap'; })"), "a todo's code block should wrap")
         check(browser.js("document.querySelectorAll('#ib-detail .ib-body a button, #ib-detail .ib-body a .ic-warn').length")
               == 0, "no Copy or warning inside a link")
         browser.click("#ib-detail button.ic-copy")
@@ -2157,6 +2221,7 @@ def run():
     run_table(work)
     run_attachment(work)
     run_commands(work)
+    run_commands_elsewhere(work)
     if WINDOWS:
         print("SKIP: the inbox (it needs a Unix socket; not on Windows yet)", flush=True)
     else:
@@ -2288,8 +2353,9 @@ def main():
           "and its picker previews in the tab only, and once it stops a picture that fails says so; "
           "table view: chips, toggle, a pick in the table saved and shown on the cards, exit 0; "
           "an attachment starts closed, opens, shows the file's text unrendered, exit 0; "
-          "an item's commands sit between its text and pictures as code blocks, unrendered, Copy exact, a relative rm "
-          "warns, Hungarian labels, exit 0, escaped in the Markdown copy; "
+          "an item's commands sit between its text and pictures as code blocks, unrendered, wrapped, Copy exact, a "
+          "relative rm warns whatever the lang, Hungarian labels, exit 0, escaped in the Markdown copy, and on a done "
+          "round and --history Copy is exact too; "
           + ("" if WINDOWS else "inbox: the empty state, the sidebar's view and project filters, "
              "each project's other open items closed behind a count row that opens them, "
              "a waiting round and a waiting todo item grouped by project under the summary line, its steps counted, "

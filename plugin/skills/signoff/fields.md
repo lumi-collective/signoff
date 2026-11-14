@@ -37,7 +37,10 @@
   view shows it again later, so attach nothing secret. `sensitive` does not hide it: it is your text.
 - `commands` when the user should run something before deciding (a check, a preview):
   `"commands": [{"text": "make docs && open build/index.html", "lang": "bash", "caption": "Build the docs"}]`,
-  1 to 10 an item. The page shows each under the description as a code block with Copy (it copies `text`
-  exactly) and a warning under one that deletes a relative path; Signoff never runs it. `text` keeps line breaks
-  and tabs; any other control or format character (a bidi override, a zero-width mark) makes the round fail to
-  load. A command to run **after Done** goes in a todo item instead, where the inbox shows it with Copy.
+  1 to 10 an item. The page shows each under the description as a wrapped code block with Copy (it copies `text`
+  exactly) and a hint under one that deletes a relative path; Signoff never runs it. `text` keeps line breaks
+  and tabs. The round fails to load when `text` starts or ends with a space or line break, has two blank lines
+  in a row or more than 16 spaces or tabs in a row, or when `text`, `caption` or `lang` holds an invisible
+  character (another control character, a bidi override, a zero-width mark, a variation selector). `lang` is a
+  short word: up to 20 letters, digits or `+#._-`. A command to run **after Done** goes in a todo item instead,
+  where the inbox shows it with Copy.
