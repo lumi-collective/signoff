@@ -77,15 +77,21 @@ agent marks one as waiting on you right after the checkbox, in English:
 ```
 
 To keep the list in another file, add a `todo` key to the project's file in the Signoff home, a path relative to
-the project's root. The hooks write that file once and never again, so the key stays. To find the file, run this
-from a clone of this repository with the project's folder as `pwd -P` prints it there (the file keeps a name that
-is not ASCII as an escape, so a plain `grep` may miss it):
+the project's root. The hooks write that file once and never again, so the key stays. To find the file, run this in
+the project's folder. It takes the Signoff home: on macOS as below, on Linux `${XDG_STATE_HOME:-$HOME/.local/state}/signoff`;
+your agent can print it with `signoff inbox home`. A plain `grep` may miss a folder name that is not ASCII, which
+the file keeps as an escape:
 
 ```bash
-python3 -I - "$(python3 -I plugin/signoff/signoff.py inbox home)" /path/to/project <<'EOF'
+python3 -I - "$HOME/Library/Application Support/signoff" "$(pwd -P)" <<'EOF'
 import json, pathlib, sys
-for f in sorted(pathlib.Path(sys.argv[1], "projects").glob("*.json")):
-    if json.loads(f.read_text(encoding="utf-8")).get("root") == sys.argv[2]:
+for f in sorted(pathlib.Path(sys.argv[1], "projects").glob("[!.]*.json")):
+    try:
+        data = json.loads(f.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        print("not readable as JSON:", f, file=sys.stderr)
+        continue
+    if isinstance(data, dict) and data.get("root") == sys.argv[2]:
         print(f)
 EOF
 ```
