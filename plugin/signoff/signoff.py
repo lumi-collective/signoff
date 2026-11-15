@@ -2478,7 +2478,8 @@ def _mark_state(r, item_id, note):
     if _users(old):
         return None, "answered"
     mark = {"choice": [] if item["select"] == "many" else None, "comment": note, "source": "elsewhere"}
-    if old == mark:
+    # _users ruled out the rest: a page saving the mark back may add an empty marks list, and it is the same mark.
+    if old and all(old.get(k) == v for k, v in mark.items()):
         return None, None
     answers = dict(base["answers"], **{item_id: mark})
     return check_answers({"answers": answers, "free_text": base["free_text"], "accepted": False, "done": False},

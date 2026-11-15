@@ -1363,6 +1363,16 @@ class CliElsewhere(unittest.TestCase):
         self.assertEqual(self.files(self.folder), before)
         self.assertEqual(self.mark(self.folder.decisions, "layout", "another note")[0], 0)
         self.assertEqual(self.saved()["answers"]["layout"]["comment"], "another note")
+        # The page sends the mark back with an empty marks list on an item that takes marks: still the same mark.
+        write_outside(self.folder.answers, {"version": 1, "done": False, "saved": "2026-01-01T12:00:00Z",
+                                            "accepted": True, "accepted_at": "2026-01-01T12:00:00Z", "free_text": "",
+                                            "answers": {"pic": {"choice": None, "comment": "x", "source": "elsewhere",
+                                                                "marks": []}}})
+        before = self.files(self.folder)
+        with mock.patch.object(signoff, "write_atomic") as write:
+            self.assertEqual(self.mark(self.folder.decisions, "pic", "x"), (0, "", ""))
+        write.assert_not_called()  # no new rev, and the round stays accepted
+        self.assertEqual(self.files(self.folder), before)
 
     def test_the_note_is_one_plain_line_up_to_the_cap(self):
         self.assertEqual(self.mark(self.folder.decisions, "layout", "x" * signoff.MAX_NOTE)[0], 0)

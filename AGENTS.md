@@ -651,13 +651,18 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   - no `inbox.lock` in the home: no locks exist. It writes through `_Rounds.store` (`_Marker`), the Markdown copy
     first; the JSON's temporary file is written and synced, the answers file hashed again, then renamed; a hash
     changed since the load (at the save's own check or at that last one) starts over, three tries in all. This is
-    best effort, as "No stale writes" says before an inbox: a page save landing between that last hash and the
-    rename is lost, a Done included (the run then exits 0 with its path while the file says `done: false`).
+    best effort, as "No stale writes" says before an inbox, and the window is open both ways: a page save landing
+    between that last hash and the rename is lost, a Done included (the run then exits 0 with its path while the
+    file says `done: false`); and a page save already past its own disk check renames over the mark after the
+    command exited 0 (a page run's save has no hash before its rename), so the mark is gone from the page: run it
+    again.
   - `inbox.lock` there and the round's lock free (tried for half a second: another mark, or a waiter's look,
     holds it for a moment): it holds the lock for the write only, loads the round again under it, and writes as
     above. The inbox, whose look meets that lock for a round it takes in, shows it read only until its next look
     takes the lock (`take_locks` at every look), never for good. A page run starting in that moment exits 1 as
-    beside another run; run it again.
+    beside another run; run it again. This holds a second writer out only when every writer locks: a page run
+    started before `inbox.lock` existed, or one on a file system that cannot lock, holds no lock, and the first
+    case's window is open beside it.
   - the lock held and an inbox alive (`inbox_alive`): the `elsewhere` op on the control socket, `{op, round, item,
     note}` and no other key (`round` the round file's resolved absolute path, `item` an id, `note` as above; else
     `{error}` with its shape). The line is UTF-8 and not escaped to ASCII (`control_line`), and the command checks it

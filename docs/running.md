@@ -44,8 +44,12 @@ It writes the way the round's own writer does:
   answers file itself. It checks the file has not changed since it read it, once at the start of the write and
   once more just before the rename, and starts over when it has (three tries). A save from the page between that
   last check and the rename is still lost, a Done too: the run then exits 0 while the file says `done: false`.
-  This is the best effort every outside writer gets before the inbox.
-- An inbox has run, and nothing holds the round's lock: it holds the lock for the write only.
+  The other way round, a save from the page that had already passed its own check can write over the mark after
+  the command exited 0: if the mark is gone from the page, run the command again. This is the best effort every
+  outside writer gets before the inbox.
+- An inbox has run, and nothing holds the round's lock: it holds the lock for the write only. A page run started
+  before the inbox first ran, or on a file system that cannot lock, holds no lock, so the window above stays open
+  beside it.
 - The inbox runs and holds the round's lock (a waiting run): it asks the inbox on its control socket, and the inbox
   writes the mark as it writes a save from its page.
 - A page run holds the round's lock (it started before the inbox, or no inbox runs now): exit 1, nothing written.
