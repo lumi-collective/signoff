@@ -654,6 +654,12 @@ class Limits(unittest.TestCase):
 class Page(unittest.TestCase):
     page = (signoff.HERE / "page.html").read_text(encoding="utf-8")
 
+    def test_the_page_stays_within_its_size_limit(self):
+        # 256 KiB for the one file every round and the inbox load; a feature that needs more has to make room first.
+        size, limit = (signoff.HERE / "page.html").stat().st_size, 262144
+        if size > limit:
+            self.fail("page.html is %d bytes, over its limit of %d" % (size, limit))
+
     def test_tabs_follow_the_aria_pattern(self):
         for part in ('role="tablist"', "'tab'", "'tabpanel'", "aria-selected", "aria-controls", "aria-labelledby",
                      "ArrowRight", "ArrowLeft", "Home", "End"):
