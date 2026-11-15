@@ -65,11 +65,11 @@
   and 60 lines, and the known invisible and blank characters are refused. Signoff never runs it: read a command
   before running it.
 - **Agent waits on this.** An item the agent's next step waits on carries that badge after its title, and "agent
-  waits" after its name in the sidebar, each with a ■ before the words. Answer those first.
+  waits" under its name in the sidebar, each with a ■ before the words. Answer those first.
 - **Stakes and Cannot be undone.** The margin shows how much rides on an item when the agent says so, as a chip
   with a glyph and a word: ▲ **High stakes**, ● **Medium stakes**, ▼ **Low stakes**. An item that cannot be
   undone shows **Cannot be undone** and the agent's reason there. In the sidebar a high one gets "▲ high stakes"
-  after its name and one that cannot be undone "! irreversible".
+  under its name and one that cannot be undone "! irreversible".
 - **Settled earlier.** An item you decided in an earlier round starts folded: its title, **Settled earlier** with
   where and when, the choice it holds, and **Change**, which shows the options (and **Hide options** folds it
   again); the margin, with its stakes, still shows. Opened, it is answered like any other item; folding is a
