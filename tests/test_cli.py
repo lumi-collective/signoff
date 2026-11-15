@@ -1795,24 +1795,45 @@ class NoBrowser(unittest.TestCase):
             code, err = self.run_main(True)  # the browser is asked once
         self.assertEqual(code, 2)
 
+    def test_over_ssh_a_set_browser_still_opens(self):
+        # VS Code's Remote-SSH terminal sets BROWSER to a helper that opens the link on the user's own computer.
+        for env in self.SSH:
+            with mock.patch.dict(os.environ, dict(env, BROWSER="code-helper")):
+                code, err = self.run_main(True)  # the browser is asked once
+            self.assertEqual(code, 2)
+            self.assertNotIn("no browser", err)
+        with mock.patch.dict(os.environ, dict(self.SSH[0], BROWSER="")):  # empty: as unset
+            self.test_over_ssh_a_run_opens_no_browser()
+
+    def inbox_open(self, env):
+        link = "http://127.0.0.1:1/b/%s/" % ("a" * 43)
+        err = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, dict(env, SIGNOFF_INBOX_HOME=tmp)), \
+                mock.patch.object(signoff, "inbox_alive", return_value=True), \
+                mock.patch.object(signoff, "inbox_request", return_value={"link": link}), \
+                mock.patch.object(signoff.webbrowser, "open", return_value=True) as browser, \
+                mock.patch.object(sys, "stderr", err):
+            self.assertEqual(signoff.main(["inbox", "open"]), 0)
+        return link, browser, err.getvalue()
+
     @unittest.skipIf(sys.platform == "win32", "no inbox on Windows")
     def test_over_ssh_inbox_open_prints_the_link(self):
-        link = "http://127.0.0.1:1/b/%s/" % ("a" * 43)
-        for env in self.SSH:
-            err = io.StringIO()
-            with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, dict(env, SIGNOFF_INBOX_HOME=tmp)), \
-                    mock.patch.object(signoff, "inbox_alive", return_value=True), \
-                    mock.patch.object(signoff, "inbox_request", return_value={"link": link}), \
-                    mock.patch.object(signoff.webbrowser, "open") as browser, mock.patch.object(sys, "stderr", err):
-                self.assertEqual(signoff.main(["inbox", "open"]), 0)
+        for env in self.SSH + (dict(self.SSH[0], BROWSER=""),):
+            link, browser, err = self.inbox_open(env)
             browser.assert_not_called()
-            self.assertIn("no browser opened; open %s yourself (it works once)" % link, err.getvalue())
+            self.assertIn("no browser opened; open %s yourself (it works once)" % link, err)
+        # Empty SSH variables are no SSH, and a set BROWSER wins over SSH: the browser is asked.
+        for env in ({"SSH_CONNECTION": "", "SSH_TTY": ""}, dict(self.SSH[1], BROWSER="code-helper")):
+            link, browser, err = self.inbox_open(env)
+            browser.assert_called_once()
+            self.assertIn("the inbox is open in your browser", err)
 
 
 class FixedPort(unittest.TestCase):
     """--port and SIGNOFF_PORT, in process: the flag wins, 0 or unset is a random port, a bad value is a usage
     error with nothing on stdout. The contract suite checks the same against a separate process."""
-    BAD = ("-1", "65536", "x", "1.5", " 80", "+80", "8_080", "٨٠", "0x50", "9" * 30)
+    # Below 1024 too: browsers leave :80 out of Host and Origin, and the low ports are the system's.
+    BAD = ("-1", "65536", "x", "1.5", " 80", "+80", "8_080", "٨٠", "0x50", "9" * 30, "1", "80", "443", "1023")
 
     def setUp(self):
         self.folder = Folder()
@@ -1857,12 +1878,12 @@ class FixedPort(unittest.TestCase):
         for value in self.BAD:
             code, out, err = self.main(["--port", value])
             self.assertEqual((code, out), (1, ""), (value, err))
-            self.assertEqual(err.strip().splitlines(), ["signoff: --port must be a port number from 1 to 65535, or 0 "
-                                                        "for a random one"], value)
+            self.assertEqual(err.strip().splitlines(), ["signoff: --port must be a port number from 1024 to 65535, "
+                                                        "or 0 for a random one"], value)
             code, out, err = self.main([], {"SIGNOFF_PORT": value})
             self.assertEqual((code, out), (1, ""), (value, err))
-            self.assertEqual(err.strip().splitlines(), ["signoff: SIGNOFF_PORT must be a port number from 1 to 65535, "
-                                                        "or 0 for a random one"], value)
+            self.assertEqual(err.strip().splitlines(), ["signoff: SIGNOFF_PORT must be a port number from 1024 to "
+                                                        "65535, or 0 for a random one"], value)
         self.assertFalse(self.folder.answers.exists())
 
 

@@ -9,8 +9,8 @@ Two tools, neither of which blocks:
   signoff_status({run_id})                 returns {state: waiting|done|timeout|error, answers_paths: [...]}
 
 A run outlives the call and this server. Tool results never carry the page's token or the start link: they would
-end up in a transcript. The browser opens itself; with open_browser=false (or over SSH) the result names a file that
-carries the single-use start link, for the user to open; with the Signoff inbox open there is no link, and the
+end up in a transcript. The browser opens itself; with open_browser=false (or over SSH, no BROWSER) the result
+names a file that carries the single-use start link, for the user to open; with the Signoff inbox open there is no link, and the
 result says the questions are in the inbox. Run ids live as long as this server process; the answers files
 on disk are the lasting record. Python 3.9+, standard library only.
 """
@@ -62,6 +62,11 @@ def _spawn(args, out, err):
     return subprocess.Popen(args, **kwargs)
 
 
+def ssh_without_browser():
+    """signoff.py's own rule, repeated here as this server does not import it: an SSH session with no BROWSER set."""
+    return bool((os.environ.get("SSH_CONNECTION") or os.environ.get("SSH_TTY")) and not os.environ.get("BROWSER"))
+
+
 def open_run(args):
     path = args.get("path")
     if not isinstance(path, str) or not path:
@@ -76,7 +81,7 @@ def open_run(args):
     open_browser = args.get("open_browser", True)
     if not isinstance(open_browser, bool):
         raise ToolError("open_browser must be true or false")
-    if os.environ.get("SSH_CONNECTION") or os.environ.get("SSH_TTY"):  # the run opens none there: hand out the file
+    if ssh_without_browser():  # the run opens none there: hand out the file
         open_browser = False
     run_dir = Path(tempfile.mkdtemp(prefix="signoff-run-"))  # 0700: the start link is written here
     command = [sys.executable, "-I", "-B", str(SIGNOFF), str(target)] + ([] if open_browser else ["--no-open"])

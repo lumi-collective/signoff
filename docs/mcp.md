@@ -11,7 +11,7 @@ stdio, standard library only, with two tools that never block:
   `error`.
 
 No tool result ever contains the page's token or the start link, since results end up in transcripts. The
-browser opens itself; with `open_browser: false`, or in an SSH session (`SSH_CONNECTION` or `SSH_TTY` set),
+browser opens itself; with `open_browser: false`, or in an SSH session (`SSH_CONNECTION` or `SSH_TTY` set) with no `BROWSER` set,
 the result names a file whose first line carries the start link, for you to open. Run ids last as long as the server process; the answers files are the lasting record.
 
 The plugin does not register this server: that would add its tools to every Claude Code session. Point your

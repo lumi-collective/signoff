@@ -11,7 +11,7 @@ python3 -I plugin/signoff/signoff.py inbox stop   # stops it
 ```
 
 `signoff inbox open --no-open` prints the start link on stderr instead, as a run does, and so does `open` when
-no browser opened or in an SSH session. `signoff inbox serve`
+no browser opened or in an SSH session with no `BROWSER` set. `signoff inbox serve`
 runs the inbox in the terminal (Ctrl+C stops it); `open` starts that in the background, its messages going to
 `logs/inbox.log` in the Signoff home. One inbox runs per home: a second `serve` exits 1. `SIGNOFF_PORT` sets its
 port as it does a run's (see [Over SSH or in a devcontainer](running.md#over-ssh-or-in-a-devcontainer)); a port in

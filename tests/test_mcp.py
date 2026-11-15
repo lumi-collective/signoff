@@ -11,6 +11,7 @@ import unittest
 import urllib.error
 import urllib.request
 from pathlib import Path
+from unittest import mock
 
 from support import ROOT, Folder, done_record, sample_decisions, write_outside
 
@@ -210,6 +211,16 @@ class Runs(unittest.TestCase):
         self.assertFalse(link_file.parent.exists())  # its own temp files are gone once the run is over
         self.assertEqual(self.client.tool("signoff_status", run_id=body["run_id"])[1], final)
         self.assertFalse(any("/b/" in line or "127.0.0.1:" in line for line in self.client.seen), self.client.seen)
+
+    def test_which_sessions_count_as_ssh_without_a_browser(self):
+        import mcp_server
+        ssh, tty = {"SSH_CONNECTION": "192.0.2.1 50000 192.0.2.2 22"}, {"SSH_TTY": "/dev/ttys001"}
+        for env, want in ((ssh, True), (tty, True), (dict(ssh, BROWSER=""), True), ({}, False),
+                          ({"SSH_CONNECTION": "", "SSH_TTY": ""}, False), (dict(tty, BROWSER="code-helper"), False),
+                          (dict(ssh, BROWSER="code-helper"), False)):
+            with mock.patch.dict(os.environ, env):
+                self.assertIs(mcp_server.ssh_without_browser(), want, env)
+                self.assertIs(signoff.ssh_without_browser(), want, env)  # the same rule as the run's
 
     def test_over_ssh_the_link_file_is_handed_out(self):
         # The run opens no browser in an SSH session, so the agent must get the file, as with open_browser=false.

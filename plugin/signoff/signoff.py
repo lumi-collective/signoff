@@ -1543,10 +1543,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _host(self):
+        """The request's Host when it is exactly one of this server's names, sent once (two Host headers are
+        refused, whichever comes first), else None."""
+        given = self.headers.get_all("Host") or []
+        return given[0] if len(given) == 1 and given[0] in self.server.hosts else None
+
     def _route(self):
         """Host and token checks for every request. Returns the path after /<token>/, or None after an error."""
         srv = self.server
-        if self.headers.get("Host") not in srv.hosts:
+        if self._host() is None:
             self._send(403, ("wrong host: Signoff answers only to %s or %s; over SSH, forward the same port number\n"
                              % srv.hosts).encode("utf-8"))
             return None
@@ -1598,7 +1604,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         srv.finish(now=True)
 
     def do_GET(self):
-        if self.headers.get("Host") in self.server.hosts and self.path.startswith("/b/"):
+        if self._host() and self.path.startswith("/b/"):
             return self._start()
         rest = self._route()
         if rest is None:
@@ -1656,7 +1662,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         index = int(m.group(1)) if m else None
         limit = target.rounds[index].max_body if m else MAX_PREFS_BODY if rest == "prefs" else MAX_REQUEST_BODY
         # The page's own origin is the name it was loaded by, which _route took as one of this server's.
-        if self.headers.get("Origin") != "http://" + self.headers.get("Host"):
+        if self.headers.get("Origin") != "http://" + self._host():
             return self._refuse(403, b"wrong origin\n")
         site = self.headers.get("Sec-Fetch-Site")
         if site is not None and site != "same-origin":
@@ -1832,9 +1838,11 @@ class _Server(http.server.ThreadingHTTPServer):
     daemon_threads = True
     read_only = False
     inbox = False
-    # On Windows SO_REUSEADDR lets a second socket bind a port that is in use, so a fixed port could be shared;
-    # elsewhere it only lets a run take a fixed port that the run before left in TIME_WAIT.
+    # On Windows SO_REUSEADDR lets a second socket bind a port that is in use, so a fixed port could be shared.
+    # Elsewhere it lets a run take a fixed port that the run before left in TIME_WAIT, and on macOS also bind
+    # 127.0.0.1 beside another program's 0.0.0.0 listener: port_in_use() looks for that first (best effort).
     allow_reuse_address = sys.platform != "win32"
+    allow_reuse_port = False  # SO_REUSEPORT would share the port anywhere; pinned against a new stdlib default
 
     def server_bind(self):
         # http.server would look up 127.0.0.1's name here, which nothing uses; on a macOS CI machine that lookup
@@ -1853,6 +1861,8 @@ class _Server(http.server.ThreadingHTTPServer):
         self.lock = threading.Lock()
         self.finished = threading.Event()
         self.last_activity = time.monotonic()
+        if port and port_in_use(port):
+            raise taken_port(port)
         try:
             http.server.ThreadingHTTPServer.__init__(self, ("127.0.0.1", port), Handler)
         except OSError as e:
@@ -2767,6 +2777,9 @@ class InboxServer(_Server):
         self.home, self.held, self.control = home, None, None
         self.scan_lock, self.closed = threading.RLock(), threading.Event()
         self.state = self.written = self.state_failed = None  # the count now, and the one state.json last got
+        # Before inbox.lock is made: it turns runs and hooks to the inbox's ways for good, and no inbox would run.
+        if port and port_in_use(port):
+            raise taken_port(port)
         # A run looks at inbox.lock by taking it for a moment, so a held lock is tried for a while before giving up.
         for wait in (0.05,) * 12 + (None,):
             self.held = try_lock(home / "inbox.lock")
@@ -3745,16 +3758,33 @@ def _inbox_open_app(target):
     return EXIT_DONE
 
 
-PORT_HELP = "a port number from 1 to 65535, or 0 for a random one"
+PORT_HELP = "a port number from 1024 to 65535, or 0 for a random one"
 BAD_ENV_PORT = "signoff: SIGNOFF_PORT must be " + PORT_HELP
 
 
 def port_number(text):
     """A port from --port or SIGNOFF_PORT (0: a random one), or None. Plain ASCII digits only: int() would also take
-    ' 80', '+80', '8_0' and other scripts' digits."""
-    if text.isascii() and text.isdigit() and len(text) <= 5 and int(text) <= 65535:
+    ' 80', '+80', '8_0' and other scripts' digits. Not below 1024: a browser leaves :80 out of Host and Origin, so
+    every page there would get 403, and the low ports are the system's."""
+    if text.isascii() and text.isdigit() and len(text) <= 5 and (int(text) == 0 or 1024 <= int(text) <= 65535):
         return int(text)
     return None
+
+
+def port_in_use(port):
+    """Whether something accepts connections on 127.0.0.1:port. A listener on 0.0.0.0 counts: on macOS the
+    SO_REUSEADDR bind would sit beside it and take its loopback traffic. A port in TIME_WAIT refuses, so a rerun
+    still binds. Best effort: a listener that starts between this look and the bind is not seen."""
+    try:
+        socket.create_connection(("127.0.0.1", port), timeout=0.5).close()
+        return True
+    except OSError:
+        return False
+
+
+def taken_port(port):
+    """The error a run, --history and inbox serve stop on, the one line the bind's own refusal gives."""
+    return OSError(errno.EADDRINUSE, "port %d: %s" % (port, os.strerror(errno.EADDRINUSE)))
 
 
 def env_port():
@@ -3763,9 +3793,10 @@ def env_port():
     return port_number(os.environ.get("SIGNOFF_PORT") or "0")
 
 
-def over_ssh():
-    """In an SSH session a browser would open on the remote machine, away from the user: as with --no-open."""
-    return bool(os.environ.get("SSH_CONNECTION") or os.environ.get("SSH_TTY"))
+def ssh_without_browser():
+    """In an SSH session a browser would open on the remote machine, away from the user: as with --no-open. A set
+    BROWSER wins: VS Code's Remote-SSH terminal sets it to a helper that opens the link on the user's computer."""
+    return bool((os.environ.get("SSH_CONNECTION") or os.environ.get("SSH_TTY")) and not os.environ.get("BROWSER"))
 
 
 def _open_browser(url):
@@ -3840,7 +3871,7 @@ def _inbox_open(no_open, target=None):
         return EXIT_ERROR
     if no_open:
         print("signoff: open %s  (the link works once)" % link, file=sys.stderr, flush=True)
-    elif not over_ssh() and _open_browser(link):
+    elif not ssh_without_browser() and _open_browser(link):
         print("signoff: the inbox is open in your browser", file=sys.stderr, flush=True)
     else:
         print("signoff: no browser opened; open %s yourself (it works once)" % link, file=sys.stderr, flush=True)
@@ -3921,7 +3952,7 @@ def _serve(server, args, what):
     print("signoff: open %s  (the link works once; Ctrl+C stops it; %s)" % (server.start_url, what),
           file=sys.stderr, flush=True)
     # The line below is the agent's cue to hand the user the link: over SSH too, though no browser is tried there.
-    if not args.no_open and (over_ssh() or not _open_browser(server.start_url)):  # False: headless, WSL
+    if not args.no_open and (ssh_without_browser() or not _open_browser(server.start_url)):  # False: headless, WSL
         print("signoff: no browser opened; give the user the link above (it works once)", file=sys.stderr, flush=True)
     try:
         server.serve_forever(poll_interval=0.2)

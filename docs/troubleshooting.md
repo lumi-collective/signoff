@@ -7,7 +7,7 @@ Signoff prints what went wrong on stderr, starting with `signoff:`. Its exit cod
   name, and in Git Bash on Windows the `py` launcher when there is one. On Windows use the `py` launcher:
   `py -3 -I plugin/signoff/signoff.py <folder>`. The plugin's `signoff.cmd` does the same.
 - **No browser opens.** Signoff prints the start link on stderr before it tries to open a browser, as
-  `signoff: open http://127.0.0.1:<port>/b/…`, and says `no browser opened` when it found none (and in an SSH session, where it tries none). Open that link in a
+  `signoff: open http://127.0.0.1:<port>/b/…`, and says `no browser opened` when it found none (and in an SSH session with no `BROWSER` set, where it tries none). Open that link in a
   browser on the same machine, or see `--no-open` in [the options table](running.md#running-it-yourself).
 - **Closed the tab?** Reopen it with your browser's Reopen closed tab (Ctrl+Shift+T, on a Mac Cmd+Shift+T). The
   start link works only once, so clicking it again stops Signoff (see 410 below).

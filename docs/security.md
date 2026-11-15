@@ -83,14 +83,24 @@ send requests to `127.0.0.1`. The rules, in short:
   below), and every request must
   carry a random 256-bit token in its path, compared in constant time. The `Host` header must be exactly
   `127.0.0.1:<port>` or `localhost:<port>` (both name this machine, as a forwarded port or a devcontainer's
-  Ports tab may), which stops DNS rebinding; a save's `Origin` must be `http://` and that same Host. No cookies.
-- **A fixed port only on request:** `--port` or `SIGNOFF_PORT` sets the port, for a tunnel over SSH or into a
-  devcontainer that is set up once. Any process on the machine, another user's too, can bind a free port
-  first. When it holds yours, Signoff exits 1 and says so, but a browser or tunnel pointed at that port while
-  Signoff is not running reaches that process, which could show a page of its own that looks like Signoff's and
-  read what you type there. It never gets Signoff's tokens or answers files. That is why the port is random unless
-  you set one: set it only on a machine whose other users you trust, and open only a start link Signoff printed
-  for that run. It still binds `127.0.0.1` only, never another address. Open that link with `127.0.0.1`, as
+  Ports tab may), which stops DNS rebinding; a save's `Origin` must be `http://` and that same Host. A request
+  with two Host headers is refused. No cookies.
+- **A fixed port only on request:** `--port` or `SIGNOFF_PORT` sets the port (1024 to 65535), for a tunnel over
+  SSH or into a devcontainer that is set up once. Any process on the machine, another user's too, can bind a
+  free port first. Before it binds, Signoff tries a connection to `127.0.0.1:<port>`, and the bind itself fails
+  on a port another program holds on `127.0.0.1`: either way it exits 1 and says so. This is best effort: a
+  program that starts listening between the look and the bind is not seen. A browser or tunnel pointed at that
+  port while Signoff is not running reaches that other program, which could show a page of its own that looks
+  like Signoff's and read what you type there.
+- **What a fixed port can leave in your browser:** `http://127.0.0.1:<port>` and `http://localhost:<port>` are
+  secure contexts, so a page that once held one of them can leave a service worker in your browser. That worker
+  stays for the origin, which with a fixed port is also the next Signoff run's: it sees the later start links
+  and page URLs, tokens included, the page's data and every save, and can pass them on. Signoff cannot stop this
+  from the server, since a worker answers before the network. So the port is random unless you set one. Set it
+  only on a machine whose other users you trust, pick a port that no other web app has used in that browser, and
+  if someone else may have held it, clear that browser's site data for `127.0.0.1:<port>` and
+  `localhost:<port>`. Open only a start link Signoff printed for that run. It still binds `127.0.0.1` only, never
+  another address. Open that link with `127.0.0.1`, as
   printed: a browser may try `localhost` as `::1` first, where Signoff never listens and a forward may not
   either, so another program listening there would get the link, its token included.
 - **A single-use start link:** the browser is opened with a second token, `/b/<start token>/`, which redirects

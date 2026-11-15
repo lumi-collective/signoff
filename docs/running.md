@@ -10,8 +10,8 @@ write `py -3` for `python3`.
 
 | Option | Does |
 |---|---|
-| `--no-open` | print the start link on stderr but do not open a browser. In an SSH session (`SSH_CONNECTION` or `SSH_TTY` set) Signoff does this by itself; see [Over SSH or in a devcontainer](#over-ssh-or-in-a-devcontainer). The link works once: if it was spent, stop Signoff and run it again. |
-| `--port <n>` | listen on this port of `127.0.0.1`, 1 to 65535, instead of a random one; the default is `SIGNOFF_PORT`, else `0`, a random port. A port in use exits 1. See [Over SSH or in a devcontainer](#over-ssh-or-in-a-devcontainer). |
+| `--no-open` | print the start link on stderr but do not open a browser. In an SSH session (`SSH_CONNECTION` or `SSH_TTY` set) with no `BROWSER` set, Signoff does this by itself; see [Over SSH or in a devcontainer](#over-ssh-or-in-a-devcontainer). The link works once: if it was spent, stop Signoff and run it again. |
+| `--port <n>` | listen on this port of `127.0.0.1`, 1024 to 65535, instead of a random one; the default is `SIGNOFF_PORT` (empty: unset), else `0`, a random port. A port another program listens on exits 1 (best effort, see below). See [Over SSH or in a devcontainer](#over-ssh-or-in-a-devcontainer). |
 | `--timeout <minutes>` | stop after this many minutes without a request from the page. Default 120; `0` means never. |
 | `--notes <folder>` | at Done, also put each round's Markdown copy in this folder of yours; empty means off. See [Notes folder](#notes-folder). |
 | `--history <root>`, `--folder <path>`, `--since <date>` | the [past-decisions page](history.md#past-decisions) instead of a round. `--folder` is the decisions folder, relative to the root or absolute; default `.signoff`. |
@@ -37,9 +37,13 @@ export SIGNOFF_PORT=8765
 ```
 
 Then every run, `--history`, and the inbox (`signoff inbox serve`, and the one `signoff inbox open` starts) listen
-on that port; `--port <n>` on a run wins over it. `0` or empty is a random port again. One server holds a port
-at a time: a second run on it, or `--history` while the inbox holds it, exits 1 with one line that names the
-port. While the inbox runs, a run opens no page and binds nothing, so a run then never takes the port.
+on that port (1024 to 65535); `--port <n>` on a run wins over it. `0`, or an empty `SIGNOFF_PORT`, is a random
+port again. One server holds a port at a time. Before it binds, Signoff tries a connection to
+`127.0.0.1:<port>`: when something answers there (a second run, `--history` while the inbox holds the port, a dev
+server listening on every address), or the bind fails, it exits 1 with one line that names the port, and a
+`serve` leaves no `inbox.lock`. This is best effort: a program that starts listening between that look and the
+bind is not seen. While the inbox runs, a run opens no page and binds nothing, so a run then never takes the
+port.
 
 - **SSH:** forward the same port number, either for one session with
   `ssh -L 8765:127.0.0.1:8765 <host>`, or for good in `~/.ssh/config`:
@@ -49,26 +53,29 @@ port. While the inbox runs, a run opens no page and binds nothing, so a run then
       LocalForward 8765 127.0.0.1:8765
   ```
 
-  Another local port number gets 403. In an SSH session (`SSH_CONNECTION` or `SSH_TTY` set and not empty) a run
-  and `signoff inbox open` open no browser on the remote machine: they print the start link on stderr, as with
-  `--no-open`, and you open it on your computer (they also say `no browser opened`, the agent's cue to give you
-  the link).
+  Another local port number gets 403. In an SSH session (`SSH_CONNECTION` or `SSH_TTY` set and not empty) with
+  no `BROWSER` set, a run and `signoff inbox open` open no browser on the remote machine: they print the start
+  link on stderr, as with `--no-open`, and you open it on your computer (they also say `no browser opened`, the
+  agent's cue to give you the link).
 - **VS Code devcontainer or Remote - SSH:** add the port in the Ports tab once (VS Code may also forward it by
   itself), and open the start link with that port on your computer. The local port number must be the same as
-  the remote one: when VS Code picks another, because the first is taken, the page gets 403.
+  the remote one: when VS Code picks another, because the first is taken, the page gets 403. VS Code's Remote -
+  SSH terminal sets `BROWSER` to a helper that opens a link on your own computer, so there Signoff opens the
+  browser as on a local run (not tried in a real Remote - SSH session).
+- **Not covered:** a Docker `-p` mapping without host networking (Signoff listens on the container's own
+  loopback, which `-p` does not reach), and GitHub Codespaces' `https://…github.dev` addresses (another host name,
+  which gets 403).
 
 Open the link as Signoff prints it, with `127.0.0.1`. The page also answers to `localhost:<port>`, for a forward
 that opens it that way, but a browser may try `localhost` as `::1` (IPv6) first. Signoff never listens there,
 and a forward may not either; another program on your computer listening there would get the link and its
 token.
-- **Not covered:** a Docker `-p` mapping without host networking (Signoff listens on the container's own
-  loopback, which `-p` does not reach), and GitHub Codespaces' `https://…github.dev` addresses (another host name,
-  which gets 403).
 
 Known limit: over SSH the panel of the Claude Code mod runs `signoff inbox open` and never reads its stderr, so
 a row there opens nothing you can see, as on any machine without a browser; ask the agent for the link instead.
-A fixed port is a name any process of the machine can take first: see
-[the security model](security.md#security-model).
+A fixed port is a name any process of the machine can take first, and a page another program served on it can
+leave code in your browser that sees later Signoff pages there: pick a port no other web app has used in that
+browser, and see [the security model](security.md#security-model).
 
 ## An item settled in chat
 

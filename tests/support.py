@@ -21,9 +21,9 @@ os.environ["SIGNOFF_INBOX_HOME"] = str(Path(_NO_HOME.name) / "home")
 # The same for Uptick's files (vulns.json, scan-repos.json): never the user's real ones.
 os.environ["XDG_CACHE_HOME"] = str(Path(_NO_HOME.name) / "cache")
 os.environ["XDG_CONFIG_HOME"] = str(Path(_NO_HOME.name) / "config")
-# A fixed port or an SSH session in the shell that runs the tests would change every run: a test that wants one
-# says so.
-for _name in ("SIGNOFF_PORT", "SSH_CONNECTION", "SSH_TTY"):
+# A fixed port, an SSH session or a BROWSER in the shell that runs the tests would change every run: a test that
+# wants one says so.
+for _name in ("SIGNOFF_PORT", "SSH_CONNECTION", "SSH_TTY", "BROWSER"):
     os.environ.pop(_name, None)
 
 import signoff  # noqa: E402
@@ -166,14 +166,17 @@ class Running:
 
     def request(self, method, path, body=None, headers=None, host=None):
         conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
-        hdrs = {"Host": host or self.host}
+        hdrs = {"Host": self.host if host is None else host}  # host="" sends an empty Host
         hdrs.update(headers or {})
         if isinstance(body, (dict, list)):
             body = json.dumps(body).encode("utf-8")
-        # skip_host: the Host header always comes from hdrs, so a test can send a wrong one.
+        # skip_host: the Host header always comes from hdrs, so a test can send a wrong one. A header set to None
+        # is left out; a list sends the header once for each value.
         conn.putrequest(method, path, skip_host=True, skip_accept_encoding=True)
         for k, v in hdrs.items():
-            conn.putheader(k, v)
+            for one in v if isinstance(v, list) else [v]:
+                if one is not None:
+                    conn.putheader(k, one)
         if body is not None and "Content-Length" not in hdrs:
             conn.putheader("Content-Length", str(len(body)))
         conn.endheaders(body)

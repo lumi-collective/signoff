@@ -3830,16 +3830,20 @@ class InboxCli(unittest.TestCase):
         self.assertEqual(len(taken.stderr.strip().splitlines()), 1, taken.stderr)
 
     def test_serve_on_a_taken_or_bad_port_says_so_in_one_line(self):
-        with socket.socket() as taken:
-            taken.bind(("127.0.0.1", 0))
-            taken.listen()
-            port = taken.getsockname()[1]
-            for value, said in ((str(port), "port %d" % port), ("http", "SIGNOFF_PORT"), ("65536", "SIGNOFF_PORT")):
-                self.env["SIGNOFF_PORT"] = value
-                served = self.run_cli("inbox", "serve")
-                self.assertEqual((served.returncode, served.stdout), (1, ""), served.stderr)
-                self.assertIn(said, served.stderr)
-                self.assertEqual(len(served.stderr.strip().splitlines()), 1, served.stderr)
+        for address in ("127.0.0.1", "0.0.0.0"):
+            with socket.socket() as taken:
+                taken.bind((address, 0))
+                taken.listen()
+                port = taken.getsockname()[1]
+                for value, said in ((str(port), "port %d" % port), ("http", "SIGNOFF_PORT"),
+                                    ("65536", "SIGNOFF_PORT"), ("80", "SIGNOFF_PORT")):
+                    self.env["SIGNOFF_PORT"] = value
+                    served = self.run_cli("inbox", "serve")
+                    self.assertEqual((served.returncode, served.stdout), (1, ""), (address, served.stderr))
+                    self.assertIn(said, served.stderr)
+                    self.assertEqual(len(served.stderr.strip().splitlines()), 1, served.stderr)
+                    # No inbox ran, so the switch stays off: runs and hooks go on as with no inbox.
+                    self.assertFalse((self.home / "inbox.lock").exists(), (address, value))
         # inbox open checks the value before it starts an inbox; the hooks never look at it (see test_hooks).
         self.env["SIGNOFF_PORT"] = "http"
         opened = self.run_cli("inbox", "open", "--no-open")
@@ -3860,6 +3864,7 @@ class InboxCli(unittest.TestCase):
         self.assertEqual((opened.returncode, opened.stdout), (1, ""), opened.stderr)
         self.assertIn("did not start", opened.stderr)
         self.assertIn("port %d" % port, (self.home / "logs" / "inbox.log").read_text(encoding="utf-8"))
+        self.assertFalse((self.home / "inbox.lock").exists())
 
     def test_rows_prints_the_project_rounds_as_json(self):
         root = Path(self._tmp.name).resolve() / "project"

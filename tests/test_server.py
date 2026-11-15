@@ -1,8 +1,10 @@
 """The server's security rules, autosave and resume, driven over real HTTP on 127.0.0.1."""
+import errno
 import json
 import os
 import re
 import socket
+import sys
 import unittest
 from unittest import mock
 
@@ -58,6 +60,23 @@ class Binding(ServerTest):
             with self.assertRaises(OSError) as caught:
                 signoff.make_server(self.folder.decisions, port=port)
         self.assertIn("port %d" % port, str(caught.exception))
+
+    def test_a_listener_on_every_address_counts_as_in_use(self):
+        # macOS lets a SO_REUSEADDR bind of 127.0.0.1:P sit beside a 0.0.0.0:P listener of the same user and take
+        # its loopback traffic: a connect before the bind sees that one.
+        with socket.socket() as taken:
+            taken.bind(("0.0.0.0", 0))
+            taken.listen()
+            port = taken.getsockname()[1]
+            with self.assertRaises(OSError) as caught:
+                signoff.make_server(self.folder.decisions, port=port)
+        self.assertIn("port %d" % port, str(caught.exception))
+        self.assertEqual(caught.exception.errno, errno.EADDRINUSE)
+
+    def test_socket_options_per_platform(self):
+        # On Windows SO_REUSEADDR lets another socket bind a port in use; SO_REUSEPORT would anywhere.
+        self.assertEqual(signoff._Server.allow_reuse_address, sys.platform != "win32")
+        self.assertIs(signoff._Server.allow_reuse_port, False)
 
     def test_url(self):
         self.assertEqual(self.run_.server.url, "http://%s/%s/" % (self.run_.host, self.run_.token))
@@ -225,6 +244,29 @@ class HostAndToken(ServerTest):
             self.assertEqual(self.get(self.page, headers={"Host": host})[0].status, 403, host)
             resp, _ = self.run_.save(state(), Host=host, Origin="http://" + host)
             self.assertEqual(resp.status, 403, host)
+        self.assertFalse(self.folder.answers.exists())
+
+    def test_near_misses_are_not_accepted_and_spend_no_start_link(self):
+        # Pins against a "normalising" Host check: only the two exact strings pass, once.
+        port, own = self.run_.port, self.run_.host
+        start = self.run_.server.start_url[len("http://" + own):]
+        for host in [h % port for h in ("LOCALHOST:%d", "Localhost:%d", "localhost.:%d", "127.0.0.1.:%d", "127.1:%d",
+                                        "0x7f000001:%d", "127.0.0.2:%d", "0.0.0.0:%d", "localhost.example:%d",
+                                        "[::1]:%d")] + \
+                ["localhost:%d" % (port + 1), "", None, [own, "evil.example"], ["evil.example", own], [own, own]]:
+            for path in (self.page, start):
+                self.assertEqual(self.get(path, headers={"Host": host})[0].status, 403, (host, path))
+            origin = "http://" + host if isinstance(host, str) else self.run_.origin
+            self.assertEqual(self.run_.save(state(), Host=host, Origin=origin)[0].status, 403, host)
+        self.assertFalse(self.folder.answers.exists())
+        self.assertEqual(self.get(start)[0].status, 303)  # still unspent
+
+    def test_a_localhost_save_needs_exactly_its_own_origin(self):
+        port = self.run_.port
+        local = "localhost:%d" % port
+        for origin in ("null", None, "http://%s/" % local, "https://" + local, "http://localhost:%d" % (port + 1),
+                       "http://LOCALHOST:%d" % port, ""):
+            self.assertEqual(self.run_.save(state(), Host=local, Origin=origin)[0].status, 403, origin)
         self.assertFalse(self.folder.answers.exists())
 
     def test_host_without_port(self):

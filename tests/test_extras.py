@@ -126,8 +126,9 @@ class BoardRoute(unittest.TestCase):
         self.assertEqual(self.run_.request("GET", "/x/0/0")[0].status, 404)
         port = self.run_.port
         self.assertEqual(self.run_.request("GET", board, host="localhost:%d" % port)[0].status, 200)
-        for host in ("localhost.example:%d" % port, "[::1]:%d" % port, "localhost:%d" % (port + 1)):
-            self.assertEqual(self.run_.request("GET", board, host=host)[0].status, 403, host)
+        for host in ("localhost.example:%d" % port, "[::1]:%d" % port, "localhost:%d" % (port + 1),
+                     "127.0.0.1:%d" % (port + 1), "", None):
+            self.assertEqual(self.run_.request("GET", board, headers={"Host": host})[0].status, 403, host)
 
     def test_a_board_cannot_save(self):
         # A sandboxed frame without allow-same-origin has an opaque origin, which browsers send as "null".
@@ -324,8 +325,9 @@ class History(unittest.TestCase):
         self.assertEqual(run.request("GET", "/nope/")[0].status, 404)
         local = "localhost:%d" % run.port
         self.assertEqual(run.request("GET", "/%s/" % run.token, host=local)[0].status, 200)
-        for host in ("localhost.example:%d" % run.port, "[::1]:%d" % run.port, "localhost:%d" % (run.port + 1)):
-            self.assertEqual(run.request("GET", "/%s/" % run.token, host=host)[0].status, 403, host)
+        for host in ("localhost.example:%d" % run.port, "[::1]:%d" % run.port, "localhost:%d" % (run.port + 1),
+                     "127.0.0.1:%d" % (run.port + 1), "", None):
+            self.assertEqual(run.request("GET", "/%s/" % run.token, headers={"Host": host})[0].status, 403, host)
         resp, _ = run.save({"answers": {}, "free_text": "", "done": True}, Host=local, Origin="http://" + local)
         self.assertEqual(resp.status, 405)  # by either name: still read only
         self.assertFalse((self.root.path / ".signoff" / "2026-01-05-settings" / ".gitignore").exists())

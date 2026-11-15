@@ -182,13 +182,18 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
 ## Invariants
 
 - **Security rules are not optional.** Bind `127.0.0.1` only, on port 0 unless the user asks for one: `--port N`
-  on a run or `--history`, else `SIGNOFF_PORT` (also for `inbox serve`), N plain ASCII digits from 1 to 65535, `0`
-  or empty a random port; it is read only by what binds (a run, `--history`, `inbox serve`, and `inbox open`
+  on a run or `--history`, else `SIGNOFF_PORT` (also for `inbox serve`), N plain ASCII digits from 1024 to 65535
+  (below, a browser leaves `:80` out of Host and Origin); `0`, or an empty `SIGNOFF_PORT`, a random port
+  (`--port ""` is a bad value); it is read only by what binds (a run, `--history`, `inbox serve`, and `inbox open`
   before it starts one), never by the hooks or the monitor. Never a fixed port by default, never another address.
-  On Windows without `SO_REUSEADDR`, which there lets a second socket bind a port in use. Every link Signoff
-  prints or hands out names `127.0.0.1`. A fresh token in the path on every
-  request; `Host` equal to `127.0.0.1:<port>` or `localhost:<port>` (no other name, port or form: not
-  `localhost.example`, `[::1]`, a missing or empty Host); a save (`POST /<token>/save/<round>`) needs
+  Before a fixed port's bind, `port_in_use()` tries a connection to `127.0.0.1:<port>` (it catches a same-user
+  `0.0.0.0` listener that macOS's `SO_REUSEADDR` would bind beside); best effort, a listener that starts between
+  the look and the bind is not seen. `inbox serve` looks before it makes `inbox.lock`. On Windows without
+  `SO_REUSEADDR`, which there lets a second socket bind a port in use; `SO_REUSEPORT` nowhere (a test pins both).
+  Every link Signoff prints or hands out names `127.0.0.1`. A fresh token in the path on every
+  request; exactly one `Host` header, equal to `127.0.0.1:<port>` or `localhost:<port>` (no other name, case,
+  port or form: not `LOCALHOST`, `localhost.`, `127.1`, `0.0.0.0`, `localhost.example`, `[::1]`, a missing or
+  empty Host, nor two Host headers in either order); a save (`POST /<token>/save/<round>`) needs
   `application/json`, the page's own `Origin` (`http://` and the request's own Host, so a page loaded by either
   name saves and an Origin of the other name is refused), and `Sec-Fetch-Site: same-origin` when present; a body within its round's limit,
   checked against that round's decisions file. Each rule has a test that sends the bad request, in process and
@@ -822,15 +827,17 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   (`open --app` no link on stderr either); `open --no-open` prints its start
   link on stderr, as a run does, and so does `open` when no browser opened (`webbrowser.open` False; a run then
   says `no browser opened` under its link). In an SSH session (`SSH_CONNECTION` or `SSH_TTY` set and not empty)
-  a run, `--history` and `inbox open` try no browser (`over_ssh()`) and print the link on stderr with the
-  `no browser opened` line the skills key on; the MCP server then hands out its link file, as with
-  `open_browser: false`. Nothing else changes there; the mod's panel rows never read `inbox open`'s stderr, so over SSH a row opens
+  with no `BROWSER` set (VS Code's Remote-SSH terminal sets one that opens the link on the user's computer),
+  a run, `--history` and `inbox open` try no browser (`ssh_without_browser()`) and print the link on stderr with
+  the `no browser opened` line the skills key on; the MCP server, with its own copy of the rule (a test keeps
+  the two equal), then hands out its link file, as with `open_browser: false`. Nothing else changes there; the mod's panel rows never read `inbox open`'s stderr, so over SSH a row opens
   nothing visible (a known limit, as on any machine without a browser). A browser a run or `open` starts gets `/dev/null` for each of
   stdout and stderr that is not a terminal (`_open_browser`), so it writes nothing there and holds no caller's
   pipe open (on Linux the stdlib starts `xdg-open` or `gio` with them).
 - **Exit codes are a contract:** 0 Done, 1 invalid input (a usage error, a bad `--port` or `SIGNOFF_PORT` (one
-  line, checked after argparse, without the usage), a port in use (one line that names the port; before any
-  `runs/` entry or round lock), every round already done, a round
+  line, checked after argparse, without the usage), a port in use (one line that names the port, before any
+  `runs/` entry or round lock: something answered a connection to `127.0.0.1:<port>`, or the bind failed; best
+  effort, see the security rules), every round already done, a round
   locked by another run, the start link used twice, a waiter whose rounds the running inbox did not take in (see
   the one writer rule), or a Python older than 3.9: one stderr line, from the first
   lines of `main()`; `inbox hook` then exits 0 silently and `inbox monitor` sleeps while its parent lives; the

@@ -76,7 +76,7 @@ has no browser. It sends the same requests the page does.
 | Terminal (`claude`) on macOS | Tested. |
 | Windows | Tried in a real Claude Code session: the page opened in Chrome and the answer reached the session. The test suite and the browser check also run in CI. |
 | Linux | The test suite runs in CI, with Python 3.9 and 3.13. A browser check runs there too: the server and the page in headless Chrome, with real mouse clicks, from the start link to Done (see [Development and tests](docs/development.md#development-and-tests)). Not tried in a real Claude Code session yet. |
-| Desktop app, VS Code extension | The mod tried on macOS on 2026-11-15, in the desktop app's Code tab and the VS Code extension's own panel: the line above the prompt, the panel beside the chat, the notice and the status line all showed, and the panel's command ran. A round run from there not tried yet. |
+| Desktop app, VS Code extension | The mod tried on macOS on 2026-11-15, in the desktop app's Code tab and the VS Code extension's own panel: the line above the prompt, the panel beside the chat, the notice and the status line all showed, and the mod ran Signoff's command (`signoff inbox home`). A round run from there not tried yet. |
 | claude.ai (web, mobile) and Cowork | Not supported: the plugin does not install there. |
 | Chrome | Tested, headless, driven over the DevTools protocol. |
 | Firefox, Safari | Tested on macOS on 2026-11-14: the inbox page, a synthetic round, and the answers file written with `done: true`. Not tried on other systems. |
