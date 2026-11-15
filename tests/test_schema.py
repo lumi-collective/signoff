@@ -820,10 +820,11 @@ class NumberAnswers(unittest.TestCase):
                 signoff.check_answers({"answers": {"budget": ans}, "free_text": "", "done": False}, self.decisions)
 
     def test_zero_is_decided_unless_only_preselected(self):
-        self.assertTrue(signoff._decided({"choice": 0, "source": "user"}))
-        self.assertTrue(signoff._decided({"choice": 0.0, "source": "notification"}))
-        self.assertFalse(signoff._decided({"choice": 0, "source": "recommended"}))
-        self.assertFalse(signoff._decided({"choice": None, "source": "user"}))
+        item = next(it for it in self.decisions["items"] if it["id"] == "budget")
+        self.assertTrue(signoff._decided({"choice": 0, "source": "user"}, item))
+        self.assertTrue(signoff._decided({"choice": 0.0, "source": "notification"}, item))
+        self.assertFalse(signoff._decided({"choice": 0, "source": "recommended"}, item))
+        self.assertFalse(signoff._decided({"choice": None, "source": "user"}, item))
 
     def md(self, choice, lang=None, key="budget"):
         decisions = dict(self.decisions) if lang is None else dict(self.decisions, lang=lang)
@@ -1011,6 +1012,18 @@ class MarkdownLanguage(unittest.TestCase):
                              "filters": {"choice": [], "comment": "", "source": "elsewhere"}},
                  "free_text": "", "done": False}
         self.assertEqual(signoff.check_answers(state, self.decisions)["answers"]["filters"]["source"], "elsewhere")
+        # A note keeps the command's rule in the file too, in the part every Python reads alike: one line, capped.
+        for note in ("two\nlines", "a b", "x" * (signoff.MAX_NOTE + 1)):
+            bad = {"answers": {"layout": {"choice": None, "comment": note, "source": "elsewhere"}}, "free_text": "",
+                   "done": False}
+            with self.assertRaises(ValueError, msg=note):
+                signoff.check_answers(bad, self.decisions)
+            with self.assertRaises(ValueError, msg=note):
+                signoff.check_answers(dict(bad, version=1, saved="2026-01-01T12:00:00Z"), self.decisions,
+                                      stored=True)
+        ok = {"answers": {"layout": {"choice": None, "comment": "ok ✔️ \U0001FAE0", "source": "elsewhere"}},
+              "free_text": "", "done": False}
+        signoff.check_answers(ok, self.decisions)  # a character an older Python does not know yet is no reason
 
     def test_other_languages_get_english(self):
         for lang in ("de", "fr-CA", "", "hux"):

@@ -82,8 +82,8 @@ are still woken at Done.
   id or note, a round already done, and an item that holds the user's own answer (never overwrite that: ask in
   chat). When the round is open in a run of its own page (no inbox running), the user answers it there. When the
   line says the running inbox is older, ask the user to restart it (`signoff inbox stop`, then `signoff inbox
-  open`), then run the same command again. A run an older plugin started does not take the mark in and refuses
-  saves until it restarts: tell the user.
+  open`), then run the same command again; when it asks for plainer characters, run it again with a plainer note.
+  A run an older plugin started does not take the mark in and refuses saves until it restarts: tell the user.
 
 ## 4. Turn the answers into actions
 

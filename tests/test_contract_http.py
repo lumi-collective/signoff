@@ -1644,7 +1644,10 @@ class Elsewhere(unittest.TestCase):
         self.assertEqual(self.mark(warm, "q", "n").returncode, 0)
         took = time.monotonic() - began  # how long a mark takes to land: the Done is sent around that time
         outcomes = set()
-        for run, share in enumerate((0.0, 0.6, 0.85, 0.95, 1.05, 1.2, 1.6), 1):
+        # The ends are far apart, so each arm comes up whatever the machine's pace (a Done sent at once lands
+        # before a mark, which waits half a second on the inbox's lock first; one sent at three times a mark's
+        # time lands after it); the middle ones meet the mark where they may.
+        for run, share in enumerate((0.0, 0.6, 0.85, 0.95, 1.05, 1.2, 1.6, 3.0), 1):
             folder = self.topic()
             proc = self.waiter(folder)
             rev, status = self.rev(run), []
@@ -1666,7 +1669,7 @@ class Elsewhere(unittest.TestCase):
                 time.sleep(1.5)
                 self.assertIsNone(proc.poll(), "a run must not end while its round is open")
             outcomes.add(status[0])
-        self.assertTrue(outcomes)
+        self.assertEqual(outcomes, {200, 409}, "both the Done-first and the mark-first arm must have run")
 
     def test_a_page_done_and_a_mark_at_once_beside_a_page_run(self):
         # An inbox has run (inbox.lock), none runs now: the page run holds the round lock, so the mark is refused.

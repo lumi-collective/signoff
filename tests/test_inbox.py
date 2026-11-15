@@ -1712,7 +1712,14 @@ class InboxOffer(InboxTest):
              {1: record({"q": {"choice": "a", "source": "recommended"}})}, None),
             ("an untouched item without a recommendation", [one_round(question("q"), question("n", rec=None))],
              {1: record({"n": {"choice": None, "source": "user"}})}, None),
-            ("an empty pick on a many item", [one_round(question("m", select="many", rec=["a"]), question("q"))],
+            # The user unticked a recommendation: "none of these" is an answer, never one a tap may replace.
+            ("none picked by the user on a recommended many item",
+             [one_round(question("m", select="many", rec=["a"]), question("q"))],
+             {1: record({"m": {"choice": [], "source": "user"}})}, ("R3", "Question q", "Alpha")),
+            ("the only item, none picked by the user", [one_round(question("m", select="many", rec=["a"]))],
+             {1: record({"m": {"choice": [], "source": "user"}})}, None),
+            ("an untouched many item without a recommendation",
+             [one_round(question("m", select="many", rec=None), question("q"))],
              {1: record({"m": {"choice": [], "source": "user"}})}, None),
         ]
         self.start()
@@ -2172,6 +2179,21 @@ class InboxElsewhere(InboxTest):
             self.assertNotIn("Traceback", err)
         self.assertEqual(self.files(self.root), before)
 
+    def test_a_path_spelled_otherwise_than_the_runs_is_named_not_retried(self):
+        # Another letter case reaches the same file on a case-insensitive volume, yet the inbox matches the run's
+        # own spelling: running the same command again could never succeed.
+        topic, _ = self.case([one_round(question("q"))])
+        other = topic / "ROUND-01.json"
+        if not other.exists():
+            self.skipTest("a case-sensitive file system")
+        self.start()
+        before = self.files(self.root)
+        code, out, err = self.mark(other, "q", "n")
+        self.assertEqual((code, out, err.count("\n")), (1, "", 1), err)
+        self.assertNotIn("again", err)
+        self.assertIn("spelled", err)
+        self.assertEqual(self.files(self.root), before)
+
     def test_a_save_landing_first_is_changed_and_the_command_tries_three_times(self):
         topic, _ = self.case([one_round(question("q"), question("r"))])
         self.start()
@@ -2245,21 +2267,27 @@ class InboxElsewhere(InboxTest):
         sock.listen(1)
         got = []
 
-        def answer():
+        def answer(reply):
             conn, _ = sock.accept()
             with conn:
                 got.append(json.loads(conn.makefile("rb").readline()))
-                conn.sendall(b'{"error": "unknown request; send {\\"op\\": \\"open\\"}"}\n')
-        t = threading.Thread(target=answer, daemon=True)
-        t.start()
+                conn.sendall(json.dumps({"error": reply}).encode("utf-8") + b"\n")
         before = self.files(topic)
-        code, out, err = self.mark(topic / "round-01.json", "q", "n")
-        t.join(5)
-        self.assertEqual((code, out, err.count("\n")), (1, "", 1), err)
-        self.assertIn("signoff inbox stop", err)
-        self.assertIn("signoff inbox open", err)
-        self.assertEqual(got[0]["op"], "elsewhere")
-        self.assertEqual(self.files(topic), before)
+        # A current inbox that refuses the request's shape (an inbox on an older Python may not know a character
+        # of the note) is not an old inbox: only an unknown op says to restart it.
+        for reply, older in (('unknown request; send {"op": "open"}', True),
+                             ("elsewhere takes round (an absolute path), item and note (one line of at most 500 "
+                              "characters), and nothing else", False)):
+            t = threading.Thread(target=answer, args=(reply,), daemon=True)
+            t.start()
+            code, out, err = self.mark(topic / "round-01.json", "q", "n")
+            t.join(5)
+            self.assertEqual((code, out, err.count("\n")), (1, "", 1), err)
+            self.assertEqual(("signoff inbox stop" in err, "older" in err), (older, older), err)
+            if not older:
+                self.assertIn("note", err)
+            self.assertEqual(got[-1]["op"], "elsewhere")
+            self.assertEqual(self.files(topic), before)
 
     def test_the_inbox_retries_a_round_lock_the_command_holds_at_its_next_look(self):
         topic, _ = self.case([one_round(question("q"))])

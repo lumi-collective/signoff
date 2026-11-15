@@ -1267,6 +1267,8 @@ def marking_decisions():
         {"id": "pic", "title": "Point at it", "images": [{"src": "mockups/a.png"}], "marks": True, "options": two},
         {"id": "skip", "title": "Skip?", "options": two, "skippable": True},
         {"id": "num", "title": "How many?", "select": "number", "range": {"min": 0, "max": 10}, "recommended": 3},
+        {"id": "sens", "title": "Your setup?", "options": two, "recommended": "a", "sensitive": True},
+        {"id": "tags", "title": "Tags?", "select": "many", "options": two},
     ]
     return data
 
@@ -1377,6 +1379,10 @@ class CliElsewhere(unittest.TestCase):
     def test_the_note_is_one_plain_line_up_to_the_cap(self):
         self.assertEqual(self.mark(self.folder.decisions, "layout", "x" * signoff.MAX_NOTE)[0], 0)
         self.assertEqual(self.mark(self.folder.decisions, "layout", "\U0001F600" * signoff.MAX_NOTE)[0], 0)
+        # An emoji built with variation selector 16 or the zero-width joiner, as people type them.
+        for note in ("ok ✔️", "by \U0001F469‍\U0001F4BB"):
+            self.assertEqual(self.mark(self.folder.decisions, "layout", note), (0, "", ""), note)
+            self.assertEqual(self.saved()["answers"]["layout"]["comment"], note)
         for label, note in (("too long", "x" * (signoff.MAX_NOTE + 1)), ("a line break", "two\nlines"),
                             ("a tab", "a\tb"), ("a line separator", "one two"), ("a next line", "one\x85two"),
                             ("an escape", "red\x1b[31m"), ("a lone surrogate", "x\udcff"),
@@ -1425,6 +1431,9 @@ class CliElsewhere(unittest.TestCase):
             ("a number, 0 too", "num", {"choice": 0, "comment": "", "source": "user"}),
             ("a mark of the agent's the user made Private", "layout", {"choice": None, "comment": "n",
                                                                        "source": "elsewhere", "private": True}),
+            ("none of a recommended many item, by the user", "filters", {"choice": [], "comment": "",
+                                                                          "source": "user"}),
+            ("Private unticked on a sensitive item", "sens", {"choice": "a", "comment": "", "source": "recommended"}),
         ]
         for label, item, answer in theirs:
             with self.subTest(label):
@@ -1434,8 +1443,11 @@ class CliElsewhere(unittest.TestCase):
         ours = [
             ("the recommendation untouched", "layout", {"choice": "two", "comment": "", "source": "recommended"}),
             ("nothing picked", "other", {"choice": None, "comment": "", "source": "user"}),
-            ("an empty pick", "filters", {"choice": [], "comment": "", "source": "user"}),
+            ("a many item with no recommendation, untouched", "tags", {"choice": [], "comment": "",
+                                                                        "source": "user"}),
             ("the agent's own mark", "layout", {"choice": None, "comment": "old", "source": "elsewhere"}),
+            ("a sensitive item untouched, Private by default", "sens", {"choice": "a", "comment": "",
+                                                                         "source": "recommended", "private": True}),
         ]
         for label, item, answer in ours:
             with self.subTest(label):
@@ -1498,15 +1510,46 @@ class CliElsewhere(unittest.TestCase):
         real = signoff.write_atomic
 
         def write(path, data, **kw):
-            real(path, data, **kw)
+            done = real(path, data, **kw)
             if path.suffix == ".md":
                 real(self.folder.answers, json.dumps(done_record()))
+            return done
         with mock.patch.object(signoff, "write_atomic", side_effect=write):
             code, out, err = self.mark(self.folder.decisions, "layout")
         self.assertEqual((code, out, err.count("\n")), (1, "", 1), err)
         self.assertIn("done", err)
         self.assertTrue(self.saved()["done"])
         self.assertEqual(self.saved()["answers"], {})
+        # Done is final, so no later save repairs the copy: it shows the file that won, not the refused mark.
+        md = self.md.read_text(encoding="utf-8")
+        self.assertIn("Done: yes", md)
+        self.assertNotIn("decided elsewhere", md)
+
+    def test_a_copy_written_before_a_change_lands_is_never_left_behind(self):
+        # The change lands between the copy's rename and the JSON's: the copy is made again from the file on disk.
+        write_outside(self.folder.answers, {"version": 1, "done": False, "saved": "2026-01-01T12:00:00Z",
+                                            "answers": {}, "free_text": "before"})
+        real = signoff.write_atomic
+
+        def write(path, data, **kw):
+            done = real(path, data, **kw)
+            if path.suffix == ".md":
+                real(self.folder.answers, json.dumps(done_record()))
+            return done
+        with mock.patch.object(signoff, "write_atomic", side_effect=write):
+            self.assertEqual(self.mark(self.folder.decisions, "layout")[0], 1)
+        self.assertNotIn("decided elsewhere", self.md.read_text(encoding="utf-8"))
+        # A change before the copy's own rename leaves no copy of the refused mark at all.
+        other = Folder(marking_decisions())
+        self.addCleanup(other.cleanup)
+
+        def look(path, data, **kw):
+            if path.suffix == ".md":
+                real(other.answers, json.dumps(done_record()))
+            return real(path, data, **kw)
+        with mock.patch.object(signoff, "write_atomic", side_effect=look):
+            self.assertEqual(self.mark(other.decisions, "layout")[0], 1)
+        self.assertFalse((other.path / "decisions.answers.md").exists())
 
     def test_a_running_page_takes_the_mark_in(self):
         proc = start(self.folder)
@@ -1606,6 +1649,14 @@ class CliElsewhere(unittest.TestCase):
         self.assertEqual((code, out, err.count("\n")), (0, "", 1), err)
         self.assertIn("without the lock", err)
         self.assertEqual(self.saved()["answers"]["layout"]["source"], "elsewhere")
+
+    def test_a_lock_file_that_cannot_be_opened_is_exit_1_and_writes_nothing(self):
+        # Only a file system that cannot lock goes on without it; a link at the lock's name or no permission does not.
+        (self.home / "inbox.lock").write_bytes(b"")
+        for e in (OSError(errno.ELOOP, "Too many levels of symbolic links"), PermissionError(13, "Permission denied")):
+            with self.subTest(e.errno), mock.patch.object(signoff, "try_lock", side_effect=e):
+                self.refused([self.folder.decisions, "layout", "n"], words=("lock",))
+        self.assertFalse(self.folder.answers.exists())
 
 
 class OldPython(unittest.TestCase):

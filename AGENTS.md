@@ -208,8 +208,9 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   5 seconds, so an open tab keeps its page token alive; a closed one expires after `PAGE_IDLE`.
 - **An answer from a notification is its round's Done, asked for on the control socket.** `offer` names at most
   one item, in the first round of Waiting on you that: belongs to a run whose round locks the inbox holds; is that
-  run's last open round; has exactly one item not yet decided (decided: a saved `choice` that is not null or an
-  empty list, with a `source` other than `recommended`, or a `source` of `elsewhere`) and no item marked
+  run's last open round; has exactly one item not yet decided (decided, `_decided`: a saved `choice` that is not
+  null or an empty list, with a `source` other than `recommended`; an empty list with `source` `user` on an item
+  with `recommended`, the recommendation the user unticked; or a `source` of `elsewhere`) and no item marked
   `elsewhere` (a tap's Done would send a mark the user never saw); and that item has `recommended` (not an empty
   list) and is not `sensitive`. The reply is `{offer: null}` or `{offer: {id, project, round, question, answer}}`: `id` 32
   hex digits; `project` the project's name as the list shows it (a run outside any project: its decisions
@@ -641,24 +642,32 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
 - **`signoff elsewhere` marks one item through the round's one writer.** `signoff elsewhere <round file> <item
   id> [<note>]` (3 or 4 words, the second not starting with `-`, so a decisions folder named `elsewhere` still
   runs) loads the round as a run does (`Round`) and builds the save that marks the item (`_mark_state`): the saved
-  answers with that item as `{choice: null` (`[]` for `many`), `comment: <note>`, `source: "elsewhere"}`, the
+  answers with that item as `{choice: null` (`[]` for `many`), `comment: <note>`, `source: "elsewhere"}`, plus
+  `private: true` when the item starts Private on the page (`_private_default`: `sensitive` with a text field), the
   free text kept, `accepted` false, so the round's acceptance resets as a change on the page does. It refuses
   (exit 1, one stderr line, nothing written) a bad round or answers file, an unknown item, a done round, and an
-  item that holds anything of the user's (`_users`): a choice with a `source` other than `recommended`, a
-  comment, `other` text, marks or `private` (an earlier mark of the agent's, with nothing else, may be replaced).
-  The note is one line of at most `MAX_NOTE` (500) characters with no tab, line break or character `_hidden`
-  finds, checked in the command and again by the inbox. The same mark again writes nothing (exit 0). Who writes:
-  - no `inbox.lock` in the home: no locks exist. It writes through `_Rounds.store` (`_Marker`), the Markdown copy
-    first; the JSON's temporary file is written and synced, the answers file hashed again, then renamed; a hash
-    changed since the load (at the save's own check or at that last one) starts over, three tries in all. This is
+  item that holds anything of the user's (`_users`): a choice with a `source` other than `recommended`, an
+  unticked recommendation (as `_decided` reads it), a comment, `other` text, marks, or `private` other than the
+  item starts (an earlier mark of the agent's, with nothing else, may be replaced). The note is one line of at
+  most `MAX_NOTE` (500) characters with no tab, line break or character `_hidden` finds (an emoji's variation
+  selector and joiner aside), checked in the command and again by the inbox (on the inbox's own Python, which may
+  know fewer characters). `check_answers` holds a `source: "elsewhere"` comment, from the page or a file, to the
+  part of that rule every Python reads alike: at most `MAX_NOTE` characters, no control, line-separator or lone
+  surrogate character. The same mark again (choice, note, source and Private as the mark has them) writes nothing
+  (exit 0). Who writes:
+  - no `inbox.lock` in the home: no locks exist. It writes through `_Rounds.store` (`_Marker`): the Markdown copy
+    first, then the JSON, each from a synced temporary file, with the answers file hashed again just before each
+    rename. A hash changed since the load (at the save's own check or at either of those) starts over, three tries
+    in all; when it changed between the copy's rename and the JSON's, the copy is made again from the answers file
+    on disk (`_copy_from_disk`, best effort), so a refused mark leaves no copy of itself. This is
     best effort, as "No stale writes" says before an inbox, and the window is open both ways: a page save landing
     between that last hash and the rename is lost, a Done included (the run then exits 0 with its path while the
     file says `done: false`); and a page save already past its own disk check renames over the mark after the
     command exited 0 (a page run's save has no hash before its rename), so the mark is gone from the page: run it
     again.
   - `inbox.lock` there and the round's lock free (tried for half a second: another mark, or a waiter's look,
-    holds it for a moment): it holds the lock for the write only, loads the round again under it, and writes as
-    above. The inbox, whose look meets that lock for a round it takes in, shows it read only until its next look
+    holds it for a moment): it holds the lock for the write only and writes as above (a file changed before it
+    took the lock fails the save's own check, and the next try reads it again). The inbox, whose look meets that lock for a round it takes in, shows it read only until its next look
     takes the lock (`take_locks` at every look), never for good. A page run starting in that moment exits 1 as
     beside another run; run it again. This holds a second writer out only when every writer locks: a page run
     started before `inbox.lock` existed, or one on a file system that cannot lock, holds no lock, and the first
@@ -671,11 +680,17 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
     `rev`, under the group's lock, as `accept` does. Replies: `{ok: true}`, or `{error}` with one word:
     `gone` (no group holds that round, or no such item), `done`, `held` (another run holds the round: its group is
     read only), `answered`, `changed` (a save landed first; the command asks again, three times in all), `failed`
-    (a write failed; it may leave a new Markdown copy, as a failed save does). Any other error, as an inbox from
-    before the op gives: exit 1, nothing written, and a stderr line saying to restart the inbox (`signoff inbox
-    stop`, then `signoff inbox open`) and run the same command again.
+    (a write failed; it may leave a new Markdown copy, as a failed save does). `gone` for a round the command found
+    says the path must be spelled as the run's (the match is by text, so another letter case or Unicode form of
+    the same file misses), not to try again. An error that starts `unknown request`, as every inbox from before
+    the op gives: exit 1, nothing written, and a stderr line saying to restart the inbox (`signoff inbox stop`,
+    then `signoff inbox open`) and run the same command again. Any other error (the shape refused, as an inbox on
+    an older Python may refuse a note's character): exit 1, nothing written, the inbox's text and plainer
+    characters advised, never a restart.
   - the lock held and no inbox alive (a page run holds it): exit 1, nothing written, as for a second run.
-  A file system that cannot lock: one stderr line, then the first case. A run or the inbox takes a direct write
+  A file system that cannot lock (`ENOLCK`, `EOPNOTSUPP`, `ENOSYS`, `EINVAL`: `NO_LOCKS`): one stderr line, then
+  the first case; any other error at the lock (a link at its name, no permission): exit 1, nothing written. A run
+  or the inbox takes a direct write
   in as any outside write (open tabs get 409 and reload); an op's write bumps the round's `rev` as a save does.
   The item counts as decided (`_decided`): `rows` leaves it out of a round's items, as the page shows it decided,
   and `offer` skips the round (see the notification rule). The page shows **Decided elsewhere** and the note
@@ -813,7 +828,8 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   from before the op). `signoff inbox monitor` ends (0) only once its session is gone. `signoff elsewhere` exits 0
   when written or already marked with the same note, else 1 with one stderr line: a bad note, round or answers
   file, an unknown item, a done round, the user's own answer on the item, the round's lock held by a page run, an
-  inbox refusal or no answer, an inbox from before the op, a line too long for the control socket, a file that
+  inbox refusal or no answer, an inbox from before the op, a request shape the inbox refused, a lock file that
+  cannot be opened (not a file system without locks), a line too long for the control socket, a file that
   kept changing through three tries, or a write that failed (a file system that cannot lock adds a line to an
   exit 0).
 - **Done waits for acceptance.** With several rounds open, a Done save is refused (409) until every other open

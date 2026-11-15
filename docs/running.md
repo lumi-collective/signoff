@@ -33,16 +33,19 @@ python3 -I plugin/signoff/signoff.py elsewhere <round file> <item id> [<note>]
 
 While a run waits, an item you and the agent settled in chat can be marked without a restart: the item gets
 `source: "elsewhere"`, no choice, and the note (one line of at most 500 characters, with no control, invisible or
-line-separator character) as its comment, and the round must be accepted again, as after any change. The page
-then shows the item as **Decided elsewhere** with the note, keeps it through your other saves and **Accept all**,
-and makes it yours again once you pick one of its options or type in it. It never marks an item that already holds
-your own answer: a choice, a comment, Other text, marks or Private.
+line-separator character; an emoji with its variation selector or joiner is fine) as its comment, and the round
+must be accepted again, as after any change. An item that starts Private keeps Private. The page then shows the
+item as **Decided elsewhere** with the note, keeps it through your other saves and **Accept all**, and makes it
+yours again once you pick one of its options or type in it. It never marks an item that already holds your own
+answer: a choice (unticking every recommended option too), a comment, Other text, marks, or Private set otherwise
+than the item starts.
 
 It writes the way the round's own writer does:
 
 - No inbox has run on this machine (no `inbox.lock`, see below): there are no round locks, and it writes the
   answers file itself. It checks the file has not changed since it read it, once at the start of the write and
-  once more just before the rename, and starts over when it has (three tries). A save from the page between that
+  again just before each of its two renames (the Markdown copy, then the JSON), and starts over when it has (three
+  tries); a copy it renamed before a change landed is made again from the file that won. A save from the page between that
   last check and the rename is still lost, a Done too: the run then exits 0 while the file says `done: false`.
   The other way round, a save from the page that had already passed its own check can write over the mark after
   the command exited 0: if the mark is gone from the page, run the command again. This is the best effort every
@@ -51,16 +54,19 @@ It writes the way the round's own writer does:
   before the inbox first ran, or on a file system that cannot lock, holds no lock, so the window above stays open
   beside it.
 - The inbox runs and holds the round's lock (a waiting run): it asks the inbox on its control socket, and the inbox
-  writes the mark as it writes a save from its page.
+  writes the mark as it writes a save from its page. The inbox finds the round by its path as the run was given
+  it: spell it the same, letter case too.
 - A page run holds the round's lock (it started before the inbox, or no inbox runs now): exit 1, nothing written.
   Ask the user to answer on that page.
 
 The run, or the inbox, shows the mark within a few seconds; a tab that saved before must reload. It prints nothing
 on stdout and exits 0 once written (or when the item already has that mark and note), else 1 with one line on
 stderr: an invalid round or answers file, an unknown item, a round already done, a bad note, your own answer on the
-item, a page run holding the round, an inbox that refused it or did not answer, an answers file that kept changing,
-or a write that failed. An inbox from before this command answers with an error: the line says to restart it
-(`signoff inbox stop`, then `signoff inbox open`) and run the command again. Restart a run an older Signoff started
+item, a page run holding the round, an inbox that refused it or did not answer, a lock file it cannot open, an
+answers file that kept changing, or a write that failed. An inbox from before this command answers that it does
+not know the request: the line says to restart it (`signoff inbox stop`, then `signoff inbox open`) and run the
+command again. An inbox on an older Python may refuse a note character its Python does not know yet: the line
+says to use plainer characters. Restart a run an older Signoff started
 before you use it too: that run refuses the new `source`.
 
 ## Notes folder

@@ -936,6 +936,45 @@ def run_elsewhere(work):
         kill(browser.proc)
 
 
+def run_elsewhere_private(work):
+    """A mark on a sensitive item keeps its Private box ticked after a reload, so the comment the user types on it
+    later is saved private."""
+    topic = work / "2026-01-08-elsewhere-private"
+    topic.mkdir()
+    target = topic / "decisions.json"
+    data = elsewhere_round()
+    data["items"][0]["sensitive"] = True
+    target.write_text(json.dumps(data), encoding="utf-8")
+    answers_file = topic / "decisions.answers.json"
+
+    def saved():
+        try:
+            return json.loads(answers_file.read_text(encoding="utf-8"))["answers"]
+        except (OSError, ValueError, KeyError):
+            return {}
+    server, out, err, browser = serve(target, str(work / "profile-elsewhere-private"))
+    try:
+        wait_for("the page", lambda: browser.js("!!document.getElementById('r0-i0-p')"))
+        mark = subprocess.run([sys.executable, "-I", "-B", str(ROOT / "plugin" / "signoff" / "signoff.py"),
+                               "elsewhere", str(target), "q", "in chat"], capture_output=True,
+                              universal_newlines=True, encoding="utf-8", timeout=30)
+        check((mark.returncode, mark.stderr) == (0, ""), "signoff elsewhere: %r" % ((mark.returncode, mark.stderr),))
+        browser.call("Page.reload")
+        wait_for("the marked item", lambda: browser.js(
+            "(function () { var e = document.getElementById('r0-i0-e'); return !!e && !e.hidden; })()"))
+        check(browser.js("document.getElementById('r0-i0-p').checked"), "a sensitive item stays Private after a mark")
+        browser.click("#r0-i0-c")
+        browser.call("Input.insertText", text="my own setup")
+        wait_for("the typed text saved", lambda: saved().get("q", {}).get("comment") == "my own setup")
+        check(saved()["q"].get("private") is True, "the comment typed on it is saved private: %r" % saved()["q"])
+    except E2EError:
+        sys.stderr.write("--- Signoff stderr ---\n" + "".join(err))
+        raise
+    finally:
+        kill(server)
+        kill(browser.proc)
+
+
 def run_elsewhere_read_only(work):
     """A round done with an item marked decided elsewhere shows the note read only on a later run's page and on
     the past-decisions page."""
@@ -2897,6 +2936,7 @@ def run():
     run_blocking(work)
     run_number(work)
     run_elsewhere(work)
+    run_elsewhere_private(work)
     run_elsewhere_read_only(work)
     if WINDOWS:
         print("SKIP: the inbox (it needs a Unix socket; not on Windows yet)", flush=True)
@@ -3051,7 +3091,8 @@ def main():
           "read only when done; "
           "an item marked decided elsewhere shows the agent's note as text after a reload and in the Summary, "
           "Accept all and another item's save keep it, Accept all's undo leaves text typed on it the user's, a pick "
-          "on it makes it the user's, and a done round shows the note read only and on the past-decisions page; "
+          "on it makes it the user's, a marked sensitive item stays Private after a reload, and a done round shows "
+          "the note read only and on the past-decisions page; "
           + ("" if WINDOWS else "inbox: the empty state, the sidebar's view and project filters, "
              "each project's other open items closed behind a count row that opens them, "
              "a waiting round and a waiting todo item grouped by project under the summary line, its steps counted, "

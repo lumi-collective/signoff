@@ -599,6 +599,11 @@ def check_answers(state, decisions, stored=False):
             raise ValueError("answer %r: choice %r is not an option of this item" % (key, choice))
         if not isinstance(comment, str) or len(comment) > MAX_TEXT:
             raise ValueError("answer %r: comment must be a string up to %d characters" % (key, MAX_TEXT))
+        # The note of a mark (signoff elsewhere), by the part of its rule every Python reads alike: _hidden's
+        # unassigned characters differ by Unicode version, so they would refuse one file on one Python only.
+        if ans.get("source") == "elsewhere" and (len(comment) > MAX_NOTE or not _typed_line(comment)):
+            raise ValueError("answer %r: a note marked elsewhere must be one line of at most %d characters"
+                             % (key, MAX_NOTE))
         picked = choice if isinstance(choice, list) else [choice]
         if SKIP in picked and len(picked) > 1:
             raise ValueError("answer %r: skip cannot be combined with another choice" % key)
@@ -1929,6 +1934,17 @@ def _hash(path):
         return None
 
 
+def _copy_from_disk(r):
+    """The Markdown copy made again from the answers file on disk, after a write found it changed between its copy's
+    rename and its own: best effort, and nothing when that file is gone or not valid."""
+    try:
+        stored = json.loads(read_regular(r.answers_path, MAX_ROUND_BODY).decode("utf-8"))
+        record = dict(stored, **check_answers(stored, r.decisions, stored=True))  # its keys with their defaults
+        write_atomic(r.markdown_path, answers_markdown(r.decisions, record))
+    except (OSError, ValueError, RecursionError):
+        pass
+
+
 class _Rounds:
     """Rounds shown on one page and saved from it: a run's own server, and in the inbox the rounds of each run."""
     writable = True  # in the inbox: False while another run holds a round's lock, so the rounds are only shown
@@ -2036,13 +2052,18 @@ class _Rounds:
                         "changed_after_accept": bool(r.meta.get("accepted") or r.meta.get("changed_after_accept"))}
             record.update(meta)
             # The JSON file is the record agents trust, so it goes last: if the Markdown copy fails, nothing is final.
-            write_atomic(r.markdown_path, answers_markdown(r.decisions, record))
+            unchanged = lambda: _hash(r.answers_path) == on_disk  # noqa: E731 (asked before each rename)
+            if not self.recheck:
+                write_atomic(r.markdown_path, answers_markdown(r.decisions, record))
+            elif not write_atomic(r.markdown_path, answers_markdown(r.decisions, record), unchanged=unchanged):
+                return 409, stale
             if state["done"] and all(x.finished for x in self.rounds if x is not r):
                 self.closing()  # before the JSON: once that says done, the round is final and no longer orphan
             data = (json.dumps(record, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
             if not self.recheck:
                 write_atomic(r.answers_path, data)
-            elif not write_atomic(r.answers_path, data, unchanged=lambda: _hash(r.answers_path) == on_disk):
+            elif not write_atomic(r.answers_path, data, unchanged=unchanged):
+                _copy_from_disk(r)  # the copy renamed a moment ago is of the refused write: show the file that won
                 return 409, stale
             r.disk = hashlib.sha256(data).digest()  # the bytes written, not a read-back
             r.saved, r.saved_at, r.meta = state, record["saved"], meta
@@ -2431,13 +2452,21 @@ def _unpathed(g, text):
     return text
 
 
-def _decided(answer):
+def _none_picked(answer, item):
+    """Whether the user unticked a many item's recommendation: an empty choice that is an answer, "none of these".
+    The page saves an untouched item without a recommendation as an empty or null choice from the user too."""
+    return answer.get("choice") == [] and answer.get("source") == "user" and item.get("recommended") is not None
+
+
+def _decided(answer, item):
     """Whether an item is decided: a choice that is not null or an empty list, and not the preselected
-    recommendation left untouched (the page saves an untouched item without a recommendation as a null choice); or
-    marked decided elsewhere by the agent (signoff elsewhere), with its null choice."""
-    if bool(answer) and answer.get("source") == "elsewhere":
+    recommendation left untouched (the page saves an untouched item without a recommendation as a null choice); a
+    recommendation the user unticked; or marked decided elsewhere by the agent (signoff elsewhere)."""
+    if not answer:
+        return False
+    if answer.get("source") == "elsewhere" or _none_picked(answer, item):
         return True
-    return bool(answer) and answer.get("choice") not in (None, []) and answer.get("source") != "recommended"
+    return answer.get("choice") not in (None, []) and answer.get("source") != "recommended"
 
 
 MAX_NOTE = 500  # characters in a signoff elsewhere note: at 4 bytes each, with the round's path, one control line
@@ -2445,23 +2474,29 @@ MARK_REFUSALS = ("gone", "done", "changed", "held", "failed", "answered")  # the
 
 
 def _note_ok(note):
-    """A signoff elsewhere note: one line of at most MAX_NOTE characters, none of them invisible (_hidden)."""
+    """A signoff elsewhere note: one line of at most MAX_NOTE characters, none of them invisible (_hidden; an emoji's
+    variation selector and joiner aside)."""
     return isinstance(note, str) and len(note) <= MAX_NOTE and "\t" not in note and "\n" not in note \
-        and _hidden(note) is None
+        and _hidden(note, EMOJI_JOINERS) is None
 
 
-def _users(answer):
+def _private_default(item):
+    """Whether the page starts an item Private: a sensitive one with a text field (the box is there only then)."""
+    return bool(item["sensitive"] and (item["comment"] or item["other"] or item["marks"]))
+
+
+def _users(answer, item):
     """Whether a saved answer holds anything of the user's, which a mark must never replace: a choice (not the
-    recommendation left untouched), a comment, Other text, marks or Private. A mark of the agent's own holds only
-    its note, which a new mark may replace."""
+    recommendation left untouched; an unticked recommendation too), a comment, Other text, marks, or Private set
+    otherwise than the item starts. A mark of the agent's own holds only its note, which a new mark may replace."""
     if not answer:
         return False
-    if answer.get("marks") or answer.get("other") or answer.get("private"):
+    if answer.get("marks") or answer.get("other") or bool(answer.get("private")) != _private_default(item):
         return True
     if answer.get("source") == "elsewhere":
         return False
-    return bool(answer.get("comment")) or (answer.get("choice") not in (None, [])
-                                           and answer.get("source") != "recommended")
+    return bool(answer.get("comment")) or _none_picked(answer, item) or (
+        answer.get("choice") not in (None, []) and answer.get("source") != "recommended")
 
 
 def _mark_state(r, item_id, note):
@@ -2475,9 +2510,11 @@ def _mark_state(r, item_id, note):
         return None, "done"
     base = r.saved or {"answers": {}, "free_text": ""}
     old = base["answers"].get(item_id)
-    if _users(old):
+    if _users(old, item):
         return None, "answered"
     mark = {"choice": [] if item["select"] == "many" else None, "comment": note, "source": "elsewhere"}
+    if _private_default(item):
+        mark["private"] = True  # as the page starts it, so its box stays ticked and an untick stays the user's
     # _users ruled out the rest: a page saving the mark back may add an empty marks list, and it is the same mark.
     if old and all(old.get(k) == v for k, v in mark.items()):
         return None, None
@@ -2850,7 +2887,7 @@ class InboxServer(_Server):
                         continue
                     r = g.rounds[left[0]]
                     saved = (r.saved or {}).get("answers", {})
-                    undecided = [it for it in r.decisions["items"] if not _decided(saved.get(it["id"]))]
+                    undecided = [it for it in r.decisions["items"] if not _decided(saved.get(it["id"]), it)]
                     # A mark of the agent's: a tap's Done would send it without the user having seen it.
                     if len(undecided) != 1 or any(a.get("source") == "elsewhere" for a in saved.values()):
                         continue
@@ -2898,7 +2935,7 @@ class InboxServer(_Server):
                             continue
                         saved = (r.saved or {}).get("answers", {})
                         items = [(k, it["title"]) for k, it in enumerate(r.decisions["items"])
-                                 if not _decided(saved.get(it["id"]))]
+                                 if not _decided(saved.get(it["id"]), it)]
                         if left < 1:
                             more += 1 + len(items)
                             continue
@@ -4186,8 +4223,9 @@ def _mark_refusal(why, r, item_id):
     return {
         "gone": "%s has no item %s" % (r.path.name, json.dumps(item_id)) if not any(
             it["id"] == item_id for it in r.decisions["items"]) else
-        "the Signoff inbox does not show %s now, yet another process holds its lock; nothing was written. Run the "
-        "same command again in a few seconds" % r.path.name,
+        "the Signoff inbox shows no round at this path, yet another process holds the lock of %s; nothing was "
+        "written. The inbox matches the path as its run gave it: check it is spelled the same, letter case too, "
+        "or answer on the page" % r.path.name,
         "done": "%s is done already (Done is final); nothing was written" % r.path.name,
         "held": "%s is open in a Signoff run of its own, which alone writes it; nothing was written. Ask the user to "
                 "answer the item on that run's page" % r.path.name,
@@ -4199,9 +4237,14 @@ def _mark_refusal(why, r, item_id):
     }[why]
 
 
+# The errors of a file system that cannot lock (a network mount): the one case that goes on without the lock.
+NO_LOCKS = {getattr(errno, n) for n in ("ENOLCK", "EOPNOTSUPP", "ENOTSUP", "ENOSYS", "EINVAL") if hasattr(errno, n)}
+
+
 def _hold_round(r):
     """The round's lock, for one write: waited for half a second, as another mark or a waiter's look holds it for a
-    moment. None when another process holds it, False when this file system cannot lock (said on stderr)."""
+    moment. None when another process holds it, False when this file system cannot lock (said on stderr);
+    DecisionsError for any other failure (a link at the lock's name, no permission)."""
     path = r.path.with_name(r.path.name + ".lock")
     try:
         for wait in (0.05,) * 10 + (None,):
@@ -4210,6 +4253,8 @@ def _hold_round(r):
                 return fd
             time.sleep(wait)
     except OSError as e:
+        if e.errno not in NO_LOCKS:
+            raise DecisionsError("cannot lock %s (%s); nothing was written" % (path, e.strerror or e))
         print("signoff: cannot lock %s (%s); going on without the lock" % (path, e.strerror or e), file=sys.stderr)
         return False
 
@@ -4237,8 +4282,15 @@ def _mark_by_inbox(home, r, item_id, note, say):
             continue
         if why in MARK_REFUSALS:
             return say(_mark_refusal(why, r, item_id))
-        return say("the Signoff inbox that is running is older than this Signoff and cannot mark an item; nothing was "
-                   "written. Restart it (signoff inbox stop, then signoff inbox open) and run the same command again")
+        if isinstance(why, str) and why.startswith("unknown request"):  # every inbox before the op says so
+            return say("the Signoff inbox that is running is older than this Signoff and cannot mark an item; nothing "
+                       "was written. Restart it (signoff inbox stop, then signoff inbox open) and run the same "
+                       "command again")
+        # A current inbox that refused the request's shape: on an older Python it may not know a character this one
+        # does, so its note check refuses what this one let through.
+        return say("the Signoff inbox refused the request (%s); nothing was written. Its Python may know fewer "
+                   "characters than this one: use plainer characters in the note"
+                   % _one_line(str(why), MAX_OFFER_TEXT))
     return say(_mark_refusal("changed", r, item_id))
 
 
@@ -4267,9 +4319,6 @@ def _elsewhere(path, item_id, note):
                 if fd is None:
                     return _mark_by_inbox(home, r, item_id, note, say) if inbox_alive(home) \
                         else say(_mark_refusal("held", r, item_id))
-                if fd:
-                    r = Round(path)  # again, under the lock
-                    state, why = _mark_state(r, item_id, note)
             if state is None:
                 return say(_mark_refusal(why, r, item_id)) if why else EXIT_DONE
             try:

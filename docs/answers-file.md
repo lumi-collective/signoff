@@ -45,8 +45,9 @@ Beside each round, `round-NN.answers.json`, from the first change on the page:
 
 Every save from the page, and `signoff elsewhere`, also writes `round-NN.answers.md`, the same answers as Markdown
 for people, all text escaped; an answers file another program wrote has no fresh copy. The copy is written before
-the JSON, so a mark refused after it (the file changed meanwhile, three times) can leave a copy the JSON does not
-match until the next save. A GFM viewer shows each text as written: none
+the JSON. A mark that finds the file changed before its copy's rename leaves the copy as it was; one that finds it
+changed between the two renames makes the copy again from the file that won, so a refused mark leaves no copy of
+itself (best effort: a third write in that same moment can still leave the copy a step behind). A GFM viewer shows each text as written: none
 of the GFM spec's formatting, HTML, character references (`&amp;`) or links from a bare URL, but for one: it
 still links an email address. No Markdown escape stops that, nor GitHub's own extensions (`$math$`, `:+1:`
 emoji, `@user` mentions). A control character (but tab), a format character (a bidi override, a zero-width mark,
