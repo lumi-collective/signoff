@@ -474,11 +474,14 @@ class FixedPort(unittest.TestCase):
     def test_bad_values_are_usage_errors(self):
         # Below 1024 too: browsers leave :80 out of Host and Origin, and the low ports are the system's.
         for value in ("-1", "65536", "x", "1.5", "+80", " 80", "0x50", "", "1", "80", "1023"):
+            # The line names the setting: where low ports are refused, the bind's own error exits 1 as well.
             err = self.refused(self.folder.target, "--port", value)
             self.assertEqual(len(err.strip().splitlines()), 1, (value, err))
+            self.assertIn("--port", err, value)
             if value:
                 err = self.refused(self.folder.target, env={"SIGNOFF_PORT": value})
                 self.assertEqual(len(err.strip().splitlines()), 1, (value, err))
+                self.assertIn("SIGNOFF_PORT", err, value)
 
     def test_a_taken_port_exits_1_in_one_line_that_names_it(self):
         root = HistoryRoot()

@@ -104,7 +104,8 @@ send requests to `127.0.0.1`. The rules, in short:
   printed: a browser may try `localhost` as `::1` first, where Signoff never listens and a forward may not
   either, so another program listening there would get the link, its token included.
 - **A single-use start link:** the browser is opened with a second token, `/b/<start token>/`, which redirects
-  once and is dead from then on; that link is what other programs can see in the browser's command line. A
+  once and is dead from then on; that link is what other programs can see in the browser's command line (over SSH
+  with `BROWSER` set, that command runs on the remote machine, where its other users can see it). A
   second visit gets 410 and stops the run with exit code 1. A Done in the first 5 seconds after the link's
   first use ends the run only when those 5 seconds are up. A program that used the link first therefore cannot
   finish the run before your browser's visit is noticed, as long as your browser opens the link within that time.
