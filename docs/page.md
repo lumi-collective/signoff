@@ -2,7 +2,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../media/page-dark.png">
-  <img alt="A Signoff page with the project's name and monogram in the header and four rounds in a sidebar, the first accepted and the second open, its three items listed under them; a mockup with the agent's orange box and the user's blue mark, the agent's recommendation and the cost in the margin, and the options under the picture with the two recommended ones and one more ticked" src="../media/page-light.png">
+  <img alt="A Signoff page with the project's name and monogram and when the round was opened in the header, and four rounds in a sidebar, the first accepted and the second open, its three items listed under them; a mockup with the agent's orange box and the user's blue mark, the agent's recommendation and the cost in the margin, and the options under the picture with the two recommended ones and one more ticked" src="../media/page-light.png">
 </picture>
 
 - **The project's name** and its two-letter monogram (the same as in the inbox) start the header, and the name
@@ -33,7 +33,13 @@
   the open round to the recommendations, comments untouched; clicking it again undoes that, until you change an
   item's options.
 - **Focus** (the button in the header, or `f`) shows one item at a time, with Previous and Next; the round's last
-  box and its Accept or Done come after the last item. Esc leaves it. A phone opens the page in Focus.
+  box and its Accept or Done come after the last item. Esc leaves it. A phone opens the page in Focus. There an
+  item reads its question, the recommendation, its commands, then its pictures as thumbnails, then the options, so
+  the options start on the first screen. The question and the recommendation stay on the first screen; with
+  commands or a long context the options start below. Tap a thumbnail to open it full size; a picture you can mark
+  starts small beside its caption, and **Larger** (and back **Smaller**) gives it the full width to draw on. The
+  header keeps the round's title beside the project's mark, with the opening time on a line of its own, and the bar
+  at the foot takes two rows: why Done waits, then the save state and **Accept this round**.
 - **Other and Skip** appear where the agent allows them: Other with its own text field, Skip on its own.
 - **A number.** Where the answer is a number, the item has a slider and a number field that move together,
   between the agent's lowest and highest value and on its step, with the unit beside them. The recommended
@@ -131,4 +137,4 @@ themes), the page uses a black and white high-contrast set instead. The palettes
 Its own labels are in English, or in Hungarian when the decisions file's `lang` says `hu`; your content can be
 in any language.
 
-<img alt="The same page at phone width, in Focus: the header, the notice, item 1 of 3 with Previous and Next, the question and its mockup with the mark, the recommendation under it, and Accept this round at the bottom" src="../media/page-phone.png" width="320">
+<img alt="The same page at phone width, in Focus: the header with the project and when the round was opened, the notice, item 1 of 3 with Previous and Next, the question, the recommendation and cost under it, the mockup with the mark small beside its caption with Larger under it, the first options, and Accept this round at the bottom" src="../media/page-phone.png" width="320">

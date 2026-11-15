@@ -8,7 +8,8 @@ single-use start link in headless Chrome over the DevTools protocol, and drives 
 First one round: a non-recommended pick and a comment, the summary block above Done quotes the comment and its
 filter works, Private (marked by the agent on one item, ticked by the user on the other) hides the comment in the
 summary and the Markdown copy, unticking the agent's mark survives a reload, one click on Done. A round done
-earlier shows Private without the untick hint. An item with criteria shows its facts as chips; the Cards / Table
+earlier shows Private without the untick hint. On a phone in Focus, the question, the recommendation and the first
+option of each demo item show before any scrolling. An item with criteria shows its facts as chips; the Cards / Table
 toggle shows the table, a pick there (by click and by number key) is saved and shows on the cards, and at 390 px
 the table scrolls in its own box. An attachment starts closed, opens on a click and shows the file's text
 exactly, with nothing rendered. The header names the project folder and the tab title starts with it; on the
@@ -312,6 +313,25 @@ ROUND_AGE = """(function () {
   return {time: t.checkVisibility() && t.textContent, datetime: t.dateTime, title: t.title,
     pill: p.checkVisibility() && p.textContent, note: !!n && n.checkVisibility() && n.textContent};
 })()"""
+# The item in Focus as it shows before any scrolling: main's box from the header's foot to the key bar's top, and
+# where the item's parts sit in it (null when the item has none).
+FIRST_SCREEN = """(function () {
+  var main = document.querySelector('body > main'), c = document.querySelector('.item.cur');
+  main.scrollTop = 0;
+  function box(e) { if (!e) return null; var r = e.getBoundingClientRect(); return {top: r.top, bottom: r.bottom}; }
+  return {item: c.dataset.item, top: main.getBoundingClientRect().top, foot: document.querySelector('.bar').getBoundingClientRect().top,
+    legend: box(c.querySelector('legend')), desc: box(c.querySelector('.desc')), margin: box(c.querySelector('.margin')),
+    frame: box(c.querySelector('.frame')), choices: box(c.querySelector('.choices')), option: box(c.querySelector('.choices .opt')),
+    links: Array.prototype.map.call(c.querySelectorAll('a.frame img'), function (i) { return i.getBoundingClientRect().height; }),
+    wide: document.documentElement.scrollWidth <= innerWidth};
+})()"""
+
+
+def in_order(b):
+    """The phone's reading order in Focus: the description, the recommendation, the pictures, then the options."""
+    seq = [b["legend"]["bottom"], b["desc"]["bottom"], b["margin"]["top"], b["margin"]["bottom"]]
+    seq += [b["frame"]["top"]] if b["frame"] else []
+    return all(x <= y + 0.5 for x, y in zip(seq + [b["choices"]["top"]], (seq + [b["choices"]["top"]])[1:]))
 
 
 def press(browser, key, code, vk, modifiers=0, text=""):
@@ -445,11 +465,8 @@ def run_phone(work):
                            ".textContent, document.querySelector('.tb-btn').getAttribute('aria-pressed')]" % shown)
         check(state == [True, 1, "1. tétel / %d" % len(data["items"]), "true"],
               "a phone should open in Focus on the first item: %r" % state)
-        place = browser.js("(function () { var c = document.querySelector('.item.cur'), q = c.querySelector('.q')"
-                           ".getBoundingClientRect(), m = c.querySelector('.margin').getBoundingClientRect(), o = c"
-                           ".querySelector('.choices').getBoundingClientRect(); return [m.top >= q.bottom, "
-                           "m.bottom <= o.top, m.left < q.right]; })()")
-        check(place == [True, True, True], "on a phone the margin sits between the question and the options: %r" % place)
+        place = browser.js(FIRST_SCREEN)
+        check(in_order(place), "on a phone in Focus: the text, the margin, the pictures, the options: %r" % place)
         text = browser.js("document.body.innerText")
         check("undefined" not in text and "Fókusz" in text and "Javasolt".upper() in text.upper(),
               "a Hungarian round should show Hungarian labels: %r" % text[:400])
@@ -474,6 +491,93 @@ def run_phone(work):
     finally:
         kill(server)
         kill(browser.proc)
+
+
+def run_first_screen(work):
+    """On a phone in Focus, before any scrolling, each item of the demo's round 2 shows its question, the agent's
+    recommendation and its first option between the header and the key bar: a picture that takes marks, one without
+    a picture, two pictures that open full size. In English and in Hungarian, whose labels are longer. With a context
+    line, the agent's mark and a command on the first item, the question and the recommendation still do."""
+    for lang, more in (("en", False), ("hu", False), ("en", True), ("hu", True)):
+        topic = work / ("2026-01-04-first-screen-%s%s" % (lang, "-more" if more else ""))
+        for name in ("mockups", "boards", "notes"):
+            shutil.copytree(str(DEMO / name), str(topic / name))
+        for n in range(1, 5):
+            data = json.loads((DEMO / ("round-%02d.json" % n)).read_text(encoding="utf-8"))
+            data["lang"] = lang
+            if n == 2:
+                items = data["items"]
+                if more:
+                    data["context"] = CONTEXT
+                    items[0].update(blocking=True, commands=COMMANDS[:1])
+                    del items[1:]
+            (topic / ("round-%02d.json" % n)).write_text(json.dumps(data), encoding="utf-8")
+        server, out, err, browser = serve(topic, str(work / ("profile-first-%s%s" % (lang, more))), size=(390, 844))
+        try:
+            wait_for("the page", lambda: browser.js("!!document.getElementById('r0-i0-o0')"))
+            browser.js("location.hash = 'focus=1/%s'" % items[0]["id"])
+            browser.call("Page.reload")
+            for k, item in enumerate(items):
+                if k:
+                    browser.click(".ib-fbar button:nth-of-type(2)")  # Next
+                wait_for("item %s in Focus" % item["id"], lambda: browser.js(
+                    "(function (c) { return !!c && c.dataset.item; })(document.querySelector('#panel-1 .item.cur'))")
+                    == item["id"])
+                wait_for("the pictures of %s" % item["id"], lambda: browser.js(
+                    "Array.prototype.every.call(document.querySelectorAll('.item.cur .frame img'), "
+                    "function (i) { return i.complete && i.naturalHeight > 0; })"))  # an unloaded picture is 0 px high
+                box = browser.js(FIRST_SCREEN)
+                # The options may start below the first screen only under commands and a long context.
+                end = box["margin"]["bottom"] if more else box["option"]["bottom"]
+                check(in_order(box) and box["legend"]["top"] >= box["top"] and end <= box["foot"],
+                      "%s, %s%s: the question, the recommendation%s on the first screen: %r"
+                      % (lang, item["id"], " with more" if more else "", "" if more else " and the first option", box))
+                if more:
+                    check(browser.js(CONTEXT_SHOWN) == CONTEXT and browser.js(
+                        "!!document.querySelector('.item.cur legend .badge.warn') && "
+                        "!!document.querySelector('.item.cur .cmds .md-code')"), "the context, the mark and a command show")
+                    continue
+                check(all(h <= 180 for h in box["links"]), "%s: a picture that opens full size is a thumbnail: %r"
+                      % (item["id"], box["links"]))
+                check(box["wide"], "nothing wider than the phone")
+                if item.get("marks"):
+                    # A picture that takes marks starts small; Larger gives it the item's width to draw on.
+                    size = ("(function () { var b = document.querySelector('.item.cur .pic-size'), f = b.closest('figure')"
+                            ".querySelector('.frame'), s = b.closest('.shots'); return [b.textContent, "
+                            "b.getAttribute('aria-expanded'), Math.round(f.getBoundingClientRect().width), "
+                            "Math.round(s.getBoundingClientRect().width)]; })()")
+                    labels = {"en": ("Larger", "Smaller", ": picture 1"), "hu": ("Nagyobb", "Kisebb", ": 1. kép")}[lang]
+                    small = browser.js(size)
+                    check(small[:2] == [labels[0], "false"] and small[2] < small[3] / 2,
+                          "%s: the picture with marks starts small: %r" % (lang, small))
+                    check(ax_name(browser, ".item.cur .pic-size") == labels[0] + labels[2],
+                          "%s: Larger names its picture: %r" % (lang, ax_name(browser, ".item.cur .pic-size")))
+                    # A mark drawn on the small picture is a mark like any other.
+                    layer = browser.js("(function () { var r = document.querySelector('.item.cur svg.marks')"
+                                       ".getBoundingClientRect(); return [r.x, r.y, r.width, r.height]; })()")
+                    x0, y0 = layer[0] + layer[2] * 0.3, layer[1] + layer[3] * 0.3
+                    x1, y1 = layer[0] + layer[2] * 0.7, layer[1] + layer[3] * 0.7
+                    for kind, x, y in (("mousePressed", x0, y0), ("mouseMoved", x1, y1), ("mouseReleased", x1, y1)):
+                        browser.call("Input.dispatchMouseEvent", type=kind, x=x, y=y, button="left", clickCount=1,
+                                     buttons=0 if kind == "mouseReleased" else 1)
+                    wait_for("the mark drawn on the thumbnail", lambda: browser.js(
+                        "document.querySelectorAll('.item.cur .mark-row').length === 1 && "
+                        "document.querySelectorAll('.item.cur svg.marks .mark').length === 1"))
+                    browser.click(".item.cur .pic-size")
+                    big = browser.js(size)
+                    check(big[:2] == [labels[1], "true"] and big[2] >= big[3] - 2
+                          and ax_name(browser, ".item.cur .pic-size") == labels[1] + labels[2],
+                          "%s: Larger gives the picture the item's width: %r" % (lang, big))
+                    check(browser.js("document.activeElement === document.querySelector('.item.cur .pic-size')"),
+                          "the toggle keeps focus")
+                    press(browser, "Enter", "Enter", 13, text="\r")
+                    check(browser.js(size) == small, "%s: Smaller gives the thumbnail back: %r" % (lang, browser.js(size)))
+        except E2EError:
+            sys.stderr.write("--- Signoff stderr ---\n" + "".join(err))
+            raise
+        finally:
+            kill(server)
+            kill(browser.proc)
 
 
 def run_single(work):
@@ -2555,6 +2659,7 @@ def run():
     (work / ".git").mkdir()  # the project root, so the header can name it
     run_old_rounds(work)
     run_phone(work)
+    run_first_screen(work)
     run_single(work)
     run_history(work)
     run_readonly(work)
@@ -2617,6 +2722,12 @@ def run():
         press(browser, "f", "KeyF", 70, text="f")
         check(browser.js(cards) == [items[0]["id"]] and browser.js("document.querySelector('.ib-fbar span').textContent")
               == "Item 1 of %d · Round 1 of 2" % len(items), "f should show the first item alone: %r" % browser.js(cards))
+        # Focus on a wide screen keeps the margin to the right and the picture at full size: no phone rules.
+        wide = browser.js("(function () { var c = document.querySelector('#panel-0 .item.cur'), "
+                          "m = c.querySelector('.margin'), b = c.querySelector('.pic-size'); return [m.getBoundingClientRect()"
+                          ".left >= c.querySelector('.desc').getBoundingClientRect().right, !!b && b.checkVisibility(), "
+                          "c.querySelector('.frame img').getBoundingClientRect().height > 180]; })()")
+        check(wide == [True, False, True], "Focus at 1280 px: the margin right, no Larger, the picture full: %r" % wide)
         press(browser, "j", "KeyJ", 74, text="j")
         check(browser.js(cards) == [items[1]["id"]] and browser.js(
               "document.querySelector('.outline [aria-current=true] .nl').textContent") == items[1]["title"],
@@ -2690,6 +2801,9 @@ def main():
           "recommendations and answers in light and dark; a phone opens in Focus, Next, the margin above the options, "
           "Esc, Hungarian labels, an old round's time, pill and note in Hungarian, its context with the first item "
           "only; "
+          "on a phone in Focus each item of round 2 shows its question, recommendation and first option before any "
+          "scrolling, in English and Hungarian, its pictures as thumbnails and the one that takes marks small with "
+          "Larger and Smaller; "
           "an old done round shows its time with no warning; "
           "1 round, its opening time in the header, comment quoted above Done, filter, Private hides it, one-click Done, exit 0; "
           "project name in the header and the tab title; --history search finds answers and comments, never a private one, "

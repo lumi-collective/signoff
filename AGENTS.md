@@ -548,7 +548,10 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   for both pages). The rounds stay a WAI-ARIA tablist, vertical, in the sidebar (Up and Down as well as Left and
   Right), each with its state as a glyph and a word; the open round's items are listed under them. Each item is
   its question, text and pictures, a margin with the recommendation (the recommended labels, and the option's detail when one is recommended)
-  and the cost (between the question and the options under 1100 px), then the options, numbered for the 1 to 9
+  and the cost (between the question and the options under 1100 px; in Focus at 760 px or less, CSS order puts it
+  right after the text, then the commands, the pictures as thumbnails at most 180 px high, and a picture that takes
+  marks small beside its caption with a Larger / Smaller button, `aria-expanded`, its name ending in the picture's
+  number), then the options, numbered for the 1 to 9
   keys. A number item has instead a native range and number input bound together (each with a name, the range
   with `aria-valuetext` and the unit), the range holding the value that is saved, and Skip as a checkbox with no
   digit key; the digits do nothing there, and j, k and f still work while the range has focus. An item's commands (between its text and pictures) are the inbox's code blocks (`codeBlock`, above the

@@ -207,6 +207,7 @@ button.icon svg{width:18px;height:18px}
 .marks .mark-num{fill:var(--mark);font:700 14px -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
 .mark-tools{display:flex;gap:4px 16px;flex-wrap:wrap;font-size:13.5px}
 .mark-tools a{color:var(--accent)}
+.pic-size{display:none;justify-self:start;align-self:flex-start;font-size:13.5px}  /* shown on a phone in Focus */
 .mark-list .clabel{margin-top:14px}
 .mark-row{display:flex;flex-wrap:wrap;gap:8px;align-items:flex-start;margin:6px 0}
 .mark-row textarea{flex:1 1 200px;min-height:60px}
@@ -707,12 +708,40 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
 @media (max-width:760px){
   body.run>main{padding:0 12px 32px}
   body.run>header{flex-wrap:wrap}
+  body.run:not(.hist)>header .head-text{flex-basis:0}  /* beside the project's monogram, not on a row of its own */
+  body.run:not(.hist) #project{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}  /* the time below */
+  body.run:not(.hist) #project:not(:empty)+#opened::before{content:none}
   body.run>header .actions{flex:1 0 100%;flex-wrap:wrap}
   body.run>header .progress{display:none}  /* the bar says which round waits */
   body.run .ib-fbar button:last-child{display:none}  /* Leave Focus: the pressed Focus button in the header */
   body.run .bar #status{order:0;flex:0 1 auto}
+  body.run:not(.hist) .bar #done-reason{order:-1;flex:1 0 100%}  /* two rows: why Done waits, then the state and Accept */
+  body.run:not(.hist) .bar .grow{order:1}
+  body.run:not(.hist) .bar .bar-acts{order:2}
   body.run .item{padding:14px}
-  body.run.focusing .rp:not(.at-start)>.context{display:none}}  /* with the first item only: the rest stay one screen */
+  body.run.focusing .ib-fbar{padding:4px 0}
+  body.run.focusing .item{margin-top:6px;padding:12px}
+  body.run.focusing .rp:not(.at-start)>.context{display:none}  /* with the first item only: the rest stay one screen */
+  /* Focus reads the question, the recommendation, then the commands and the pictures as thumbnails, so the
+     options start on the first screen. .margin holds nothing to tab to, so Tab still follows what is seen. */
+  body.run.focusing .item fieldset{display:flex;flex-direction:column}
+  body.run.focusing .item .q{display:contents}
+  body.run.focusing .item .desc{order:1}
+  body.run.focusing .item .margin{order:2;margin-top:0}
+  body.run.focusing .item .cmds{order:3}
+  body.run.focusing .item .shots{order:4;margin:0 0 10px;flex-flow:row wrap;align-items:flex-start}
+  body.run.focusing .item .b{order:5}
+  body.run.focusing .shots>figure{flex:1 1 100%}
+  body.run.focusing .shots>figure:not(.board):not(.marking){flex-basis:140px}
+  body.run.focusing .shots>figure:not(.board):not(.marking):not(:only-child){flex-grow:0}  /* two or more: small, in a row */
+  body.run.focusing .shots a.frame img{max-height:180px}
+  body.run.focusing figure.marking:not(.big){display:grid;grid-template-columns:minmax(0,30%) minmax(0,1fr);gap:4px 12px;
+    align-items:start}
+  body.run.focusing figure.marking:not(.big)>.frame{grid-column:1;grid-row:1/span 2}
+  body.run.focusing figure.marking:not(.big)>.mark-tools{grid-column:2;grid-row:2/span 2}
+  body.run.focusing figure.marking:not(.big)>.pic-size{grid-column:1;grid-row:3}
+  body.run.focusing figure.marking:not(.big) button.link{text-align:left}
+  body.run.focusing .pic-size{display:inline}}
 </style>
 </head>
 <body>
@@ -805,7 +834,9 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
       apOnly: 'This tab only: choose it in the inbox to open every Signoff page in it.',
       apFailed: 'Not kept: {m}', apOffline: 'Not kept: the inbox is not answering.', ownTheme: 'Signoff\'s own colours',
       attachMissing: 'Attachment not shown: {r}', lines: '{n} lines', line: '1 line', attachText: 'Attachment: {r}',
-      missing: 'Picture not shown: {r}', full: 'Open full size', addMark: 'Add a mark to picture {n}',
+      missing: 'Picture not shown: {r}', full: 'Open full size', larger: 'Larger', smaller: 'Smaller',
+      picture: 'picture {n}',
+      addMark: 'Add a mark to picture {n}',
       marks: 'Your marks', markHint: 'Draw a rectangle on a picture to point at something, or use the Add a mark button.',
       mark: 'Mark {n}', markOn: 'on picture {p}', markHandle: 'Mark {n} on picture {p}. Arrow keys move it, Shift and arrow keys resize it.',
       markComment: 'Comment on mark {n}', remove: 'Remove', noMarks: 'No marks.',
@@ -915,7 +946,9 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
       apOnly: 'Csak ezen a lapon. Válaszd ki az inboxban, és minden Signoff-oldal így nyílik.',
       apFailed: 'Nincs megtartva: {m}', apOffline: 'Nincs megtartva: az inbox nem válaszol.', ownTheme: 'a Signoff saját színei',
       attachMissing: 'A melléklet nem látható: {r}', lines: '{n} sor', line: '1 sor', attachText: 'Melléklet: {r}',
-      missing: 'A kép nem látható: {r}', full: 'Megnyitás teljes méretben', addMark: 'Jelölés hozzáadása a(z) {n}. képhez',
+      missing: 'A kép nem látható: {r}', full: 'Megnyitás teljes méretben', larger: 'Nagyobb', smaller: 'Kisebb',
+      picture: '{n}. kép',
+      addMark: 'Jelölés hozzáadása a(z) {n}. képhez',
       marks: 'A jelöléseid', markHint: 'Rajzolj téglalapot a képre, hogy megmutass valamit, vagy használd a Jelölés hozzáadása gombot.',
       mark: '{n}. jelölés', markOn: 'a(z) {p}. képen', markHandle: '{n}. jelölés a(z) {p}. képen. A nyilak mozgatják, a Shift és a nyilak átméretezik.',
       markComment: 'Megjegyzés a(z) {n}. jelöléshez', remove: 'Törlés', noMarks: 'Nincs jelölés.',
@@ -2543,7 +2576,19 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
       add.type = 'button';
       add.addEventListener('click', function () { addMark(ri, item, k, [40, 40, 20, 20]); });
       tools.append(add, full);
-      fig.append(tools);
+      // On a phone in Focus the picture starts small, so the options show; Larger gives it the width to draw on.
+      // Not in the tools: Done disables their buttons, and this one must still work then.
+      var size = el('button', 'link pic-size');
+      size.type = 'button';
+      var setSize = function (big) {  // the name says which picture: an item can have several
+        size.textContent = big ? L.smaller : L.larger;
+        size.setAttribute('aria-label', size.textContent + ': ' + fmt(L.picture, {n: k + 1}));
+        size.setAttribute('aria-expanded', String(big));
+      };
+      setSize(false);
+      size.addEventListener('click', function () { setSize(fig.classList.toggle('big')); });
+      fig.classList.add('marking');
+      fig.append(tools, size);
     }
     return fig;
   }

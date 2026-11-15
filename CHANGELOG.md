@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **A phone's first screen:** on a phone in Focus, an item now reads its question, the agent's recommendation and cost, its commands, then its pictures as thumbnails (a tap opens one full size), so the first option shows without scrolling. A picture you can mark starts small beside its caption, and **Larger** gives it the full width to draw on (**Smaller** takes it back). The header keeps the title beside the project's mark, with the opening time on its own line, and the bar at the foot takes two rows. Wider screens, and a phone out of Focus, are unchanged.
 - **One-line fields in the Markdown copy:** a title, group, option label, unit, caption or attachment name holding a CR, U+2028, U+2029, NEL, VT, FF or FS/GS/RS character no longer splits its heading or list line in the copy; each such break shows as a space. Rounds with such text still load.
 
 - **A round's age:** a round's page says when the round was asked (`Opened <date> · 3 days ago`) after the project's name in the header, from the round file's time, which a new run on the same rounds keeps. An open round 2 days old or more also says **Open 2+ days** there and, at the top of the round, that its questions may be out of date; its row in the inbox gets the same words, and its open row says how long. The row's time and order still follow the run's start. No file format changes.
