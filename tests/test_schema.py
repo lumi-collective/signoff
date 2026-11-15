@@ -1146,6 +1146,17 @@ class MarkdownEscape(unittest.TestCase):
                 for head in ("# T1", "## G1", "### 1. I1", "## F1"):
                     self.assertTrue(any(l.startswith(head) and "$x$" in l for l in lines), head)
                 self.assertTrue(any(l.startswith("- Choice:") and "L1" in l and "$x$" in l for l in lines))
+                item["attachments"] = [{"src": "A1" + br + "$x$.md", "caption": "C1" + br + "$x$"}]
+                item["commands"] = [{"text": "ls", "caption": "K1" + br + "$x$"}]
+                lines = signoff.answers_markdown(d, record).splitlines()
+                # The src and the caption each end on "$x$"; both must stay on the attachment's own line.
+                self.assertTrue(any(l.startswith("- Attachment:") and "C1" in l and "A1" in l and l.count("$x$") == 2
+                                    for l in lines), "attachment")
+                self.assertTrue(any(l.startswith("- Command (K1") and "$x$" in l for l in lines), "command")
+                private = {"answers": {item["id"]: {"choice": None, "private": True}},
+                           "free_text": "", "done": False, "saved": "2026-01-01T12:00:00Z"}
+                lines = signoff.answers_markdown(d, private, hide_private=True).splitlines()
+                self.assertTrue(any(l.startswith("### 1. I1") and "$x$" in l for l in lines), "private title")
 
     def test_no_control_or_format_character_survives(self):
         import unicodedata
