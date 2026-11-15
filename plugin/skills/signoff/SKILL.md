@@ -114,16 +114,16 @@ committed: `git check-ignore -q "<folder>"`. Exit 1 means it is not ignored: tel
 `<decisions folder>/` for the project's `.gitignore`; do not add it yourself. Any other non-zero exit: skip this.
 
 If the task's output says `no browser opened`, give the user its link (it works once).
-Then tell the user, in one or two lines, that the page is open and what it asks. Do not wait in a loop and do
-not poll the answers file: keep working on what does not depend on the answers, or end your turn. You are
-woken when Signoff exits.
+Then tell the user in a line or two that the page is open and what it asks. Do not wait in a loop or poll
+the answers file: work on what does not depend on the answers, or end your turn. You are woken when
+Signoff exits. Settled an item in chat meanwhile? Mark it: see [answers.md](answers.md).
 
 ## 3. Read the answers
 
 When the command ends, whatever its exit code, or fails to start, read [answers.md](answers.md) before you act.
 
-- `private: true`: the user marked the item Private. Use its comment, `other` text and mark comments to decide
-  and act, but follow the private-text rule below.
+- `private: true` (the user marked the item Private): use its texts to decide and act, under the private-text
+  rule below.
 
 ## Past decisions
 

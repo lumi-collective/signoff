@@ -25,6 +25,40 @@ write `py -3` for `python3`.
 With `--history`, stdout stays empty: 2 after the idle timeout, 130 after Ctrl+C, 1 for a bad root or a start
 link used twice.
 
+## An item settled in chat
+
+```
+python3 -I plugin/signoff/signoff.py elsewhere <round file> <item id> [<note>]
+```
+
+While a run waits, an item you and the agent settled in chat can be marked without a restart: the item gets
+`source: "elsewhere"`, no choice, and the note (one line of at most 500 characters, with no control, invisible or
+line-separator character) as its comment, and the round must be accepted again, as after any change. The page
+then shows the item as **Decided elsewhere** with the note, keeps it through your other saves and **Accept all**,
+and makes it yours again once you pick one of its options or type in it. It never marks an item that already holds
+your own answer: a choice, a comment, Other text, marks or Private.
+
+It writes the way the round's own writer does:
+
+- No inbox has run on this machine (no `inbox.lock`, see below): there are no round locks, and it writes the
+  answers file itself. It checks the file has not changed since it read it, once at the start of the write and
+  once more just before the rename, and starts over when it has (three tries). A save from the page between that
+  last check and the rename is still lost, a Done too: the run then exits 0 while the file says `done: false`.
+  This is the best effort every outside writer gets before the inbox.
+- An inbox has run, and nothing holds the round's lock: it holds the lock for the write only.
+- The inbox runs and holds the round's lock (a waiting run): it asks the inbox on its control socket, and the inbox
+  writes the mark as it writes a save from its page.
+- A page run holds the round's lock (it started before the inbox, or no inbox runs now): exit 1, nothing written.
+  Ask the user to answer on that page.
+
+The run, or the inbox, shows the mark within a few seconds; a tab that saved before must reload. It prints nothing
+on stdout and exits 0 once written (or when the item already has that mark and note), else 1 with one line on
+stderr: an invalid round or answers file, an unknown item, a round already done, a bad note, your own answer on the
+item, a page run holding the round, an inbox that refused it or did not answer, an answers file that kept changing,
+or a write that failed. An inbox from before this command answers with an error: the line says to restart it
+(`signoff inbox stop`, then `signoff inbox open`) and run the command again. Restart a run an older Signoff started
+before you use it too: that run refuses the new `source`.
+
 ## Notes folder
 
 The plugin's Notes folder setting (`/config`; empty by default) is passed as `--notes`: the skill has the agent add

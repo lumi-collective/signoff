@@ -529,6 +529,43 @@ class Exits(unittest.TestCase):
         self.assertEqual(page["rounds"][0]["decisions"]["items"][0]["commands"], commands)
         self.assertNotIn(b"<b>x</b>", body)  # inside the data block it is escaped, never markup
 
+    def test_an_item_marked_elsewhere_reaches_the_page_and_the_answers(self):
+        # <command> elsewhere <round file> <item id> <note> while a plain run waits (no inbox has run): the command
+        # writes the answers file itself, best effort, and the run takes it in as any outside write.
+        folder = Folder()
+        self.addCleanup(folder.cleanup)
+        run = Run(folder.target)
+        self.addCleanup(run.stop)
+        page = run.open()
+        layout = {"choice": "two", "comment": "", "source": "user"}
+        self.assertEqual(run.save(0, {"answers": {"layout": layout}, "free_text": "", "done": False, "rev": 0})[0]
+                         .status, 200)
+        mark = subprocess.run(COMMAND + ["elsewhere", str(folder.target), "filters", "settled in chat"],
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True,
+                              encoding="utf-8", timeout=30)
+        self.assertEqual((mark.returncode, mark.stdout, mark.stderr), (0, "", ""))
+        self.assertEqual(run.save(0, {"answers": {}, "free_text": "", "done": False, "rev": 1})[0].status, 409)
+        marked = {"choice": [], "comment": "settled in chat", "source": "elsewhere"}
+        deadline = time.monotonic() + 10
+        while True:  # the run takes the file in within about a second
+            resp, body = run.request("GET", page)
+            data = json.loads(re.search(r'id="signoff-data">(.*?)</script>', body.decode("utf-8"), re.S).group(1))
+            if data["rounds"][0]["rev"] == 2:
+                break
+            self.assertLess(time.monotonic(), deadline)
+            time.sleep(0.3)
+        self.assertEqual(data["rounds"][0]["answers"]["answers"]["filters"], marked)
+        other = dict(layout, choice="one")
+        self.assertEqual(run.save(0, {"answers": {"layout": other, "filters": marked}, "free_text": "", "done": False,
+                                      "rev": 2})[0].status, 200)
+        self.assertEqual(json.loads(folder.answers.read_text(encoding="utf-8"))["answers"]["filters"], marked)
+        self.assertEqual(run.save(0, {"answers": {"layout": other, "filters": marked}, "free_text": "", "done": True,
+                                      "rev": 3})[0].status, 200)
+        out, err = run.finish()
+        self.assertEqual((run.proc.returncode, out), (0, "%s\n" % folder.answers), err)
+        saved = json.loads(folder.answers.read_text(encoding="utf-8"))
+        self.assertEqual((saved["done"], saved["answers"]["filters"]), (True, marked))
+
     def test_idle_timeout_exits_2(self):
         for saved in (False, True):
             with self.subTest(saved=saved):
@@ -1432,6 +1469,231 @@ class InboxWaiter(unittest.TestCase):
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         finally:
             os.close(fd)
+
+
+MARKED_ROUND = {"version": 1, "title": "Settled in chat", "items": [
+    {"id": i, "title": "Question " + i, "select": "one", "recommended": "a",
+     "options": [{"id": "a", "label": "A"}, {"id": "b", "label": "B"}]} for i in ("q", "r")]}
+REFUSALS = ("gone", "done", "changed", "held", "failed", "answered")
+
+
+@unittest.skipIf(sys.platform == "win32", "the inbox's control socket is a Unix socket; no inbox on Windows yet")
+class Elsewhere(unittest.TestCase):
+    """<command> elsewhere <round file> <item id> [<note>] once an inbox has run: with a live inbox holding the round
+    lock, the `elsewhere` op on its control socket, which writes through the run's own writer; with a page run
+    holding it, exit 1. A page Done and a mark at the same moment never end with a run's exit 0 over an answers file
+    that says done: false: one of them wins, the other is refused, and nothing the winner wrote is lost."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.base = os.path.realpath(tmp.name)
+        self.home = os.path.join(self.base, "home")
+        os.makedirs(self.home, mode=0o700)
+        self.env = dict(os.environ, SIGNOFF_INBOX_HOME=self.home)
+        self.topics = 0
+
+    def child(self, *args):
+        proc = subprocess.Popen(COMMAND + list(args), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                universal_newlines=True, encoding="utf-8", errors="replace", env=self.env)
+
+        def stop():
+            if proc.poll() is None:
+                proc.kill()
+            proc.communicate()
+        self.addCleanup(stop)
+        return proc
+
+    def topic(self, answers=None):
+        self.topics += 1
+        folder = os.path.join(self.base, "topic-%d" % self.topics)
+        os.makedirs(folder)
+        with open(os.path.join(folder, "round-01.json"), "w", encoding="utf-8") as f:
+            json.dump(MARKED_ROUND, f)
+        if answers is not None:
+            with open(os.path.join(folder, "round-01.answers.json"), "w", encoding="utf-8") as f:
+                json.dump({"version": 1, "done": False, "saved": "2026-01-01T12:00:00Z", "answers": answers,
+                           "free_text": ""}, f)
+        return folder
+
+    def files(self, folder):
+        found = {}
+        for n in sorted(os.listdir(folder)):
+            with open(os.path.join(folder, n), "rb") as f:
+                found[n] = f.read()
+        return found
+
+    def saved(self, folder):
+        with open(os.path.join(folder, "round-01.answers.json"), encoding="utf-8") as f:
+            return json.load(f)
+
+    def mark(self, folder, item, *note):
+        return subprocess.run(COMMAND + ["elsewhere", os.path.join(folder, "round-01.json"), item] + list(note),
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True,
+                              encoding="utf-8", errors="replace", env=self.env, timeout=30)
+
+    def ask(self, request):
+        with socket.socket(socket.AF_UNIX) as s:
+            s.settimeout(10)
+            s.connect(os.path.join(self.home, "inbox.sock"))
+            s.sendall(json.dumps(request).encode("utf-8") + b"\n")
+            return json.loads(s.makefile("rb").readline())
+
+    def inbox(self):
+        proc = self.child("inbox", "serve")
+        deadline = time.monotonic() + 30
+        while True:
+            try:
+                link = self.ask({"op": "open"})["link"]
+                break
+            except OSError:
+                self.assertIsNone(proc.poll(), "the inbox did not start")
+                self.assertLess(time.monotonic(), deadline, "the inbox did not start")
+                time.sleep(0.1)
+        found = LINK.search(link)
+        self.web = Run.__new__(Run)  # only its plain HTTP
+        self.web.host, self.web.port = "127.0.0.1:%s" % found.group(3), int(found.group(3))
+        self.origin = found.group(1)
+        resp, _ = self.web.request("GET", found.group(4))
+        self.assertEqual(resp.status, 303)
+        self.page = resp.getheader("Location")
+        return proc
+
+    def held(self, folder):
+        import fcntl
+        fd = os.open(os.path.join(folder, "round-01.json.lock"), os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return True
+        finally:
+            os.close(fd)  # closing lets go of a lock this test took
+        return False
+
+    def waiter(self, folder):
+        """A run while the inbox lives, once the inbox took its round in (it holds the round's lock)."""
+        proc = self.child(folder, "--no-open")
+        deadline = time.monotonic() + 30
+        while not self.held(folder):
+            self.assertIsNone(proc.poll(), proc.poll() is not None and proc.communicate())
+            self.assertLess(time.monotonic(), deadline, "the inbox did not take the round in")
+            time.sleep(0.1)
+        return proc
+
+    def rev(self, run):
+        resp, body = self.web.request("GET", "%srun/%d/" % (self.page, run))
+        self.assertEqual(resp.status, 200)
+        return json.loads(re.search(r'id="signoff-data">(.*?)</script>', body.decode("utf-8"), re.S)
+                          .group(1))["rounds"][0]["rev"]
+
+    def done(self, run, rev, out, answers=None):
+        resp, _ = self.web.request("POST", "%srun/%d/save/0" % (self.page, run), {"answers": answers or {},
+                                   "free_text": "", "done": True, "rev": rev},
+                                   {"Content-Type": "application/json", "Origin": self.origin})
+        out.append(resp.status)
+
+    def refused(self, folder, item, *note, words=()):
+        before = self.files(folder)
+        mark = self.mark(folder, item, *note)
+        self.assertEqual((mark.returncode, mark.stdout, mark.stderr.count("\n")), (1, "", 1), mark.stderr)
+        self.assertTrue(mark.stderr.startswith("signoff: "), mark.stderr)
+        for w in words:
+            self.assertIn(w, mark.stderr)
+        self.assertEqual(self.files(folder), before)
+
+    def test_the_op_its_refusals_and_the_commands(self):
+        self.inbox()
+        folder = self.topic({"r": {"choice": "b", "comment": "", "source": "user"}})
+        proc = self.waiter(folder)
+        round_file = os.path.join(folder, "round-01.json")
+        good = {"op": "elsewhere", "round": round_file, "item": "q", "note": "n"}
+        before = self.files(folder)
+        for req in (dict(good, round="round-01.json"), dict(good, item=["q"]), dict(good, note="a\nb"),
+                    dict(good, note="x" * 501), dict(good, more=True), {"op": "elsewhere"}):
+            reply = self.ask(req)
+            self.assertEqual(sorted(reply), ["error"], req)
+            self.assertNotIn(reply["error"], REFUSALS, req)
+        self.assertEqual(self.ask(dict(good, round=os.path.join(folder, "round-02.json"))), {"error": "gone"})
+        self.assertEqual(self.ask(dict(good, item="r")), {"error": "answered"})  # the user's own answer stays
+        self.assertEqual(self.files(folder), before)
+        self.refused(folder, "nope", "n", words=("nope",))
+        self.refused(folder, "q", "two\nlines", words=("note",))
+        self.refused(folder, "r", "n", words=("user",))
+        rev = self.rev(0)
+        mark = self.mark(folder, "q", "settled in chat")
+        self.assertEqual((mark.returncode, mark.stdout, mark.stderr), (0, "", ""))
+        self.assertEqual(self.saved(folder)["answers"]["q"], {"choice": None, "comment": "settled in chat",
+                                                              "source": "elsewhere"})
+        self.assertTrue(self.held(folder))  # written by the inbox, which holds the lock still
+        self.assertEqual(self.rev(0), rev + 1)
+        self.assertEqual(self.ask(dict(good, note="settled in chat")), {"ok": True})  # marked so already
+        status = []
+        self.done(0, rev + 1, status, self.saved(folder)["answers"])  # the reloaded page sends the mark back
+        self.assertEqual(status, [200])
+        out, err = proc.communicate(timeout=30)
+        self.assertEqual((proc.returncode, out), (0, os.path.join(folder, "round-01.answers.json") + "\n"), err)
+        saved = self.saved(folder)
+        self.assertEqual((saved["done"], saved["answers"]["q"]["source"]), (True, "elsewhere"))
+        self.refused(folder, "q", "late", words=("done",))
+
+    def test_a_page_done_and_a_mark_at_once_through_the_inbox(self):
+        self.inbox()
+        warm = self.topic()
+        self.waiter(warm)
+        began = time.monotonic()
+        self.assertEqual(self.mark(warm, "q", "n").returncode, 0)
+        took = time.monotonic() - began  # how long a mark takes to land: the Done is sent around that time
+        outcomes = set()
+        for run, share in enumerate((0.0, 0.6, 0.85, 0.95, 1.05, 1.2, 1.6), 1):
+            folder = self.topic()
+            proc = self.waiter(folder)
+            rev, status = self.rev(run), []
+            page = threading.Timer(took * share, self.done, (run, rev, status))
+            page.start()
+            mark = self.mark(folder, "q", "settled in chat")
+            page.join(30)
+            self.assertEqual(mark.stdout, "")
+            if status == [200]:  # the Done first: final, so the mark is refused and the run hands the answers over
+                self.assertEqual(mark.returncode, 1, mark.stderr)
+                out, err = proc.communicate(timeout=30)
+                self.assertEqual((proc.returncode, out), (0, os.path.join(folder, "round-01.answers.json") + "\n"),
+                                 err)
+                self.assertEqual((self.saved(folder)["done"], self.saved(folder)["answers"]), (True, {}))
+            else:  # the mark first: the page's rev is stale, and the run waits on
+                self.assertEqual((status, mark.returncode), ([409], 0), mark.stderr)
+                saved = self.saved(folder)
+                self.assertEqual((saved["done"], saved["answers"]["q"]["source"]), (False, "elsewhere"))
+                time.sleep(1.5)
+                self.assertIsNone(proc.poll(), "a run must not end while its round is open")
+            outcomes.add(status[0])
+        self.assertTrue(outcomes)
+
+    def test_a_page_done_and_a_mark_at_once_beside_a_page_run(self):
+        # An inbox has run (inbox.lock), none runs now: the page run holds the round lock, so the mark is refused.
+        with open(os.path.join(self.home, "inbox.lock"), "w"):
+            pass
+        for delay in (0.0, 0.05, 0.2):
+            folder = self.topic()
+            saved_env = os.environ.get("SIGNOFF_INBOX_HOME")
+            os.environ["SIGNOFF_INBOX_HOME"] = self.home
+            try:
+                run = Run(os.path.join(folder, "round-01.json"))
+            finally:
+                os.environ["SIGNOFF_INBOX_HOME"] = saved_env
+            self.addCleanup(run.stop)
+            run.open()
+            status = []
+            page = threading.Timer(delay, lambda: status.append(run.save(0, {"answers": {}, "free_text": "",
+                                                                               "done": True, "rev": 0})[0].status))
+            page.start()
+            mark = self.mark(folder, "q", "n")
+            page.join(30)
+            self.assertEqual((mark.returncode, mark.stdout, mark.stderr.count("\n")), (1, "", 1), mark.stderr)
+            self.assertEqual(status, [200])
+            out, err = run.finish()
+            self.assertEqual((run.proc.returncode, out), (0, os.path.join(folder, "round-01.answers.json") + "\n"),
+                             err)
+            self.assertEqual((self.saved(folder)["done"], self.saved(folder)["answers"]), (True, {}))
 
 
 if __name__ == "__main__":

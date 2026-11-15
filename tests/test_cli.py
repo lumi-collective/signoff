@@ -1,4 +1,5 @@
 """The command line, run as a real process: exit codes, stdout, the .gitignore."""
+import errno
 import hashlib
 import io
 import json
@@ -836,9 +837,8 @@ class CliInbox(unittest.TestCase):
         finally:
             os.chmod(str(self.home / "runs"), 0o700)  # before tearDown removes the home
 
-    @unittest.skipIf(sys.platform == "win32", "the inbox does not run on Windows")
-    def test_a_waiter_on_a_real_0_4_0_inbox_that_refuses_its_round_exits_1(self):
-        # The inbox the user started before updating keeps running: 0.4.0's own code, from git, refuses `commands`.
+    def real_0_4_0_inbox(self):
+        """0.4.0's own inbox, from git, started in this home: the one the user started before updating."""
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         old = Path(tmp.name)
@@ -851,9 +851,6 @@ class CliInbox(unittest.TestCase):
             if found is None or found.returncode:
                 self.skipTest("needs git and the v0.4.0 tag (a shallow clone has neither)")
             (old / name).write_bytes(found.stdout)
-        data = json.loads(self.rounds.round(1).read_text(encoding="utf-8"))
-        data["items"][1]["commands"] = [{"text": "ls -l"}]
-        self.rounds.write(1, data)
         inbox = track(subprocess.Popen([sys.executable, "-I", "-B", str(old / "signoff.py"), "inbox", "serve"],
                                        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, universal_newlines=True,
                                        encoding="utf-8", env=self.env))
@@ -862,10 +859,46 @@ class CliInbox(unittest.TestCase):
             self.assertIsNone(inbox.poll(), "the 0.4.0 inbox did not start")
             self.assertLess(time.monotonic(), deadline, "the 0.4.0 inbox did not start")
             time.sleep(0.1)
+        return inbox
+
+    @unittest.skipIf(sys.platform == "win32", "the inbox does not run on Windows")
+    def test_a_waiter_on_a_real_0_4_0_inbox_that_refuses_its_round_exits_1(self):
+        # The inbox the user started before updating keeps running: 0.4.0's own code refuses `commands`.
+        data = json.loads(self.rounds.round(1).read_text(encoding="utf-8"))
+        data["items"][1]["commands"] = [{"text": "ls -l"}]
+        self.rounds.write(1, data)
+        inbox = self.real_0_4_0_inbox()
         began = time.monotonic()
         self.refused(self.start(), began)
         signoff.inbox_request(self.home, "stop")
         self.assertIn("unknown key 'commands'", inbox.communicate(timeout=20)[1])
+
+    @unittest.skipIf(sys.platform == "win32", "the inbox does not run on Windows")
+    def test_a_mark_on_a_round_a_real_0_4_0_inbox_holds_exits_1_and_writes_nothing(self):
+        # 0.4.0 takes the round in and holds its lock, but has no elsewhere op: it answers with an error.
+        inbox = self.real_0_4_0_inbox()
+        proc = self.start()
+        lock = self.rounds.path / "round-01.json.lock"
+
+        def free():
+            fd = signoff.try_lock(lock, create=False) if lock.exists() else -1
+            if fd is not None and fd >= 0:
+                signoff.unlock(fd)
+            return fd is not None
+        deadline = time.monotonic() + 30
+        while free():
+            self.assertIsNone(proc.poll(), "the waiter ended")
+            self.assertLess(time.monotonic(), deadline, "the 0.4.0 inbox did not take the round in")
+            time.sleep(0.2)
+        before = {p.name: p.read_bytes() for p in self.rounds.path.iterdir() if p.is_file()}
+        mark = subprocess.run([sys.executable, "-I", "-B", SCRIPT, "elsewhere", str(self.rounds.round(1)),
+                               "layout", "n"], capture_output=True, universal_newlines=True, encoding="utf-8",
+                              env=self.env, timeout=30)
+        self.assertEqual((mark.returncode, mark.stdout, mark.stderr.count("\n")), (1, "", 1), mark.stderr)
+        self.assertIn("signoff inbox stop, then signoff inbox open", mark.stderr)
+        self.assertEqual({p.name: p.read_bytes() for p in self.rounds.path.iterdir() if p.is_file()}, before)
+        signoff.inbox_request(self.home, "stop")
+        inbox.communicate(timeout=20)
 
     def test_the_lock_never_meets_a_lock_file_of_another_tool(self):
         # A decisions file named yarn.json sits beside yarn.lock: the round's lock is yarn.json.lock.
@@ -1225,6 +1258,346 @@ class Launcher(unittest.TestCase):
                     self.assertTrue(args[2].endswith("signoff.py"), args)
 
 
+def marking_decisions():
+    """sample_decisions with an item for each kind of the user's own text: Other, marks, Skip, a number."""
+    data = sample_decisions()
+    two = [{"id": "a", "label": "A"}, {"id": "b", "label": "B"}]
+    data["items"] += [
+        {"id": "other", "title": "Other?", "options": two, "other": True},
+        {"id": "pic", "title": "Point at it", "images": [{"src": "mockups/a.png"}], "marks": True, "options": two},
+        {"id": "skip", "title": "Skip?", "options": two, "skippable": True},
+        {"id": "num", "title": "How many?", "select": "number", "range": {"min": 0, "max": 10}, "recommended": 3},
+    ]
+    return data
+
+
+class CliElsewhere(unittest.TestCase):
+    """signoff elsewhere <round file> <item id> [<note>]: the agent marks one item as settled in chat while the run
+    waits. Without inbox.lock it writes the answers file itself, best effort; with it, it holds the round lock for
+    the write, or asks the inbox that holds it, or refuses when a page run does. It never writes over the user's
+    own answer, and a mark resets the round's acceptance as a page change does."""
+
+    def setUp(self):
+        self.folder = Folder(marking_decisions())
+        self.md = self.folder.path / "decisions.answers.md"
+        self.lock = self.folder.path / "decisions.json.lock"
+        self._tmp = tempfile.TemporaryDirectory()
+        self.home = Path(self._tmp.name).resolve()  # no inbox.lock unless a test writes one
+        self.held = []
+
+    def tearDown(self):
+        stop_all()
+        while self.held:
+            signoff.unlock(self.held.pop())
+        self.folder.cleanup()
+        self._tmp.cleanup()
+
+    def mark(self, *args):
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(sys, "stdout", out), mock.patch.object(sys, "stderr", err), \
+                mock.patch.dict(os.environ, SIGNOFF_INBOX_HOME=str(self.home)):
+            code = signoff.main(["elsewhere"] + [str(a) for a in args])
+        return code, out.getvalue(), err.getvalue()
+
+    def saved(self):
+        return json.loads(self.folder.answers.read_text(encoding="utf-8"))
+
+    def files(self, folder):
+        return {p.name: p.read_bytes() for p in folder.path.iterdir() if p.is_file()}
+
+    def refused(self, args, folder=None, words=()):
+        folder = folder or self.folder
+        before = self.files(folder)
+        code, out, err = self.mark(*args)
+        self.assertEqual((code, out), (1, ""), err)
+        self.assertEqual(err.count("\n"), 1, err)
+        self.assertTrue(err.startswith("signoff: "), err)
+        self.assertNotIn("Traceback", err)
+        for w in words:
+            self.assertIn(w, err)
+        self.assertEqual(self.files(folder), before)
+        return err
+
+    def test_it_marks_the_item_resets_acceptance_and_prints_nothing(self):
+        write_outside(self.folder.answers, {"version": 1, "done": False, "saved": "2026-01-01T12:00:00Z",
+                                            "accepted": True, "accepted_at": "2026-01-01T12:00:00Z",
+                                            "answers": {"layout": {"choice": "two", "comment": "mine",
+                                                                   "source": "user"}},
+                                            "free_text": "kept"})
+        order = []
+        real = signoff.write_atomic
+        with mock.patch.object(signoff, "write_atomic",
+                               side_effect=lambda p, d, **kw: (order.append(p.name), real(p, d, **kw))[1]):
+            code, out, err = self.mark(self.folder.decisions, "filters", "settled in chat")
+        self.assertEqual((code, out, err), (0, "", ""))
+        self.assertEqual(order, ["decisions.answers.md", "decisions.answers.json"])  # the JSON goes last
+        saved = self.saved()
+        self.assertEqual(saved["answers"]["filters"], {"choice": [], "comment": "settled in chat",
+                                                       "source": "elsewhere"})
+        self.assertEqual(saved["answers"]["layout"], {"choice": "two", "comment": "mine", "source": "user"})
+        # A change after Accept undoes it, as on the page: the user accepts the round again.
+        self.assertEqual((saved["version"], saved["done"], saved["free_text"], saved["accepted"],
+                          saved["changed_after_accept"]), (1, False, "kept", False, True))
+        self.assertNotIn("accepted_at", saved)
+        sha = hashlib.sha256(self.folder.decisions.read_bytes()).hexdigest()
+        self.assertEqual(saved["decisions"], {"file": "decisions.json", "sha256": sha})
+        signoff.check_answers(saved, signoff.load_decisions(self.folder.decisions)[0], stored=True)
+        self.assertIn("- Source: decided elsewhere, marked by the agent\n- Comment: settled in chat",
+                      self.md.read_text(encoding="utf-8"))
+        self.assertTrue((self.folder.path / ".gitignore").is_file())  # as a run writes it
+        self.assertFalse(self.lock.exists())  # no inbox has run: no lock file either
+
+    def test_without_a_note_and_without_an_answers_file(self):
+        for item, choice in (("layout", None), ("num", None)):
+            self.assertEqual(self.mark(self.folder.decisions, item), (0, "", ""))
+            self.assertEqual(self.saved()["answers"][item], {"choice": choice, "comment": "", "source": "elsewhere"})
+        self.assertEqual((self.saved()["free_text"], self.saved()["done"], self.saved()["accepted"]),
+                         ("", False, False))
+
+    def test_the_same_mark_again_writes_nothing_and_a_new_note_replaces_it(self):
+        self.assertEqual(self.mark(self.folder.decisions, "layout", "x")[0], 0)
+        before = self.files(self.folder)
+        with mock.patch.object(signoff, "write_atomic") as write:
+            self.assertEqual(self.mark(self.folder.decisions, "layout", "x"), (0, "", ""))
+        write.assert_not_called()
+        self.assertEqual(self.files(self.folder), before)
+        self.assertEqual(self.mark(self.folder.decisions, "layout", "another note")[0], 0)
+        self.assertEqual(self.saved()["answers"]["layout"]["comment"], "another note")
+
+    def test_the_note_is_one_plain_line_up_to_the_cap(self):
+        self.assertEqual(self.mark(self.folder.decisions, "layout", "x" * signoff.MAX_NOTE)[0], 0)
+        self.assertEqual(self.mark(self.folder.decisions, "layout", "\U0001F600" * signoff.MAX_NOTE)[0], 0)
+        for label, note in (("too long", "x" * (signoff.MAX_NOTE + 1)), ("a line break", "two\nlines"),
+                            ("a tab", "a\tb"), ("a line separator", "one two"), ("a next line", "one\x85two"),
+                            ("an escape", "red\x1b[31m"), ("a lone surrogate", "x\udcff"),
+                            ("a zero-width space", "a​b"), ("a bidi override", "a‮b")):
+            with self.subTest(label):
+                self.refused([self.folder.decisions, "layout", note], words=("note",))
+
+    def test_each_refusal_is_exit_1_with_one_line_and_writes_nothing(self):
+        bad = Folder()
+        self.addCleanup(bad.cleanup)
+        data = sample_decisions()
+        data["items"][0]["recommended"] = "three"
+        bad.write(data)
+        broken = Folder()
+        self.addCleanup(broken.cleanup)
+        broken.answers.write_text('{"version": 1, "answers": {"nope": {}}}', encoding="utf-8")
+        done = Folder()
+        self.addCleanup(done.cleanup)
+        done.answers.write_text(json.dumps(done_record()), encoding="utf-8")
+        cases = [
+            ("an invalid round file", bad, [bad.decisions, "layout"]),
+            ("a missing round file", self.folder, [self.folder.path / "nope.json", "layout"]),
+            ("a folder", self.folder, [self.folder.path, "layout"]),
+            ("an answers file that cannot be checked", broken, [broken.decisions, "layout"]),
+            ("an unknown item", self.folder, [self.folder.decisions, "nope"]),
+            ("a done round", done, [done.decisions, "layout"]),
+        ]
+        for label, folder, args in cases:
+            with self.subTest(label):
+                self.refused(args, folder)
+
+    def test_the_users_own_answer_is_never_overwritten(self):
+        theirs = [
+            ("a choice", "layout", {"choice": "one", "comment": "", "source": "user"}),
+            ("an Accept all", "layout", {"choice": "two", "comment": "", "source": "accept_all"}),
+            ("an accept from a notification", "layout", {"choice": "two", "comment": "", "source": "notification"}),
+            ("a choice with no source", "layout", {"choice": "two", "comment": ""}),
+            ("a comment on the recommendation", "layout", {"choice": "two", "comment": "mine",
+                                                            "source": "recommended"}),
+            ("Private on the recommendation", "layout", {"choice": "two", "comment": "", "source": "recommended",
+                                                          "private": True}),
+            ("Other text", "other", {"choice": "_other", "other": "mine", "comment": "", "source": "user"}),
+            ("a mark", "pic", {"choice": None, "comment": "", "source": "user",
+                               "marks": [{"image": 0, "box": [1, 1, 10, 10], "comment": ""}]}),
+            ("a skip", "skip", {"choice": "_skip", "comment": "", "source": "user"}),
+            ("a number, 0 too", "num", {"choice": 0, "comment": "", "source": "user"}),
+            ("a mark of the agent's the user made Private", "layout", {"choice": None, "comment": "n",
+                                                                       "source": "elsewhere", "private": True}),
+        ]
+        for label, item, answer in theirs:
+            with self.subTest(label):
+                write_outside(self.folder.answers, {"version": 1, "done": False, "saved": "2026-01-01T12:00:00Z",
+                                                    "answers": {item: answer}, "free_text": ""})
+                self.refused([self.folder.decisions, item, "n"], words=("user",))
+        ours = [
+            ("the recommendation untouched", "layout", {"choice": "two", "comment": "", "source": "recommended"}),
+            ("nothing picked", "other", {"choice": None, "comment": "", "source": "user"}),
+            ("an empty pick", "filters", {"choice": [], "comment": "", "source": "user"}),
+            ("the agent's own mark", "layout", {"choice": None, "comment": "old", "source": "elsewhere"}),
+        ]
+        for label, item, answer in ours:
+            with self.subTest(label):
+                write_outside(self.folder.answers, {"version": 1, "done": False, "saved": "2026-01-01T12:00:00Z",
+                                                    "answers": {item: answer}, "free_text": ""})
+                self.assertEqual(self.mark(self.folder.decisions, item, "n"), (0, "", ""))
+                self.assertEqual(self.saved()["answers"][item]["source"], "elsewhere")
+
+    def test_a_file_changed_before_the_rename_is_read_again(self):
+        # The temp file is written and synced, then the file is hashed again, then renamed: a write landing before
+        # that look makes it start over, three tries in all.
+        real, changes = signoff.write_atomic, []
+
+        def write(path, data, times, unchanged=None):
+            if unchanged is None:
+                return real(path, data)
+
+            def look():
+                if len(changes) < times:  # another writer, after the temp file and before the rename
+                    changes.append(path)
+                    real(self.folder.answers, json.dumps({"version": 1, "done": False, "saved":
+                                                          "2026-01-01T12:00:0%dZ" % len(changes), "answers": {},
+                                                          "free_text": "theirs"}))
+                return unchanged()
+            return real(path, data, unchanged=look)
+        with mock.patch.object(signoff, "write_atomic", side_effect=lambda p, d, **kw: write(p, d, 2, **kw)):
+            code, out, err = self.mark(self.folder.decisions, "layout", "n")
+        self.assertEqual((code, out, err), (0, "", ""))
+        self.assertEqual(len(changes), 2)
+        self.assertEqual((self.saved()["free_text"], self.saved()["answers"]["layout"]["source"]),
+                         ("theirs", "elsewhere"))  # built on what the other writer wrote
+        changes.clear()
+        with mock.patch.object(signoff, "write_atomic", side_effect=lambda p, d, **kw: write(p, d, 3, **kw)):
+            code, out, err = self.mark(self.folder.decisions, "filters", "n")
+        self.assertEqual((code, out, err.count("\n")), (1, "", 1), err)
+        self.assertIn("kept changing", err)
+        self.assertNotIn("filters", self.saved()["answers"])  # the other writer's last file stays
+        self.assertEqual([p.name for p in self.folder.path.iterdir() if p.name.startswith(".tmp-")], [])
+
+    def test_write_atomic_syncs_before_its_look_and_a_changed_file_is_left_alone(self):
+        target = self.folder.path / "x.answers.json"
+        target.write_bytes(b"before")
+        calls = []
+        real_fsync = os.fsync
+        with mock.patch.object(signoff.os, "fsync", side_effect=lambda fd: (calls.append("fsync"), real_fsync(fd))):
+            self.assertFalse(signoff.write_atomic(target, b"new", unchanged=lambda: calls.append("look") and False))
+            self.assertEqual((calls, target.read_bytes()), (["fsync", "look"], b"before"))
+            self.assertTrue(signoff.write_atomic(target, b"new", unchanged=lambda: True))
+        self.assertEqual(target.read_bytes(), b"new")
+        self.assertEqual([p.name for p in self.folder.path.iterdir() if p.name.startswith(".tmp-")], [])
+
+    def test_a_write_that_fails_is_exit_1_with_one_line(self):
+        with mock.patch.object(signoff, "write_atomic", side_effect=PermissionError(13, "Permission denied")):
+            code, out, err = self.mark(self.folder.decisions, "layout")
+        self.assertEqual((code, out, err.count("\n")), (1, "", 1), err)
+        self.assertIn("cannot write", err)
+        self.assertFalse(self.folder.answers.exists())
+
+    def test_a_round_that_became_done_meanwhile_is_left_alone(self):
+        real = signoff.write_atomic
+
+        def write(path, data, **kw):
+            real(path, data, **kw)
+            if path.suffix == ".md":
+                real(self.folder.answers, json.dumps(done_record()))
+        with mock.patch.object(signoff, "write_atomic", side_effect=write):
+            code, out, err = self.mark(self.folder.decisions, "layout")
+        self.assertEqual((code, out, err.count("\n")), (1, "", 1), err)
+        self.assertIn("done", err)
+        self.assertTrue(self.saved()["done"])
+        self.assertEqual(self.saved()["answers"], {})
+
+    def test_a_running_page_takes_the_mark_in(self):
+        proc = start(self.folder)
+        url = url_of(proc)
+        self.assertEqual(post(url, {"answers": {"layout": {"choice": "one", "comment": "", "source": "user"}},
+                                    "free_text": "", "done": False, "rev": 0}), 200)
+        done = subprocess.run([sys.executable, "-I", "-B", SCRIPT, "elsewhere", str(self.folder.decisions),
+                               "filters", "settled in chat"], capture_output=True, universal_newlines=True,
+                              encoding="utf-8", timeout=20)
+        self.assertEqual((done.returncode, done.stdout, done.stderr), (0, "", ""))
+        # The page that saved before the mark is stale: nothing it sends overwrites the mark.
+        self.assertEqual(post_status(url, {"answers": {}, "free_text": "stale", "done": False, "rev": 1}), 409)
+        self.assertEqual(self.saved()["answers"]["filters"]["source"], "elsewhere")
+        body = {"answers": {"layout": {"choice": "two", "comment": "", "source": "user"},
+                            "filters": {"choice": [], "comment": "settled in chat", "source": "elsewhere"}},
+                "free_text": "", "done": True, "rev": 2}
+        deadline = time.monotonic() + 10
+        while post_status(url, body) != 200:  # the run takes the file in within about a second: rev 2
+            self.assertLess(time.monotonic(), deadline)
+            time.sleep(0.3)
+        out, err = Cli.finish(self, proc)
+        self.assertEqual((proc.returncode, out), (0, str(self.folder.answers) + "\n"), err)
+        self.assertEqual(self.saved()["answers"]["filters"], {"choice": [], "comment": "settled in chat",
+                                                              "source": "elsewhere"})
+
+    def test_a_decisions_folder_named_elsewhere_still_runs(self):
+        rounds = Rounds(1)
+        self.addCleanup(rounds.cleanup)
+        target = rounds.path / "elsewhere"
+        (target / "mockups").mkdir(parents=True)
+        (target / "round-01.json").write_bytes(rounds.round(1).read_bytes())
+        (target / "mockups" / "a.png").write_bytes((rounds.path / "mockups" / "a.png").read_bytes())
+        for args in (["--no-open"], ["--no-open", "--timeout", "5"], ["--timeout", "5", "--no-open"]):
+            with self.subTest(args):
+                proc = track(subprocess.Popen([sys.executable, "-I", "-B", SCRIPT, "elsewhere"] + args,
+                                              cwd=str(rounds.path), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                              universal_newlines=True, encoding="utf-8"))
+                self.assertIn("http://127.0.0.1:", proc.stderr.readline())  # a run, not the command
+                stop_all()
+
+    # Once an inbox has run (inbox.lock in the home), the round lock decides who writes.
+
+    def test_with_the_home_and_a_free_lock_it_holds_the_lock_for_the_write_only(self):
+        (self.home / "inbox.lock").write_bytes(b"")
+        real, held = signoff.write_atomic, []
+
+        def write(path, data, **kw):
+            fd = signoff.try_lock(self.lock, create=False)  # taken by the command while it writes
+            held.append(fd is None)
+            if fd is not None:
+                signoff.unlock(fd)
+            return real(path, data, **kw)
+        with mock.patch.object(signoff, "write_atomic", side_effect=write):
+            self.assertEqual(self.mark(self.folder.decisions, "layout", "n"), (0, "", ""))
+        self.assertEqual(held, [True, True])
+        self.assertEqual(self.saved()["answers"]["layout"]["source"], "elsewhere")
+        fd = signoff.try_lock(self.lock, create=False)  # and let go after it
+        self.assertIsNotNone(fd)
+        signoff.unlock(fd)
+
+    def test_a_refusal_leaves_no_lock_file(self):
+        (self.home / "inbox.lock").write_bytes(b"")
+        self.refused([self.folder.decisions, "nope"])
+        self.assertFalse(self.lock.exists())
+
+    def test_a_lock_held_for_a_moment_is_waited_for(self):
+        # Another mark, or a waiter's look at whether the inbox took its rounds in, holds it briefly.
+        (self.home / "inbox.lock").write_bytes(b"")
+        fd = signoff.try_lock(self.lock)
+        timer = threading.Timer(0.2, signoff.unlock, (fd,))
+        timer.start()
+        self.addCleanup(timer.join)
+        self.assertEqual(self.mark(self.folder.decisions, "layout", "n"), (0, "", ""))
+        self.assertEqual(self.saved()["answers"]["layout"]["source"], "elsewhere")
+
+    def test_a_lock_held_by_a_page_run_is_exit_1_and_writes_nothing(self):
+        (self.home / "inbox.lock").write_bytes(b"")  # an inbox has run, and none runs now: the lock is a page run's
+        self.held.append(signoff.try_lock(self.lock))
+        err = self.refused([self.folder.decisions, "layout", "n"], words=("decisions.json",))
+        self.assertIn("run", err)
+        self.assertNotIn("inbox stop", err)
+
+    def test_a_page_run_that_holds_the_lock_keeps_its_done(self):
+        (self.home / "inbox.lock").write_bytes(b"")
+        proc = start(self.folder, env=dict(os.environ, SIGNOFF_INBOX_HOME=str(self.home)))
+        url = url_of(proc)
+        self.refused([self.folder.decisions, "layout", "n"])
+        self.assertEqual(post(url, {"answers": {}, "free_text": "", "done": True, "rev": 0}), 200)
+        out, err = Cli.finish(self, proc)
+        self.assertEqual((proc.returncode, out), (0, str(self.folder.answers) + "\n"), err)
+        self.assertTrue(self.saved()["done"])
+
+    def test_a_file_system_that_cannot_lock_writes_as_before_locks(self):
+        (self.home / "inbox.lock").write_bytes(b"")
+        with mock.patch.object(signoff, "try_lock", side_effect=OSError(errno.ENOLCK, "No locks available")):
+            code, out, err = self.mark(self.folder.decisions, "layout", "n")
+        self.assertEqual((code, out, err.count("\n")), (0, "", 1), err)
+        self.assertIn("without the lock", err)
+        self.assertEqual(self.saved()["answers"]["layout"]["source"], "elsewhere")
+
+
 class OldPython(unittest.TestCase):
     """On a Python older than 3.9 Signoff says so in one line, instead of failing somewhere later."""
 
@@ -1236,7 +1609,8 @@ class OldPython(unittest.TestCase):
         return code, out.getvalue(), err.getvalue()
 
     def test_a_run_says_which_python_it_needs(self):
-        for argv in (["somewhere"], ["--history", "."], ["inbox", "open"], ["inbox", "done", "0" * 16]):
+        for argv in (["somewhere"], ["--history", "."], ["inbox", "open"], ["inbox", "done", "0" * 16],
+                     ["elsewhere", "round-01.json", "q", "note"]):
             self.assertEqual(self.guarded(argv), (1, "", "signoff: needs Python 3.9 or newer; this is Python 3.8\n"),
                              argv)
 

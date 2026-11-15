@@ -33,7 +33,10 @@ web server on 127.0.0.1 only, on a free port, with a secret token, new for each 
 your default browser on a single-use start link. It stops when you press Done, when another program
 finishes its answers files with Done, when it sits idle too long, or when you stop it. While the Signoff
 inbox is open, it starts no server and opens no page: it waits, with no time limit, for the answers the inbox
-writes. The plugin also adds a signoff command that runs the same program. The agent asks a batch of up to four short
+writes. The plugin also adds a signoff command that runs the same program. While a run waits, the agent can
+mark one question you settled in chat as decided elsewhere: the mark and the agent's note go into the round's
+answers file through the round's own writer (the inbox, when it holds the round), never over your own answer,
+and the page shows it. The agent asks a batch of up to four short
 text-only questions, 2 to 4 options each, in the terminal instead of on a page; a bigger batch, or one with a
 picture, goes on the page. The Questions in chat setting in /config sets that number, from 0 (no batch in the
 terminal) to 4.

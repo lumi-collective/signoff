@@ -28,8 +28,12 @@ Beside each round, `round-NN.answers.json`, from the first change on the page:
   Neither can clash with an option id, which starts with a letter or digit. An answers file holding a number
   needs Signoff 0.5.0 or newer to be read.
 - `source`: `recommended` (the preselected recommendation, never touched), `accept_all` (set by **Accept all
-  recommendations**), `user`, or `notification` (the recommendation, accepted with Done through the inbox's
-  control socket, as a tap on a notification asks).
+  recommendations**), `user`, `notification` (the recommendation, accepted with Done through the inbox's
+  control socket, as a tap on a notification asks), or `elsewhere` (the agent marked the item settled in chat
+  with [`signoff elsewhere`](running.md#an-item-settled-in-chat): `choice` is `null`, or `[]` for `many`, and the
+  agent's note is the `comment`). A Signoff older than 0.5.0 refuses an answers file with `elsewhere` in it: it
+  cannot resume it, and a running one does not take it in and refuses saves. Restart a run an older plugin started,
+  and an older inbox (`signoff inbox stop`, then `signoff inbox open`), before the agent marks an item.
 - `marks`: your rectangles, `image` being the picture's position in the item's `images` (from 0) and `box` in
   percent like `boxes`.
 - `private`: `true` when you marked the item Private. Its comment, Other text and mark comments stay in this
@@ -39,8 +43,10 @@ Beside each round, `round-NN.answers.json`, from the first change on the page:
   again. The agent sees nothing of this until Done.
 - `decisions` names the round file the answers belong to and its SHA-256 when they were saved.
 
-Every save from the page also writes `round-NN.answers.md`, the same answers as Markdown for people, all text
-escaped; an answers file another program wrote has no fresh copy. A GFM viewer shows each text as written: none
+Every save from the page, and `signoff elsewhere`, also writes `round-NN.answers.md`, the same answers as Markdown
+for people, all text escaped; an answers file another program wrote has no fresh copy. The copy is written before
+the JSON, so a mark refused after it (the file changed meanwhile, three times) can leave a copy the JSON does not
+match until the next save. A GFM viewer shows each text as written: none
 of the GFM spec's formatting, HTML, character references (`&amp;`) or links from a bare URL, but for one: it
 still links an email address. No Markdown escape stops that, nor GitHub's own extensions (`$math$`, `:+1:`
 emoji, `@user` mentions). A control character (but tab), a format character (a bidi override, a zero-width mark,

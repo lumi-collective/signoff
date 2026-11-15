@@ -75,7 +75,8 @@ Instructions for coding agents working on Signoff. The README says what it does 
   `XDG_CONFIG_HOME` likewise, so no test reads or writes the user's Uptick files. `test_contract_http.py` checks
   the security and run contract against the command line as a separate process, over HTTP, its exit code and
   stdout only; `SIGNOFF_CONTRACT_CMD` (POSIX shell words: forward slashes in a Windows path) swaps in another
-  implementation. It must take the same arguments (`--no-open`, `--timeout`, `--history`), print its
+  implementation. It must take the same arguments (`--no-open`, `--timeout`, `--history`, and `elsewhere <round
+  file> <item id> [<note>]`), print its
   `http://` start link on stderr, and honour `SIGNOFF_INBOX_HOME` (and `XDG_CACHE_HOME`, `XDG_CONFIG_HOME` for
   Uptick's files). Its inbox must touch `inbox.lock` at each look, as the mod reads that time. It must be the
   server process itself (a
@@ -91,12 +92,18 @@ Instructions for coding agents working on Signoff. The README says what it does 
   list page and messages; its `InboxWaiter` class runs `<command> <folder>` as a waiter, once beside a stand-in
   inbox that holds `inbox.lock`, touches it and locks no round (exit 1, nothing on stdout, no lock file made), once
   beside one whose look locks the round 1.5 s after its touch (still waiting), and once beside `<command> inbox
-  serve` (still waiting after several looks, the round's lock held). `test_cli.py` runs a waiter against the real
+  serve` (still waiting after several looks, the round's lock held); its `Elsewhere` class runs `<command>
+  elsewhere` beside `<command> inbox serve` and a waiter (the `elsewhere` op and its refusals, on the socket and
+  through the command) and races a page Done against a mark, through the inbox and beside a page run that holds
+  the round lock: a run never exits 0 over an answers file that says `done: false`, and the loser is refused;
+  `Exits` marks an item beside a plain run. `test_cli.py` runs a waiter, and a mark, against the real
   0.4.0 inbox from `git show v0.4.0:` (skipped without the tag, as in a shallow clone), and its `WaiterVerdict`
   class steps the check poll by poll (rounds answered in the poll of the verdict, an inbox gone or started again
-  between the looks). `test_inbox.py` covers the
+  between the looks); its `CliElsewhere` class covers `signoff elsewhere` in each of its writer's cases, the user's
+  answer it never replaces, the note's checks and the hash before the rename. `test_inbox.py` covers the
   inbox in process: the `todo.md` reader and the `todo` key, the Markdown tree, routes, pairs, locks, the waiter it wakes, messages,
-  the OSV section, the theme it keeps, the answer from a notification, the panel's rows and their targets, and
+  the OSV section, the theme it keeps, the answer from a notification, the panel's rows and their targets, the
+  `elsewhere` op (its refusals, an old inbox, offer and rows with a mark, a round lock the command held), and
   `inbox open --app` with its app opener (`APP_OPEN`) swapped for a stand-in and its app folders (`APP_DIRS`)
   for temporary ones: no test runs the real `open` or finds an installed app.
   `test_hooks.py` covers the hooks, the SessionStart hand-over, the monitor, `inbox done` and `hook.sh`.
@@ -183,7 +190,8 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   socket, 0600, in the 0700 home; one JSON line in (`{"op": "open"}`, `{"op": "stop"}`, `{"op": "offer"}`,
   `{"op": "accept", "offer": <id>}`, `{"op": "open", "offer": <id>}`, `{"op": "rows", "project": <id>}`,
   `{"op": "open", "run": <n>, "round": <n>, "item": <n>, "inbox": <n>}`, the same four with `"op": "app_target"`,
-  or `{"op": "app_open"}`; at
+  `{"op": "app_open"}`, or `{"op": "elsewhere", "round": <path>, "item": <id>, "note": <text>}` (see the
+  elsewhere rule); at
   most 4 KiB), one out. Each `open`
   makes a pair: a start link that works once within `START_TTL` seconds, and the page token it
   opens, closed after `PAGE_IDLE` seconds without a request. A second use, or a late first one, gets 410 (404 once
@@ -201,8 +209,9 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
 - **An answer from a notification is its round's Done, asked for on the control socket.** `offer` names at most
   one item, in the first round of Waiting on you that: belongs to a run whose round locks the inbox holds; is that
   run's last open round; has exactly one item not yet decided (decided: a saved `choice` that is not null or an
-  empty list, with a `source` other than `recommended`); and that item has `recommended` (not an empty list) and
-  is not `sensitive`. The reply is `{offer: null}` or `{offer: {id, project, round, question, answer}}`: `id` 32
+  empty list, with a `source` other than `recommended`, or a `source` of `elsewhere`) and no item marked
+  `elsewhere` (a tap's Done would send a mark the user never saw); and that item has `recommended` (not an empty
+  list) and is not `sensitive`. The reply is `{offer: null}` or `{offer: {id, project, round, question, answer}}`: `id` 32
   hex digits; `project` the project's name as the list shows it (a run outside any project: its decisions
   folder's name, the login name when that folder is the home itself), the other three the decisions file's own
   texts (a number item's answer: its `recommended` as its grid point, a whole value without a point or an
@@ -573,7 +582,8 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   page, never more. Every label a round's page uses has English and Hungarian (a test reads the page for each `L.name`; a
   key built at run time, such as `L['st_' + s]`, it does not see).
 - **Nothing is deleted.** Signoff writes the answers file and its Markdown copy (both atomically) and, only
-  when absent, a `.gitignore`. Once an inbox has run, it also writes an empty `<round file>.lock` (such as
+  when absent, a `.gitignore`; so does `signoff elsewhere` (see the elsewhere rule), whose temporary file goes
+  again when the hash before its rename changed. Once an inbox has run, it also writes an empty `<round file>.lock` (such as
   `round-01.json.lock`) beside each open round and `runs/<run>.json` in the Signoff home (see the next rule),
   and its hooks write `projects/<id>.json`, `sessions/<session>.json` and `waiting.flag` there (see the hooks
   rule). With the macOS app installed, a new session's SessionStart keeps `launcher` in the home, a link it replaces by a rename
@@ -626,7 +636,47 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   or whose paths could not reach stdout (no reader: `BrokenPipeError`), leaves none, and so does a Done run that
   gets SIGTERM or SIGHUP while it prints its paths (its handlers are back to the defaults by then, so the signal
   kills it: the inbox may then hand over answers the agent got, never lose them). Readers check
-  `pid` and `started`, and skip `.tmp-*` files.
+  `pid` and `started`, and skip `.tmp-*` files. `signoff elsewhere` follows the same lock (see the elsewhere
+  rule): with `inbox.lock` it writes only under the round's lock, through the inbox that holds it, or not at all.
+- **`signoff elsewhere` marks one item through the round's one writer.** `signoff elsewhere <round file> <item
+  id> [<note>]` (3 or 4 words, the second not starting with `-`, so a decisions folder named `elsewhere` still
+  runs) loads the round as a run does (`Round`) and builds the save that marks the item (`_mark_state`): the saved
+  answers with that item as `{choice: null` (`[]` for `many`), `comment: <note>`, `source: "elsewhere"}`, the
+  free text kept, `accepted` false, so the round's acceptance resets as a change on the page does. It refuses
+  (exit 1, one stderr line, nothing written) a bad round or answers file, an unknown item, a done round, and an
+  item that holds anything of the user's (`_users`): a choice with a `source` other than `recommended`, a
+  comment, `other` text, marks or `private` (an earlier mark of the agent's, with nothing else, may be replaced).
+  The note is one line of at most `MAX_NOTE` (500) characters with no tab, line break or character `_hidden`
+  finds, checked in the command and again by the inbox. The same mark again writes nothing (exit 0). Who writes:
+  - no `inbox.lock` in the home: no locks exist. It writes through `_Rounds.store` (`_Marker`), the Markdown copy
+    first; the JSON's temporary file is written and synced, the answers file hashed again, then renamed; a hash
+    changed since the load (at the save's own check or at that last one) starts over, three tries in all. This is
+    best effort, as "No stale writes" says before an inbox: a page save landing between that last hash and the
+    rename is lost, a Done included (the run then exits 0 with its path while the file says `done: false`).
+  - `inbox.lock` there and the round's lock free (tried for half a second: another mark, or a waiter's look,
+    holds it for a moment): it holds the lock for the write only, loads the round again under it, and writes as
+    above. The inbox, whose look meets that lock for a round it takes in, shows it read only until its next look
+    takes the lock (`take_locks` at every look), never for good. A page run starting in that moment exits 1 as
+    beside another run; run it again.
+  - the lock held and an inbox alive (`inbox_alive`): the `elsewhere` op on the control socket, `{op, round, item,
+    note}` and no other key (`round` the round file's resolved absolute path, `item` an id, `note` as above; else
+    `{error}` with its shape). The line is UTF-8 and not escaped to ASCII (`control_line`), and the command checks it
+    fits `MAX_CONTROL` before sending. The inbox matches `round` as text against the rounds its groups hold (it
+    never opens it), looks first (`_scan`), and writes through the run's own writer (`_Group.store`) at the round's
+    `rev`, under the group's lock, as `accept` does. Replies: `{ok: true}`, or `{error}` with one word:
+    `gone` (no group holds that round, or no such item), `done`, `held` (another run holds the round: its group is
+    read only), `answered`, `changed` (a save landed first; the command asks again, three times in all), `failed`
+    (a write failed; it may leave a new Markdown copy, as a failed save does). Any other error, as an inbox from
+    before the op gives: exit 1, nothing written, and a stderr line saying to restart the inbox (`signoff inbox
+    stop`, then `signoff inbox open`) and run the same command again.
+  - the lock held and no inbox alive (a page run holds it): exit 1, nothing written, as for a second run.
+  A file system that cannot lock: one stderr line, then the first case. A run or the inbox takes a direct write
+  in as any outside write (open tabs get 409 and reload); an op's write bumps the round's `rev` as a save does.
+  The item counts as decided (`_decided`): `rows` leaves it out of a round's items, as the page shows it decided,
+  and `offer` skips the round (see the notification rule). The page shows **Decided elsewhere** and the note
+  (`textContent`) above the item's options, sends the saved choice and note back with every save, Accept all
+  neither sets nor undoes it, and the user's own pick, typed text, number or rectangle on it makes it `user` (the
+  note goes).
 - **The hooks cost a session nothing.** They run in every Claude Code session of everyone who installs the
   plugin, so `inbox hook` always exits 0 (exit 2 would block a prompt or a stop), prints nothing (SessionStart and
   UserPromptSubmit stdout goes into the model's context) but the hand-over below, and writes nothing while
@@ -732,7 +782,8 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   `signoff: notes:` that changes neither stdout nor the exit code). The exceptions: `signoff inbox home` prints the Signoff home (`inbox_home()`, never creating it),
   `signoff inbox hook` prints nothing but the SessionStart hand-over, `signoff inbox monitor` prints request
   lines only, and `signoff inbox rows <folder>` prints one JSON line, the `rows` reply (for a folder outside any
-  project `{"rounds": [], "more": 0}`), for the mod. `signoff inbox serve|open|stop|done` print nothing on stdout
+  project `{"rounds": [], "more": 0}`), for the mod. `signoff elsewhere` and `signoff inbox serve|open|stop|done`
+  print nothing on stdout
   (`open --app` no link on stderr either); `open --no-open` prints its start
   link on stderr, as a run does, and so does `open` when no browser opened (`webbrowser.open` False; a run then
   says `no browser opened` under its link). A browser a run or `open` starts gets `/dev/null` for each of
@@ -754,7 +805,12 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   1 when there is no such request. `signoff inbox rows <folder>` exits 0 with its line (outside any project
   without asking an inbox, which need not run), or 1 with nothing on
   stdout for a relative folder or home, when no inbox answers, or when the inbox answers without `rounds` (one
-  from before the op). `signoff inbox monitor` ends (0) only once its session is gone.
+  from before the op). `signoff inbox monitor` ends (0) only once its session is gone. `signoff elsewhere` exits 0
+  when written or already marked with the same note, else 1 with one stderr line: a bad note, round or answers
+  file, an unknown item, a done round, the user's own answer on the item, the round's lock held by a page run, an
+  inbox refusal or no answer, an inbox from before the op, a line too long for the control socket, a file that
+  kept changing through three tries, or a write that failed (a file system that cannot lock adds a line to an
+  exit 0).
 - **Done waits for acceptance.** With several rounds open, a Done save is refused (409) until every other open
   round is accepted; Done accepts its own round, so a single round stays one click.
 - **No stale writes.** Every save from the page carries `rev`, the round's save count it last saw; an older one
@@ -764,7 +820,9 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   so a reload lets saving go on, and a file that says done closes the round. A file that fails `check_answers` (or
   says done for another version of the round) is not taken in: one message on stderr, and saves stay refused.
   Within a run this is exact; across runs the round lock keeps a second writer out once an inbox has run, and
-  before that it is best effort. A round closed by Done shows read
+  before that it is best effort. `signoff elsewhere` writes through the same checks: before an inbox, by itself,
+  with one more hash just before its rename; after, under the round's lock or through the inbox that holds it (see
+  the elsewhere rule). A round closed by Done shows read
   only on reload, even while the run goes on.
 - **Done is final.** Once a round's save with `done: true` is stored, later saves to it get 409, and a later
   run shows it read only. The run ends when every round that was open is done, by Done on the page or by an

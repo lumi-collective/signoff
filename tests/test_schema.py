@@ -1000,6 +1000,18 @@ class MarkdownLanguage(unittest.TestCase):
         self.assertIn("- Source: recommendation, accepted from a notification", self.md(source="notification"))
         self.assertIn("- Forrás: a javaslat, értesítésből elfogadva", self.md(lang="hu", source="notification"))
 
+    def test_an_item_decided_elsewhere(self):
+        # signoff elsewhere: the agent marked it, choice null, its note as the comment, escaped as any text.
+        md = self.md("said *in* chat", lang="en", choice=None, source="elsewhere")
+        self.assertIn("- Choice: nothing chosen\n- Source: decided elsewhere, marked by the agent\n"
+                      "- Comment: said \\*in\\* chat\n", md)
+        md = self.md("a chatben", lang="hu", choice=None, source="elsewhere")
+        self.assertIn("- Forrás: máshol eldőlt, az ágens jelölte\n- Megjegyzés: a chatben\n", md)
+        state = {"answers": {"layout": {"choice": None, "comment": "n", "source": "elsewhere"},
+                             "filters": {"choice": [], "comment": "", "source": "elsewhere"}},
+                 "free_text": "", "done": False}
+        self.assertEqual(signoff.check_answers(state, self.decisions)["answers"]["filters"]["source"], "elsewhere")
+
     def test_other_languages_get_english(self):
         for lang in ("de", "fr-CA", "", "hux"):
             self.assertIn("- Choice: Keep one (not recommended)", self.md("x", lang=lang), lang)

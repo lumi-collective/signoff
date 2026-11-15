@@ -792,6 +792,17 @@ class Page(unittest.TestCase):
         self.assertRegex(script.replace(inbox, ""), r"\bL\.orphan\b")  # the round's page, in the round's language
         self.assertRegex(script.replace(inbox, ""), r"data\.orphan \? L\.doneOrphan : L\.doneBanner")
 
+    def test_an_item_decided_elsewhere_is_named_in_english_and_hungarian(self):
+        labels = self.page[self.page.index("var LABELS = {"):self.page.index("var data = JSON.parse")]
+        en, hu = labels[:labels.index("hu: {")], labels[labels.index("hu: {"):]
+        self.assertIn("elsewhere: 'Decided elsewhere'", en)
+        self.assertIn("elsewhere: 'Máshol eldőlt'", hu)
+        script = self.page[self.page.index("var data = JSON.parse"):]
+        inbox = script[script.index("// ---- The inbox."):script.index("if (data.mode === 'inbox')")]
+        round_page = script.replace(inbox, "")
+        self.assertRegex(round_page, r"\bL\.elsewhere\b")
+        self.assertIn("=== 'elsewhere'", round_page)  # its saved choice and note go back with every save
+
     def test_no_label_is_defined_twice(self):
         # A second key of the same name wins silently, so an inbox label could rename a round page's heading.
         labels = self.page[self.page.index("var LABELS = {"):self.page.index("var data = JSON.parse")]
