@@ -301,7 +301,8 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   `root` holding its folder) and `state.json` (again only when its time or size changed; `schema` 1, a whole
   `waiting` for its project id, files over 64 KiB skipped). Any failure shows nothing. It shows that number,
   fixed text and the panel's titles, nothing else; it writes no file. It starts looking once per load, from `session.start` or the band's
-  first drawing (a reload after an options change may fire no `session.start`). With `hint` `off`, with
+  first drawing (a reload after an options change may fire no `session.start`; the desktop app and the VS Code
+  extension send it with `isInteractive` false, tried on 2026-11-15, so there the band starts it). With `hint` `off`, with
   `claude -p` and on Windows (`OS` is `Windows_NT`) it looks at nothing. Only a live count (an inbox that lives,
   a project found) moves Hide (cleared by any other live count) and the toast (once a session, after a live 0 and
   two live counts above it in a row). Open and `/signoff:open` (typed at the prompt, also with `hint` `off`) open

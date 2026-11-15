@@ -359,7 +359,8 @@ async function drawPanel($: Engine, e: DrawInput, isBand: boolean) {
 }
 
 // Starts the looking, once per load, in an interactive session: from session.start, or from the band's first
-// drawing when a reload fires no session.start (it fires "for changed modules only").
+// drawing when a reload fires no session.start (it fires "for changed modules only"), and in the desktop app and
+// the VS Code extension, whose session.start says isInteractive false (tried 2026-11-15).
 async function arm($: Engine) {
   if (look.isArmed) return
   look.isArmed = true
