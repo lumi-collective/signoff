@@ -876,7 +876,7 @@ MD_LABELS = {
            "user": "the user", "notification": "recommendation, accepted from a notification", "unknown": "unknown", "yes_at": "yes, %s", "changed": "no, changed after it was accepted",
            "command": "Command", "elsewhere": "decided elsewhere, marked by the agent", "stakes": "Stakes",
            "low": "low", "medium": "medium", "high": "high", "irreversible": "Cannot be undone",
-           "settled": "Settled"},
+           "settled": "Settled earlier, says the agent"},
     "hu": {"choice": "Választás", "source": "Forrás", "comment": "Megjegyzés", "mark": "Jelölés %d, %d. kép, %s "
            "(x, y, sz, m, %%-ban): %s", "attachment": "Melléklet", "saved": "Mentve", "accepted": "Elfogadva",
            "done": "Kész", "yes": "igen", "no": "nem", "skipped": "Kihagyva", "other": "Egyéb", "rec": "javasolt",
@@ -886,7 +886,7 @@ MD_LABELS = {
            "changed": "nem, elfogadás után módosítva", "command": "Parancs",
            "elsewhere": "máshol eldőlt, az ágens jelölte", "stakes": "Tét", "low": "alacsony",
            "medium": "közepes", "high": "magas", "irreversible": "Nem vonható vissza",
-           "settled": "Korábban eldőlt"},
+           "settled": "Korábban eldőlt, az ágens szerint"},
 }
 
 

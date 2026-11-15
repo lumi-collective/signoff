@@ -226,7 +226,9 @@ class Additions(ServerTest):
         finally:
             run.stop()
         md = (self.folder.path / "decisions.answers.md").read_text(encoding="utf-8")
-        self.assertIn("- Stakes: high\n- Cannot be undone: Drops the \\*old\\* table\n- Settled: round-01, 11-14\n", md)
+        # Settled is the agent's word that the user decided it before, and the copy says so.
+        self.assertIn("- Stakes: high\n- Cannot be undone: Drops the \\*old\\* table\n"
+                      "- Settled earlier, says the agent: round-01, 11-14\n", md)
         self.assertIn("- Stakes: low\n", md)
         self.assertEqual(md.count("Cannot be undone"), 1)
         answers = json.loads(self.folder.answers.read_text(encoding="utf-8"))
@@ -237,11 +239,11 @@ class Additions(ServerTest):
         # The notes folder's copy hides a private answer, not the agent's own lines.
         hidden = signoff.answers_markdown(decisions, record, hide_private=True)
         self.assertIn("(private)\n- Stakes: high\n- Cannot be undone: Drops the \\*old\\* table\n"
-                      "- Settled: round-01, 11-14\n", hidden)
+                      "- Settled earlier, says the agent: round-01, 11-14\n", hidden)
         self.assertNotIn("mine", hidden)
         hu = signoff.answers_markdown(dict(decisions, lang="hu"), record)
-        self.assertIn("- Tét: magas\n- Nem vonható vissza: Drops the \\*old\\* table\n- Korábban eldőlt: round-01, 11-14\n",
-                      hu)
+        self.assertIn("- Tét: magas\n- Nem vonható vissza: Drops the \\*old\\* table\n"
+                      "- Korábban eldőlt, az ágens szerint: round-01, 11-14\n", hu)
 
     def test_a_settled_item_cannot_be_saved_as_decided_elsewhere(self):
         data = sample_decisions()
