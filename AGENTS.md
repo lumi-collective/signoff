@@ -104,9 +104,11 @@ Instructions for coding agents working on Signoff. The README says what it does 
   the round lock: a run never exits 0 over an answers file that says `done: false`, and the loser is refused;
   `Exits` marks an item beside a plain run; its `Plan` class runs `<command> plan` with no live inbox (exit 1,
   nothing written) and beside `<command> inbox serve`, where an Approve saved with Done through the inbox's page
-  ends it with exit 0 and the one answers path. `test_cli.py`'s `CliPlan` class covers `signoff plan`'s refusals,
-  its files and their bytes, the rounds it closes, `--resume`, Ctrl+C and an older inbox (a stand-in and the real
-  0.4.0 one). `test_cli.py` runs a waiter, and a mark, against the real
+  ends it with exit 0 and the one answers path, and where an approval left at the next number (no round beside it)
+  never ends it. `test_cli.py`'s `CliPlan` class covers `signoff plan`'s refusals, its files and their bytes, the
+  rounds it closes and the runs that hold them, files left at the next number, `--resume` (only the fixed round,
+  answers a run takes, no link), links at the topic folder, a create that meets a file, Ctrl+C, a forced waiter
+  with no inbox, and an older inbox (a stand-in and the real 0.4.0 one). `test_cli.py` runs a waiter, and a mark, against the real
   0.4.0 inbox from `git show v0.4.0:` (skipped without the tag, as in a shallow clone), and its `WaiterVerdict`
   class steps the check poll by poll (rounds answered in the poll of the verdict, an inbox gone or started again
   between the looks); its `CliElsewhere` class covers `signoff elsewhere` in each of its writer's cases, the user's
@@ -626,7 +628,7 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   when absent, a `.gitignore`; so does `signoff elsewhere` (see the elsewhere rule), whose temporary file goes
   again when the hash before its rename changed. `signoff plan` writes `plan-NN.md`, `round-NN.json` and, for a
   round it replaces or the inbox did not take in, `round-NN.outcome.json` in its topic folder
-  (`<YYYY-MM-DD>-plan-<session>`), each created exclusively, never over a file, and its run writes the
+  (`<YYYY-MM-DD>-plan-<session>`), each created exclusively, never over a file or through a link, and its run writes the
   `.gitignore` there as a run does. Once an inbox has run, it also writes an empty `<round file>.lock` (such as
   `round-01.json.lock`) beside each open round and `runs/<run>.json` in the Signoff home (see the next rule),
   and its hooks write `projects/<id>.json`, `sessions/<session>.json` and `waiting.flag` there (see the hooks
@@ -746,23 +748,30 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   neither sets nor undoes it, and the user's own pick, typed text, number or rectangle on it makes it `user` (the
   note goes).
 - **`signoff plan` puts a plan on one fixed round and waits on it beside the inbox.** The mod runs it (AD-29),
-  never the agent: `signoff plan --topic <t> --folder <f> [--resume]`, each flag once in any order (taken as this
-  command only when the words hold one of the three, which no run takes, so a decisions folder named `plan` still
-  runs), the plan on stdin.
+  never the agent: `signoff plan --topic <t> --folder <f> [--resume]`, each flag once in any order, each value as
+  the next word (the mod's argv; a `--topic=…` form is no flag of this command), the plan on stdin. It is taken as
+  this command when the words after `plan` hold one of the three: a run takes neither `--topic` nor `--resume`, and
+  `--folder` only with `--history`, which takes no decisions folder, so a decisions folder named `plan` still runs.
   `--topic` matches `[0-9]{4}-[0-9]{2}-[0-9]{2}-plan-[A-Za-z0-9-]{1,8}` in full; `--folder` is absolute or relative
   to `project_root()` of the current folder (none: exit 1). The plan: at most `MAX_DECISIONS` read, strict UTF-8,
   the white space at its end cut by `PLAN_TRIM` (what JavaScript's `trimEnd()` cuts, so the mod holds the same
   bytes; not Python's `rstrip()`), then 1 byte to `MAX_ATTACHMENT`. All of that, a live inbox (`inbox_on` and
   `inbox_alive`), a topic folder that is no link or file, and no older open round of the topic a live run waits on
-  (a recent `runs/` entry with no `ended` and its pid alive: "a plan review is still open in another process") come
-  before the first write; any refusal is exit 1, one stderr line, nothing written. Then it makes the topic folder as
-  `mkdir -p` does, closes every older open round (no outcome file, no answers file that says done) with
-  `round-NN.outcome.json` `{log: "", line: "replaced by round-MM", date}`, and writes `plan-MM.md` (the cut bytes)
-  and `round-MM.json` (`plan_round`: every text a `PLAN_*` constant; one item `plan`, Approve and Ask for changes,
-  `blocking`, `comment`, `lines`, the plan attached with `open`, and no `recommended`, so `offer` never names it),
-  MM the next number after every `round-*.json` and `plan-*.md` there. Without `--resume` it always writes a new
-  round, so no approval is ever reused. With it, the newest round whose `plan-NN.md` equals the cut bytes is reused:
-  done, its answers path at once (exit 0); open, waited on; closed, or other bytes or none: a new round. It waits
+  (a recent `runs/` entry with no `ended`, its pid alive, its folder the same folder by `os.path.samefile`: "a plan
+  review is still open in another process") come before the first write; any refusal is exit 1, one stderr line,
+  nothing written. Then it makes the topic folder as `mkdir -p` does and opens it with `O_DIRECTORY | O_NOFOLLOW`
+  (a link swapped in since the check: exit 1), and through that descriptor (`dir_fd`; on Windows by path) creates,
+  each `O_EXCL | O_NOFOLLOW`: for every older open round (no outcome file, no answers file that says done)
+  `round-NN.outcome.json` `{log: "signoff plan", line: "replaced by round-MM", date}`, then `plan-MM.md` (the cut
+  bytes) and `round-MM.json` (`plan_round`: every text a `PLAN_*` constant; one item `plan`, Approve and Ask for
+  changes, `blocking`, `comment`, `lines`, the plan attached with `open`, and no `recommended`, so `offer` never
+  names it). MM is the next number after every `round-NN.*` and `plan-NN.*` name there (answers files, Markdown
+  copies, outcome files and locks too), so a new round never meets an answers or outcome file left at its number,
+  as `git clean -fd` keeps the ignored answers files. Without `--resume` it always writes a new round, so no
+  approval is ever reused. With it, only the newest round is looked at, and reused only when its `round-NN.json`
+  holds the bytes `plan_round` gives for its number, its `plan-NN.md` the cut bytes, both regular files read with
+  `O_NOFOLLOW`, and it loads as a run loads it (`Round`: the answers checked, a done one linked to this version):
+  done, its answers path at once (exit 0); open, waited on; closed, anything else or no round: a new round. It waits
   as a waiter on that one round (`_run` with `waiter=True`: never a page run, even when the inbox stops meanwhile).
   When the inbox does not take the round in, it closes it (`not shown: the inbox is older than this plugin;
   restart it`) and exits 1.
@@ -915,8 +924,10 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   `--resume` whose round is done), and 1 for bad input (a usage error, stdin not UTF-8, empty or over
   `MAX_ATTACHMENT` once cut, a `--topic` off its pattern, a relative `--folder` outside any project, a topic folder
   that is a link or a file), when no inbox is live, or when a live run waits on an older open round of the topic,
-  each with one stderr line and nothing written; 1 when a file it creates is already there; and 1 when the inbox
-  does not take its round in, which it then closes with an outcome file.
+  each with one stderr line and nothing written; 1 when the topic folder cannot be opened as a folder of its own
+  (a link swapped in), with nothing written; 1 when a file it creates is already there (another writer since its
+  look), leaving the older rounds' outcome files and, when the round file was the one there, `plan-MM.md`; and 1
+  when the inbox does not take its round in, which it then closes with an outcome file.
 - **Done waits for acceptance.** With several rounds open, a Done save is refused (409) until every other open
   round is accepted; Done accepts its own round, so a single round stays one click.
 - **No stale writes.** Every save from the page carries `rev`, the round's save count it last saw; an older one

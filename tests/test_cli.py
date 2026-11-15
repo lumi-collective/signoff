@@ -1,4 +1,5 @@
 """The command line, run as a real process: exit codes, stdout, the .gitignore."""
+import argparse
 import errno
 import hashlib
 import io
@@ -1113,6 +1114,15 @@ PLAN_KEPT = ("# Plan\n\n1. " + chr(0xC4) + "ndern  \r\n2. Ship\x1c").encode("utf
 PLAN_TEXT = PLAN_KEPT + (" \t\n" + chr(0x2028) + chr(0x3000) + chr(0xFEFF) + "\r\n").encode("utf-8")
 
 
+def round_bytes(n):
+    """round-NN.json as signoff plan writes it: the bytes --resume asks a round to have."""
+    return (json.dumps(signoff.plan_round(n), indent=2) + "\n").encode("utf-8")
+
+
+def outcome_of(line):
+    return {"log": "signoff plan", "line": line, "date": datetime_today()}
+
+
 class CliPlan(unittest.TestCase):
     """`signoff plan --topic <t> --folder <f> [--resume]`, the plan on stdin: the mod's one fixed round, written
     beside the plan and waited on beside a live inbox. The tests hold the inbox's lock themselves."""
@@ -1183,16 +1193,42 @@ class CliPlan(unittest.TestCase):
         if not (topic / ".gitignore").exists():
             signoff.ensure_gitignore(topic)
         (topic / ("plan-%02d.md" % n)).write_bytes(text)
-        (topic / ("round-%02d.json" % n)).write_text(json.dumps(signoff.plan_round(n)), encoding="utf-8")
+        (topic / ("round-%02d.json" % n)).write_bytes(round_bytes(n))
         if done:
             self.answer(n, topic)
         if outcome:
             (topic / ("round-%02d.outcome.json" % n)).write_text('{"log": "", "line": "x", "date": "2026-01-01"}',
                                                                  encoding="utf-8")
 
-    def answer(self, n, topic=None, choice="approve"):
-        write_outside((topic or self.topic) / ("round-%02d.answers.json" % n),
-                      done_record({"plan": {"choice": choice, "comment": "", "source": "user"}}))
+    def answer(self, n, topic=None, choice="approve", **extra):
+        record = done_record({"plan": {"choice": choice, "comment": "", "source": "user"}})
+        record.update(extra)
+        write_outside((topic or self.topic) / ("round-%02d.answers.json" % n), record)
+
+    def stays_waiting(self, proc, n, topic=None):
+        """Waits on round n with no answers of its own, then is stopped: it never exited 0 or printed a path."""
+        self.waiting(proc, n, topic)
+        time.sleep(1.5)
+        self.assertIsNone(proc.poll(), proc.poll() is not None and proc.communicate())
+        self.assertFalse(((topic or self.topic) / ("round-%02d.answers.json" % n)).exists())
+        proc.kill()
+        self.assertEqual(proc.communicate(timeout=20)[0], b"")
+
+    def in_process(self, argv, stdin=PLAN_TEXT):
+        """signoff.main in this process, with this home: (exit code, stderr)."""
+        err = io.StringIO()
+        with mock.patch.dict(os.environ, SIGNOFF_INBOX_HOME=str(self.home)), \
+                mock.patch.object(sys, "stdin", io.TextIOWrapper(io.BytesIO(stdin))), \
+                mock.patch.object(sys, "stderr", err):
+            code = signoff.main(argv)
+        return code, err.getvalue()
+
+    def entry(self, run, folder, rounds, pid=None, **extra):
+        (self.home / "runs").mkdir(mode=0o700, exist_ok=True)
+        e = {"schema": 1, "run": run, "project": None, "folder": str(folder), "rounds": rounds, "mode": "waiter",
+             "pid": os.getpid() if pid is None else pid, "started": signoff.utc_now()}
+        e.update(extra)
+        (self.home / "runs" / (run + ".json")).write_text(json.dumps(e), encoding="utf-8")
 
     def entries(self):
         return [json.loads(p.read_text(encoding="utf-8")) for p in sorted((self.home / "runs").glob("[!.]*.json"))]
@@ -1263,8 +1299,7 @@ class CliPlan(unittest.TestCase):
         proc = self.start(self.argv())
         self.waiting(proc, 1)
         self.assertEqual((self.topic / "plan-01.md").read_bytes(), PLAN_KEPT)
-        self.assertEqual(json.loads((self.topic / "round-01.json").read_text(encoding="utf-8")),
-                         signoff.plan_round(1))
+        self.assertEqual((self.topic / "round-01.json").read_bytes(), round_bytes(1))
         self.assertEqual(sorted(p.name for p in self.topic.iterdir()), [".gitignore", "plan-01.md", "round-01.json"])
         os.mkdir(str(self.base / "made"))  # as an agent's mkdir makes a topic folder
         self.assertEqual(stat.S_IMODE(self.topic.stat().st_mode), stat.S_IMODE((self.base / "made").stat().st_mode))
@@ -1294,13 +1329,20 @@ class CliPlan(unittest.TestCase):
                  "ended": signoff.utc_now()}
         (self.home / "runs").mkdir(mode=0o700)
         (self.home / "runs" / "ended.json").write_text(json.dumps(ended), encoding="utf-8")
+        # A live run in another folder waits on a round-01.json of its own; one killed with no `ended` (its pid gone)
+        # once waited on round 4. Neither holds a round of this topic.
+        other = self.base / "other"
+        other.mkdir()
+        self.entry("ef" * 8, other, ["round-01.json"])
+        gone = subprocess.Popen([sys.executable, "-c", "pass"])
+        gone.wait()
+        self.entry("0123" * 4, self.topic, ["round-04.json"], pid=gone.pid)
         outcome3 = (self.topic / "round-03.outcome.json").read_bytes()
         self.live()
         proc = self.start(self.argv())
         self.waiting(proc, 6)
-        today = datetime_today()
         for n in (1, 4):
-            self.assertEqual(self.outcome(n), {"log": "", "line": "replaced by round-06", "date": today})
+            self.assertEqual(self.outcome(n), outcome_of("replaced by round-06"))
         self.assertFalse((self.topic / "round-02.outcome.json").exists())  # done: nothing to close
         self.assertEqual((self.topic / "round-03.outcome.json").read_bytes(), outcome3)
         self.assertEqual((self.topic / "plan-06.md").read_bytes(), PLAN_KEPT)
@@ -1310,10 +1352,16 @@ class CliPlan(unittest.TestCase):
     def test_an_older_round_a_live_run_waits_on_is_left_alone(self):
         self.seed(1)
         self.seed(2)
-        (self.home / "runs").mkdir(mode=0o700)
-        live = {"schema": 1, "run": "cd" * 8, "project": None, "folder": str(self.topic),
-                "rounds": ["round-01.json"], "mode": "waiter", "pid": os.getpid(), "started": signoff.utc_now()}
-        (self.home / "runs" / "live.json").write_text(json.dumps(live), encoding="utf-8")
+        self.entry("cd" * 8, self.topic, ["round-01.json"])
+        self.live()
+        self.refused(self.argv(), words=("a plan review is still open in another process",))
+
+    @unittest.skipIf(sys.platform == "win32", "links need extra rights on Windows")
+    def test_a_live_run_on_the_topic_spelled_another_way_still_holds_it(self):
+        # The folder is matched as the same folder, not as the same text: here through a link to its parent.
+        self.seed(1)
+        (self.base / "alias").symlink_to(self.topic.parent, target_is_directory=True)
+        self.entry("cd" * 8, self.base / "alias" / PLAN_TOPIC, ["round-01.json"])
         self.live()
         self.refused(self.argv(), words=("a plan review is still open in another process",))
 
@@ -1358,6 +1406,140 @@ class CliPlan(unittest.TestCase):
             self.answer(n, topic)
             self.handed_over(proc, n, topic)
 
+    def plant_approval(self, n, topic):
+        """A done answers file approving round n, as `git clean -fd` leaves one (ignored, so kept) with no round
+        beside it, or as another writer plants one: linked to the fixed round's bytes, so a round written at n
+        would take it in."""
+        topic.mkdir(parents=True, exist_ok=True)
+        self.answer(n, topic, decisions={"file": "round-%02d.json" % n,
+                                         "sha256": hashlib.sha256(round_bytes(n)).hexdigest()})
+
+    def test_files_left_at_the_next_number_never_answer_the_new_round(self):
+        self.live()
+        topic = self.project / ".signoff" / "2026-11-15-plan-a"  # only what git clean -fd keeps
+        self.plant_approval(1, topic)
+        (topic / "round-01.answers.md").write_text("# done\n", encoding="utf-8")
+        (topic / "round-01.json.lock").write_bytes(b"")
+        self.stays_waiting(self.start(self.argv(topic="2026-11-15-plan-a")), 2, topic)
+        self.assertFalse((topic / "round-01.json").exists())
+        topic = self.project / ".signoff" / "2026-11-15-plan-b"  # the same, then --resume with the same plan
+        self.plant_approval(1, topic)
+        self.stays_waiting(self.start(self.argv("--resume", topic="2026-11-15-plan-b")), 2, topic)
+        topic = self.project / ".signoff" / "2026-11-15-plan-c"  # an open round, then files at the next number
+        self.seed(1, topic=topic)
+        self.plant_approval(2, topic)
+        (topic / "round-03.outcome.json").write_text('{"log": "", "line": "x", "date": "2026-01-01"}',
+                                                     encoding="utf-8")
+        self.stays_waiting(self.start(self.argv(topic="2026-11-15-plan-c")), 4, topic)
+        self.assertEqual(self.outcome(1, topic)["line"], "replaced by round-04")
+
+    def test_resume_reuses_only_the_fixed_round_with_answers_a_run_takes(self):
+        self.live()
+        changed = signoff.plan_round(1)
+        changed["items"][0]["recommended"] = "approve"  # would be offered from a notification
+        cases = {
+            "a": lambda t: (t / "round-01.json").write_bytes(json.dumps(changed, indent=2).encode() + b"\n"),
+            "b": lambda t: self.answer(1, t, choice="nope"),  # check_answers refuses it
+            # answers for another version of the round
+            "c": lambda t: self.answer(1, t, decisions={"file": "round-01.json", "sha256": "0" * 64}),
+        }
+        for name, spoil in cases.items():
+            topic = self.project / ".signoff" / ("2026-11-15-plan-" + name)
+            self.seed(1, done=True, topic=topic)
+            spoil(topic)
+            self.stays_waiting(self.start(self.argv("--resume", topic="2026-11-15-plan-" + name)), 2, topic)
+
+    @unittest.skipIf(sys.platform == "win32", "links need extra rights on Windows")
+    def test_resume_never_reuses_a_round_or_plan_through_a_link(self):
+        self.live()
+        elsewhere = self.base / "elsewhere"
+        elsewhere.mkdir()
+        (elsewhere / "round-01.json").write_bytes(round_bytes(1))
+        (elsewhere / "plan-01.md").write_bytes(PLAN_KEPT)
+        self.answer(1, elsewhere)
+        before = self.files(elsewhere)
+        topic = self.project / ".signoff" / "2026-11-15-plan-a"  # the round is a link to a done one elsewhere
+        topic.mkdir(parents=True)
+        (topic / "plan-01.md").write_bytes(PLAN_KEPT)
+        (topic / "round-01.json").symlink_to(elsewhere / "round-01.json")
+        self.stays_waiting(self.start(self.argv("--resume", topic="2026-11-15-plan-a")), 2, topic)
+        topic = self.project / ".signoff" / "2026-11-15-plan-b"  # the plan is a link to the same bytes
+        topic.mkdir(parents=True)
+        (topic / "round-01.json").write_bytes(round_bytes(1))
+        (topic / "plan-01.md").symlink_to(elsewhere / "plan-01.md")
+        self.stays_waiting(self.start(self.argv("--resume", topic="2026-11-15-plan-b")), 2, topic)
+        self.assertEqual(self.files(elsewhere), before)
+
+    @unittest.skipIf(sys.platform == "win32", "links need extra rights on Windows")
+    def test_a_topic_folder_linked_in_after_the_check_gets_nothing(self):
+        self.live()
+        elsewhere = self.base / "elsewhere"
+        elsewhere.mkdir()
+
+        def linked_in(path, *args, **kwargs):  # the folder appears as a link between the check and the write
+            os.makedirs(str(path.parent), exist_ok=True)
+            path.symlink_to(elsewhere, target_is_directory=True)
+
+        with mock.patch.object(Path, "mkdir", linked_in), mock.patch.object(signoff, "_run", return_value=0):
+            code, err = self.in_process(self.argv(folder=str(self.project / ".signoff")))
+        self.assertEqual((code, err.count("\n")), (1, 1), err)
+        self.assertEqual(os.listdir(str(elsewhere)), [])
+
+    @unittest.skipIf(sys.platform == "win32", "the folder is opened as a descriptor on POSIX only")
+    def test_a_file_that_appears_at_the_new_name_is_never_written_over(self):
+        self.live()
+        self.seed(1)
+        opened = signoff._open_folder
+
+        def planted(path):  # another writer creates plan-02.md between the look and the create
+            (path / "plan-02.md").write_bytes(b"theirs")
+            return opened(path)
+
+        with mock.patch.object(signoff, "_open_folder", planted), mock.patch.object(signoff, "_run", return_value=0):
+            code, err = self.in_process(self.argv(folder=str(self.project / ".signoff")))
+        self.assertEqual((code, err.count("\n")), (1, 1), err)
+        self.assertIn("cannot write", err)
+        self.assertEqual((self.topic / "plan-02.md").read_bytes(), b"theirs")
+        self.assertFalse((self.topic / "round-02.json").exists())
+        self.assertEqual(self.outcome(1), outcome_of("replaced by round-02"))  # closed first, as AC5 orders
+
+    def test_past_round_9999_there_is_no_number_left(self):
+        self.live()
+        self.topic.mkdir(parents=True)
+        (self.topic / "round-9999.answers.json").write_text("{}", encoding="utf-8")
+        self.refused(self.argv(), words=("no round number left",))
+
+    @unittest.skipIf(sys.platform == "win32", "the inbox does not run on Windows")
+    def test_resume_on_an_open_round_an_older_inbox_refuses_closes_it(self):
+        self.seed(1)
+        self.live()
+        CliInbox.looking(self)
+        proc = self.start(self.argv("--resume"))
+        out, err = proc.communicate(timeout=30)
+        self.assertEqual((proc.returncode, out), (1, b""), err)
+        self.assertEqual(self.outcome(1), outcome_of("not shown: the inbox is older than this plugin; restart it"))
+        self.assertFalse((self.topic / "round-02.json").exists())
+
+    def test_a_forced_waiter_never_takes_the_page_path(self):
+        # signoff plan checked the inbox; if it stops before the run looks, the run still waits, with no page.
+        self.seed(1)  # inbox.lock there, held by nobody
+        out, codes = io.StringIO(), []
+        with mock.patch.dict(os.environ, SIGNOFF_INBOX_HOME=str(self.home)), \
+                mock.patch.object(signoff, "make_server", side_effect=AssertionError("a page run")), \
+                mock.patch.object(sys, "stdout", out):
+            t = threading.Thread(target=lambda: codes.append(signoff._run(
+                argparse.Namespace(decisions=str(self.topic / "round-01.json"), notes=""), waiter=True)))
+            t.start()
+            deadline = time.monotonic() + 20
+            while not ((self.home / "runs").is_dir() and self.entries()):
+                self.assertTrue(t.is_alive(), codes)
+                self.assertLess(time.monotonic(), deadline)
+                time.sleep(0.05)
+            self.assertEqual([e["mode"] for e in self.entries()], ["waiter"])
+            self.answer(1)
+            t.join(20)
+        self.assertEqual((codes, out.getvalue()), ([0], "%s\n" % (self.topic / "round-01.answers.json")))
+
     @unittest.skipIf(sys.platform == "win32", "Ctrl+C is sent as SIGINT, which is POSIX only")
     def test_ctrl_c_exits_130_with_nothing_on_stdout(self):
         self.live()
@@ -1373,8 +1555,7 @@ class CliPlan(unittest.TestCase):
         self.assertEqual((proc.returncode, out), (1, b""), err)
         self.assertIn("signoff inbox stop", err)
         self.assertNotIn("Traceback", err)
-        self.assertEqual(self.outcome(1), {"log": "", "line": "not shown: the inbox is older than this plugin; "
-                                           "restart it", "date": datetime_today()})
+        self.assertEqual(self.outcome(1), outcome_of("not shown: the inbox is older than this plugin; restart it"))
         self.assertEqual((self.topic / "plan-01.md").read_bytes(), PLAN_KEPT)
         self.assertFalse((self.topic / "round-01.answers.json").exists())
 

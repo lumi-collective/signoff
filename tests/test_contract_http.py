@@ -2107,6 +2107,40 @@ class Plan(unittest.TestCase):
         self.assertFalse(os.path.exists(self.folder))
         self.assertEqual(sorted(os.listdir(self.home)), ["inbox.lock"])
 
+    def test_an_approval_left_at_the_next_number_is_never_taken(self):
+        # What `git clean -fd` keeps of an earlier review (answers files are ignored): a done approval, no round.
+        self.inbox()
+        os.makedirs(self.topic)
+        with open(os.path.join(self.topic, "round-01.answers.json"), "w", encoding="utf-8") as f:
+            json.dump({"version": 1, "done": True, "saved": "2026-01-01T12:00:00Z", "free_text": "",
+                       "answers": {"plan": {"choice": "approve", "comment": "", "source": "user"}}}, f)
+        for resume in ((), ("--resume",)):
+            proc = self.child("plan", "--topic", self.TOPIC, "--folder", self.folder, *resume)
+            proc.stdin.write("# Plan\n")
+            proc.stdin.close()
+            proc.stdin = None
+            import fcntl
+            lock, deadline = os.path.join(self.topic, "round-02.json.lock"), time.monotonic() + 30
+            while True:  # the inbox took round 2 in: it holds its lock
+                self.assertIsNone(proc.poll(), proc.poll() is not None and proc.communicate())
+                self.assertLess(time.monotonic(), deadline, "the inbox did not take round 2 in")
+                if os.path.exists(lock):
+                    fd = os.open(lock, os.O_RDWR)
+                    try:
+                        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        fcntl.flock(fd, fcntl.LOCK_UN)
+                    except BlockingIOError:
+                        break
+                    finally:
+                        os.close(fd)
+                time.sleep(0.1)
+            time.sleep(1.5)
+            self.assertIsNone(proc.poll(), proc.poll() is not None and proc.communicate())
+            self.assertFalse(os.path.exists(os.path.join(self.topic, "round-01.json")))
+            self.assertFalse(os.path.exists(os.path.join(self.topic, "round-02.answers.json")))
+            proc.kill()
+            self.assertEqual(proc.communicate(timeout=20)[0], "")
+
     def test_approve_through_the_inbox_page_exits_0_with_the_one_answers_path(self):
         self.inbox()
         proc = self.plan("# Plan\n\n1. One step\n\n")

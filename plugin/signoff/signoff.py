@@ -136,7 +136,8 @@ EXIT_DONE, EXIT_ERROR, EXIT_TIMEOUT = 0, 1, 2
 # signoff plan (AD-29): the mod's plan review. Every text of its round is here, in one place; the model gives only
 # the plan.
 PLAN_TOPIC = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}-plan-[A-Za-z0-9-]{1,8}")  # fullmatch: the mod's topic name
-PLAN_FILE = re.compile(r"^plan-([0-9]{1,4})\.md$")
+# Every file of a round's number (answers, Markdown copy, outcome, lock), so a new round never meets one left there.
+PLAN_NUMBERED = re.compile(r"(?:round|plan)-([0-9]+)\.")
 # The white space JavaScript's trimEnd() cuts (ECMAScript WhiteSpace and LineTerminator), which the mod cuts too, so
 # both hold the same bytes. Python's rstrip() would cut U+001C to U+001F and U+0085 as well, and keep U+FEFF.
 PLAN_TRIM = "".join(map(chr, (0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x20, 0xA0, 0x1680) + tuple(range(0x2000, 0x200B))
@@ -149,6 +150,7 @@ PLAN_DESCRIPTION = ("The agent's plan is attached below. Approve it, or choose \
                     "Code leaves plan mode in the mode it picks itself, as when you leave plan mode yourself. On some "
                     "setups Claude Code may ask once more.")
 PLAN_OPTIONS = (("approve", "Approve the plan"), ("revise", "Ask for changes"))
+PLAN_LOG = "signoff plan"  # an outcome file's log: the past-decisions page shows "logged in <log>"
 PLAN_REPLACED = "replaced by round-%02d"
 PLAN_NOT_SHOWN = "not shown: the inbox is older than this plugin; restart it"
 
@@ -911,10 +913,12 @@ def read_image(path, limit=MAX_IMAGE):
             os.close(fd)
 
 
-def read_regular(path, limit):
+def read_regular(path, limit, nofollow=False):
     """The bytes of a regular file of at most limit bytes, else OSError: never blocking, so a FIFO where a round or
-    its answers should be cannot stall a run, a save or the inbox's look at every project."""
-    fd = os.open(str(path), os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0))
+    its answers should be cannot stall a run, a save or the inbox's look at every project. nofollow: not through a
+    link at its name either (POSIX)."""
+    fd = os.open(str(path), os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0)
+                 | (getattr(os, "O_NOFOLLOW", 0) if nofollow else 0))
     with os.fdopen(fd, "rb") as f:
         if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
             raise OSError(errno.EINVAL, "not a regular file")
@@ -4632,17 +4636,52 @@ def _waited_on(home, folder):
     names, runs = set(), home / "runs"
     for path in runs.glob("[!.]*.json") if runs.is_dir() else ():
         e = _read_json(path) if _recent(path, RUNS_MAX_AGE) else None
-        if _entry_ok(e) and "ended" not in e and _alive(e["pid"]) and e["folder"] == str(folder):
+        if _entry_ok(e) and "ended" not in e and _alive(e["pid"]) and _same([e["folder"]], str(folder)):
             names.update(e["rounds"])
     return names
 
 
-def _close_round(path, line):
+def _plan_round_bytes(n):
+    return (json.dumps(plan_round(n), indent=2) + "\n").encode("utf-8")
+
+
+def _plan_reusable(path, n, plan):
+    """Round n as --resume may take it again, or None: its round file holds the fixed round's bytes and its plan
+    file the plan's, both regular files read not through a link (POSIX), and it loads as a run loads it (its answers
+    checked, and linked to this version when done)."""
+    try:
+        if read_regular(path, MAX_DECISIONS, nofollow=True) != _plan_round_bytes(n) \
+                or read_regular(path.with_name("plan-%02d.md" % n), MAX_ATTACHMENT, nofollow=True) != plan:
+            return None
+        return Round(path)
+    except (OSError, DecisionsError):
+        return None
+
+
+def _open_folder(path):
+    """A descriptor of the folder at path, opened not through a link at its name, or None where a folder cannot be
+    opened so. shortcut: on Windows (no dir_fd) the files are created by path after the earlier link check alone;
+    the inbox does not run there, so signoff plan never gets that far but in tests."""
+    if os.open not in os.supports_dir_fd or not hasattr(os, "O_DIRECTORY"):
+        return None
+    return os.open(str(path), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+
+
+def _create(fd, folder, name, data):
+    """Create name in folder with data: never over a file, never through a link, inside the folder's descriptor
+    when there is one."""
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+    out = os.open(name, flags, 0o666, dir_fd=fd) if fd is not None else os.open(str(folder / name), flags, 0o666)
+    with os.fdopen(out, "wb") as f:
+        f.write(data)
+
+
+def _close_round(fd, path, line):
     """Close an open round with an outcome file of Signoff's own (AD-24: no longer an orphan). Never over a file:
     one there already closed it."""
+    record = {"log": PLAN_LOG, "line": line, "date": datetime.date.today().isoformat()}
     try:
-        with open(str(path.with_name(path.stem + ".outcome.json")), "x", encoding="utf-8") as f:
-            f.write(json.dumps({"log": "", "line": line, "date": datetime.date.today().isoformat()}) + "\n")
+        _create(fd, path.parent, path.stem + ".outcome.json", (json.dumps(record) + "\n").encode("utf-8"))
     except FileExistsError:
         pass
 
@@ -4690,11 +4729,12 @@ def _plan(argv):
     nums, rounds = [0], []
     try:
         for p in topic.iterdir() if topic.is_dir() else ():
-            m = ROUND_FILE.match(p.name) or PLAN_FILE.match(p.name)
+            m = PLAN_NUMBERED.match(p.name)
             if m:
                 nums.append(int(m.group(1)))
-                if p.suffix == ".json":
-                    rounds.append((int(m.group(1)), p))
+            m = ROUND_FILE.match(p.name)
+            if m:
+                rounds.append((int(m.group(1)), p))
     except OSError as e:
         return say("cannot read %s (%s)" % (topic, e.strerror or e))
     rounds.sort()
@@ -4703,20 +4743,25 @@ def _plan(argv):
         return p.with_name(p.stem + ".outcome.json").exists()
 
     def refused(p):  # the inbox did not take the round in: nobody will answer it
+        fd = None
         try:
-            _close_round(p, PLAN_NOT_SHOWN)
+            fd = _open_folder(p.parent)
+            _close_round(fd, p, PLAN_NOT_SHOWN)
         except OSError as e:
             say("could not close %s (%s)" % (p.name, e.strerror or e))
+        finally:
+            if fd is not None:
+                os.close(fd)
 
     if opts.get("--resume") and rounds:
         n, newest = rounds[-1]
-        if _read_file(topic / ("plan-%02d.md" % n), MAX_ATTACHMENT) == plan:
-            if _said_done(newest):
-                print(answers_path_for(newest), flush=True)
-                return EXIT_DONE
-            if not closed(newest):
-                return _run(argparse.Namespace(decisions=str(newest), notes=""), waiter=True,
-                            on_refused=lambda: refused(newest))
+        r = _plan_reusable(newest, n, plan)
+        if r is not None and r.finished:
+            print(r.answers_path, flush=True)
+            return EXIT_DONE
+        if r is not None and not closed(newest):
+            return _run(argparse.Namespace(decisions=str(newest), notes=""), waiter=True,
+                        on_refused=lambda: refused(newest))
     n = max(nums) + 1
     if n > 9999:
         return say("%s has no round number left" % topic)
@@ -4727,14 +4772,19 @@ def _plan(argv):
     path = topic / ("round-%02d.json" % n)
     try:
         topic.mkdir(parents=True, exist_ok=True)
+        fd = _open_folder(topic)  # the folder written in is this one, with no link swapped in since the check
+    except OSError as e:
+        return say("cannot open %s as a folder of its own, not a link (%s)" % (topic, e.strerror or e))
+    try:
         for p in older:
-            _close_round(p, PLAN_REPLACED % n)
-        with open(str(topic / ("plan-%02d.md" % n)), "xb") as f:
-            f.write(plan)
-        with open(str(path), "x", encoding="utf-8") as f:
-            f.write(json.dumps(plan_round(n), indent=2) + "\n")
+            _close_round(fd, p, PLAN_REPLACED % n)
+        _create(fd, topic, "plan-%02d.md" % n, plan)
+        _create(fd, topic, path.name, _plan_round_bytes(n))
     except OSError as e:
         return say("cannot write in %s (%s)" % (topic, e.strerror or e))
+    finally:
+        if fd is not None:
+            os.close(fd)
     return _run(argparse.Namespace(decisions=str(path), notes=""), waiter=True, on_refused=lambda: refused(path))
 
 
