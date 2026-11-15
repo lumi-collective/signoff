@@ -313,20 +313,53 @@ ROUND_AGE = """(function () {
   return {time: t.checkVisibility() && t.textContent, datetime: t.dateTime, title: t.title,
     pill: p.checkVisibility() && p.textContent, note: !!n && n.checkVisibility() && n.textContent};
 })()"""
-# A wide header: the header's buttons and the progress pill whose text takes more than one line, and whether every
-# shown part of the header sits in one row.
-HEADER_ONE_ROW = """(function () {
-  var h = document.querySelector('body > header'), broken = [];
-  Array.prototype.forEach.call(h.querySelectorAll('button, .progress'), function (e) {
-    if (!e.checkVisibility()) return;
+# A round's header: the title's shown width and whether all of it fits, the buttons and the progress pill whose
+# text takes more than one line or that end past the header's right edge, the pairs of the time, the 2-day pill, the
+# title and the controls whose boxes meet, the header's text lines that start with a separator, and its rows.
+HEADER = """(function () {
+  var h = document.querySelector('body > header'), t = document.getElementById('title'), hr = h.getBoundingClientRect();
+  function shown(e) { return e.checkVisibility(); }
+  var controls = Array.prototype.filter.call(h.querySelectorAll('button, .progress'), shown), broken = [];
+  controls.forEach(function (e) {
     var r = document.createRange(); r.selectNodeContents(e);
     var rects = Array.prototype.filter.call(r.getClientRects(), function (x) { return x.width > 0; });
-    if (rects.some(function (x) { return x.top >= rects[0].bottom - 1; })) broken.push(e.id || e.className || e.textContent);
+    if (rects.some(function (x) { return x.top >= rects[0].bottom - 1; })
+        || e.getBoundingClientRect().right > hr.right + 0.5) broken.push(e.id || e.className);
   });
-  var parts = Array.prototype.filter.call(h.children, function (e) { return e.checkVisibility(); })
-    .map(function (e) { return e.getBoundingClientRect(); });
-  var row = parts.every(function (a) { return parts.every(function (b) { return a.top < b.bottom && b.top < a.bottom; }); });
-  return {broken: broken, row: row};
+  var boxes = [document.getElementById('opened'), document.getElementById('old-round'), t].filter(shown)
+    .concat(controls);
+  var overlaps = [];
+  boxes.forEach(function (a, i) { boxes.slice(i + 1).forEach(function (b) {
+    var p = a.getBoundingClientRect(), q = b.getBoundingClientRect();
+    if (p.left < q.right - 0.5 && q.left < p.right - 0.5 && p.top < q.bottom - 0.5 && q.top < p.bottom - 0.5)
+      overlaps.push([a.id || a.className, b.id || b.className]);
+  }); });
+  // Every shown character and every ::before text, with its box and its block: one starts a line when nothing of
+  // its block sits left of it on the same line.
+  function block(e) { while (getComputedStyle(e).display.indexOf('inline') === 0) e = e.parentElement; return e; }
+  var marks = [], w = document.createTreeWalker(h, NodeFilter.SHOW_TEXT), n;
+  while ((n = w.nextNode())) {
+    if (!shown(n.parentElement)) continue;
+    for (var i = 0; i < n.data.length; i++) {
+      if (!n.data[i].trim()) continue;
+      var r = document.createRange(); r.setStart(n, i); r.setEnd(n, i + 1);
+      var b = r.getClientRects()[0];
+      if (b && b.width) marks.push({c: n.data[i], r: b, b: block(n.parentElement)});
+    }
+  }
+  Array.prototype.forEach.call(h.querySelectorAll('*'), function (e) {
+    var c = getComputedStyle(e, '::before').content.replace(/^"|"$/g, '').trim(), b = e.getClientRects()[0];
+    if (c && c !== 'none' && c !== 'normal' && shown(e) && b) marks.push({c: c[0], r: b, b: block(e)});
+  });
+  var dots = marks.filter(function (m) {
+    return '·•|'.indexOf(m.c) >= 0 && !marks.some(function (o) {
+      return o !== m && o.b === m.b && o.r.left < m.r.left - 0.5 && o.r.top < m.r.bottom && m.r.top < o.r.bottom; });
+  }).map(function (m) { return m.b.id || m.b.className; });
+  var parts = Array.prototype.filter.call(h.children, shown).map(function (e) { return e.getBoundingClientRect(); });
+  var rows = parts.filter(function (a, i) { return !parts.slice(0, i).some(function (b) {
+    return a.top < b.bottom && b.top < a.bottom; }); }).length;
+  return {title: t.clientWidth, fits: t.scrollWidth <= t.clientWidth, broken: broken, overlaps: overlaps, dots: dots,
+    rows: rows};
 })()"""
 # The item in Focus as it shows before any scrolling: main's box from the header's foot to the key bar's top, and
 # where the item's parts sit in it (null when the item has none).
@@ -508,6 +541,57 @@ def run_phone(work):
         kill(browser.proc)
 
 
+HEADER_WIDTHS = (761, 768, 800, 900, 1000, 1001, 1100, 1280, 1440)
+
+
+def run_header(work):
+    """A round's header from 761 to 1440 px, the sidebar a drawer up to 1000 px and beside it above, on the demo's
+    round 2 with a long title, opened three days ago in a project, in English and Hungarian: the title keeps its
+    room, each control and the progress pill one line inside the header, nothing covers anything, no line starts with
+    a separator, and at 1280 px it is one row. Returns {lang: {width: header}} for a report."""
+    seen = {}
+    for lang in ("en", "hu"):
+        topic = work / "notebook-app" / ".signoff" / ("2026-01-06-header-" + lang)
+        (work / "notebook-app" / ".git").mkdir(parents=True, exist_ok=True)
+        for name in ("mockups", "boards", "notes"):
+            shutil.copytree(str(DEMO / name), str(topic / name))
+        old = time.time() - 3 * 86400
+        for n in range(1, 5):
+            data = json.loads((DEMO / ("round-%02d.json" % n)).read_text(encoding="utf-8"))
+            data["lang"] = lang
+            if n == 2:  # too long for any width, so the title's room is measured
+                data["title"] += (", with the empty state, the filters and the sort order of every screen, and what "
+                                  "each one says while the notes load")
+            path = topic / ("round-%02d.json" % n)
+            path.write_text(json.dumps(data), encoding="utf-8")
+            os.utime(str(path), (old, old))
+        server, out, err, browser = serve(topic, str(work / ("profile-header-" + lang)))
+        try:
+            wait_for("the page", lambda: browser.js("!!document.getElementById('tab-1')"))
+            browser.click("#tab-1")
+            age = browser.js(ROUND_AGE)
+            ago, pill = {"en": ("3 days ago", "Open 2+ days"), "hu": ("3 napja", "2+ napja nyitva")}[lang]
+            check(age["time"] and age["time"].endswith(ago) and age["pill"] == pill
+                  and browser.js("document.getElementById('project').textContent") == "notebook-app",
+                  "%s: the header shows the project, its time and the pill: %r" % (lang, age))
+            seen[lang] = {}
+            for width in HEADER_WIDTHS:
+                browser.call("Emulation.setDeviceMetricsOverride", width=width, height=900, deviceScaleFactor=1,
+                             mobile=False)
+                time.sleep(0.3)
+                head = seen[lang][width] = browser.js(HEADER)
+                check((head["fits"] or head["title"] >= 200) and head["broken"] == [] and head["overlaps"] == []
+                      and head["dots"] == [] and (width != 1280 or head["rows"] == 1),
+                      "%s: the header at %d px: %r" % (lang, width, head))
+        except E2EError:
+            sys.stderr.write("--- Signoff stderr ---\n" + "".join(err))
+            raise
+        finally:
+            kill(server)
+            kill(browser.proc)
+    return seen
+
+
 def run_first_screen(work):
     """On a phone in Focus, before any scrolling, each item of the demo's round 2 shows its question, the agent's
     recommendation and its first option between the header and the key bar: a picture that takes marks, one without
@@ -627,12 +711,12 @@ def run_single(work):
               "the header should name the project folder %r" % work.name)
         check(browser.js("document.title") == work.name + " · " + data["title"], "the tab title should start with the "
               "project name: %r" % browser.js("document.title"))
-        # The project line also says when the round was asked: a fresh one, with no pill and no note.
+        # The line under the project's name says when the round was asked: a fresh one, with no pill and no note.
         age = browser.js(ROUND_AGE)
         check(re.fullmatch(r"Opened .+ · (just now|\d+ min ago)", age["time"]) and re.fullmatch(
               r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", age["datetime"]) and age["title"] and age["pill"] is False
               and age["note"] is False and browser.js("document.getElementById('project-line').innerText")
-              == work.name + age["time"], "a fresh round's opening time in the header: %r" % age)
+              == work.name + "\n" + age["time"], "a fresh round's opening time in the header: %r" % age)
         browser.click("#r0-i0-o%d" % option)
         browser.click("#r0-i1-c")
         browser.call("Input.insertText", text=comment)
@@ -2674,6 +2758,7 @@ def run():
     (work / ".git").mkdir()  # the project root, so the header can name it
     run_old_rounds(work)
     run_phone(work)
+    run_header(work)
     run_first_screen(work)
     run_single(work)
     run_history(work)
@@ -2725,14 +2810,6 @@ def run():
                             "m.getBoundingClientRect().left >= q.getBoundingClientRect().right, "
                             "m.querySelector('.m-head').textContent]; })()")
         check(margin == [True, True, "Agent recommends"], "the margin recommendation at 1280 px: %r" % margin)
-        # A wide header stays one row with every button on one line, the opening time and the project's name with it.
-        for width in (1280, 1000):
-            browser.call("Emulation.setDeviceMetricsOverride", width=width, height=1000, deviceScaleFactor=1, mobile=False)
-            time.sleep(0.3)
-            head = browser.js(HEADER_ONE_ROW)
-            check(head == {"broken": [], "row": True}, "the header at %d px: %r" % (width, head))
-        browser.call("Emulation.setDeviceMetricsOverride", width=1280, height=900, deviceScaleFactor=1, mobile=False)
-        time.sleep(0.3)
         browser.click("#tab-1")
         check(browser.js("!document.getElementById('panel-1').hidden && document.getElementById('panel-0').hidden && "
                          "document.getElementById('title').textContent") == rounds[1]["title"]
@@ -2824,6 +2901,8 @@ def main():
           "recommendations and answers in light and dark; a phone opens in Focus, Next, the margin above the options, "
           "Esc, Hungarian labels, an old round's time, pill and note in Hungarian, its context with the first item "
           "only; "
+          "a round's header from 761 to 1440 px, in English and Hungarian: the title keeps 200 px, each control on one "
+          "line inside it, nothing covering anything, no line starting with a separator, one row at 1280 px; "
           "on a phone in Focus each item of round 2 shows its question, recommendation and first option before any "
           "scrolling, in English and Hungarian, its pictures as thumbnails and the one that takes marks small with "
           "Larger and Smaller; "
@@ -2874,8 +2953,7 @@ def main():
              "a round asked 3 days ago: the 2-day pill on its row (from the file's time, the clock on the run's "
              "start) and the note in its open row, its page's opening time, pill and note, in Focus too; its context "
              "on the row's second line, in its open row, found by the search and at the top of its page; ") +
-          "2 rounds in the sidebar with their items, the margin recommendation, the header one row with every button "
-          "on one line at 1280 and 1000 px, Focus with f, j and Esc, "
+          "2 rounds in the sidebar with their items, the margin recommendation, Focus with f, j and Esc, "
           "a non-recommended pick, both accepted, Summary filter, the sign-off sheet, Done, exit 0, "
           "2 answers paths on stdout")
     return 0

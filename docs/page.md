@@ -9,9 +9,11 @@
   starts the browser tab's title, so with several projects open you can tell which one is asking. It is the name
   of the nearest folder with a `.git` or a `.signoff` folder (not a link) in it, never the home folder and never a
   path. A decisions folder with neither shows no name. The past-decisions page shows the name of its root folder
-  instead.
-- **When the round was asked** follows the name: `Opened <date> · 3 days ago`, the full time on hover. It is the
-  round file's time, so a new run on the same rounds keeps it, and an agent's edit of the round moves it; a
+  instead. Where the round's title would get less than 260 px, the header's buttons move to a row of their own
+  under it.
+- **When the round was asked** is on the line under the name: `Opened <date> · 3 days ago`, the full time on
+  hover. It is the round file's time, so a new run on the same rounds keeps it, and an agent's edit of the round
+  moves it; a
   `touch`, a copy that does not keep file times (`cp` without `-p`) or a `git checkout` moves it too, which only
   makes a round look younger. An open round 2 days old or more says **Open 2+ days** there and, at the top of the
   round, that its questions may be out of date, so ask the agent if in doubt. A tab left open keeps its age text and
@@ -38,8 +40,9 @@
   the options start on the first screen. The question and the recommendation stay on the first screen; with
   commands or a long context the options start below. Tap a thumbnail to open it full size; a picture you can mark
   starts small beside its caption, and **Larger** (and back **Smaller**) gives it the full width to draw on. The
-  header keeps the round's title beside the project's mark, with the opening time on a line of its own, and the bar
-  at the foot takes two rows: why Done waits, then the save state and **Accept this round**.
+  header keeps the round's title beside the project's mark, and the bar at the foot takes two rows: why Done waits,
+  then the save state and **Accept this round** (three when the save state needs a line of its own, as after a
+  reload).
 - **Other and Skip** appear where the agent allows them: Other with its own text field, Skip on its own.
 - **A number.** Where the answer is a number, the item has a slider and a number field that move together,
   between the agent's lowest and highest value and on its step, with the unit beside them. The recommended

@@ -617,12 +617,15 @@ body.run .head-intro{display:none}
 body.run .head-text{display:flex;flex-direction:column;min-width:0}
 body.run h1{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 body.run .project{order:2;padding:0;margin:2px 0 0;font-size:12px;font-weight:500;color:var(--quiet)}
-body.run #project{display:inline-block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
-  vertical-align:top}  /* one piece: the time wraps whole under it, never the name */
-#project:not(:empty)+#opened::before{content:" · "}
-#opened{white-space:nowrap}
-.project .pill{margin-left:6px}
-body.run>header button,body.run>header .progress{white-space:nowrap}  /* the title's block gives way, never a button */
+body.run #project{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}  /* the time under it */
+#opened{white-space:nowrap;margin-right:6px}  /* not the pill's left margin: a pill on a line of its own lines up */
+body.run>header button,body.run>header .progress{white-space:nowrap}
+@media (min-width:761px){
+  /* The title's block keeps 260 px, room for the longest time line; with less, the controls take a second row. No
+     window width says when: the sidebar, a drawer up to 1000 px, makes the header narrower at 1001 than at 800. */
+  body.run:not(.hist)>header{flex-wrap:wrap}
+  body.run:not(.hist) .head-text{flex:1 1 260px}
+  body.run:not(.hist)>header .actions{margin-left:auto}}
 body.run .back{margin:0 0 2px}
 body.run>header>.mono{flex:none;margin:0}
 @media (min-width:1001px){body.hist:not(.side-off){grid-template-columns:300px minmax(0,1fr)}}
@@ -712,8 +715,6 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
   body.run>main{padding:0 12px 32px}
   body.run>header{flex-wrap:wrap}
   body.run:not(.hist)>header .head-text{flex-basis:0}  /* beside the project's monogram, not on a row of its own */
-  body.run:not(.hist) #project{display:block}  /* the time on a line of its own */
-  body.run:not(.hist) #project:not(:empty)+#opened::before{content:none}
   body.run>header .actions{flex:1 0 100%;flex-wrap:wrap}
   body.run>header .progress{display:none}  /* the bar says which round waits */
   body.run .ib-fbar button:last-child{display:none}  /* Leave Focus: the pressed Focus button in the header */
