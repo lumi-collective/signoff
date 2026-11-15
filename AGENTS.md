@@ -639,7 +639,8 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   their topic folder) and the home, its real path checked against the descriptor the note is created through. A
   value that is still a `${user_config.…}` placeholder is off, as an empty one. The note `O_CREAT | O_EXCL |
   O_NOFOLLOW`, 0600, never over a file or link already at its name (one stderr line, nothing replaced), its
-  private answers left out (`answers_markdown(..., hide_private=True)`); one round that fails costs only its own
+  private answers left out (`answers_markdown(..., hide_private=True)`), and a line note's `quote` too (the
+  agent's file text, which a synced folder must not get); one round that fails costs only its own
   note. A SIGINT, SIGTERM or SIGHUP while the notes are written acts as the signal does (the run's handlers are put
   back by then), so the exit code may not be 0 although the paths are on stdout. The inbox never writes one. The one thing Signoff removes is a
   dead `inbox.sock`: only when it is a socket in the inbox's own home, the starting inbox holds `inbox.lock`, and

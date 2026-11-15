@@ -38,7 +38,7 @@ Beside each round, `round-NN.answers.json`, from the first change on the page:
   percent like `boxes`.
 - `lines`: your notes on lines of the item's attachments (an item with `lines: true`), at most 50, each
   `{att, line, quote, comment}`: `att` the attachment's position in the item's `attachments` (from 0), `line`
-  the line's number in the file (from 1: the text split at each line feed, a carriage return at a line's end
+  the line's number in the file (from 1 to 262,144: the text split at each line feed, a carriage return at a line's end
   dropped, no line after a final line feed), `quote` that line's first 300 characters as the page showed it, and
   `comment` your note (1 to 20,000 characters). A save checks a new or changed note against the file as Signoff
   read it at start; a note saved before is kept as it is, so a `quote` that no longer matches the file's line
@@ -71,7 +71,8 @@ Agents read the JSON.
 With `--notes` (the Notes folder setting), a run that ends with Done also puts a copy of each round's Markdown
 in your notes folder, written from the answers file at that moment. There a private answer's item has its
 title, `(private)` and the agent's own stakes, cannot be undone and settled lines only: no choice, comment, Other
-text or mark. The free text always goes in. See [running it yourself](running.md#notes-folder).
+text or mark. A line note there has no quote: the attachment's name, the line's number and the comment. The free
+text always goes in. See [running it yourself](running.md#notes-folder).
 
 **Done is final:** a round whose answers say `done: true` is shown read only from then on and never written
 again. If its round file has changed since (the SHA-256 no longer matches), Signoff refuses to start (exit code

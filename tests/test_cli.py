@@ -335,6 +335,22 @@ class CliNotes(unittest.TestCase):
         self.assertIn("- Line note, change.diff line 2, “+++ b/x”: (private)\n", beside)
         self.assertNotIn("secret", beside)
 
+    def test_a_line_note_goes_there_without_the_line_it_quotes(self):
+        # The noted line is the agent's file text, which a synced notes folder must not get: name, number, comment.
+        (self.folder.path / "change.diff").write_text("--- a/x\n+API_KEY=abc\n", encoding="utf-8")
+        data = sample_decisions()
+        data["items"][0].update(attachments=[{"src": "change.diff"}], lines=True)
+        self.folder.write(data)
+        line_note = {"att": 0, "line": 2, "quote": "+API_KEY=abc", "comment": "not in git"}
+        body = {"answers": {"layout": {"choice": "one", "comment": "", "lines": [line_note]}}, "free_text": "",
+                "done": True}
+        self.run_done(self.notes, body)
+        note = (self.notes / self.name).read_text(encoding="utf-8")
+        self.assertIn("- Line note, change.diff line 2: not in git\n", note)
+        self.assertNotIn("API", note)
+        beside = (self.folder.path / "decisions.answers.md").read_text(encoding="utf-8")
+        self.assertIn("- Line note, change.diff line 2, “+API\\_KEY=abc”: not in git\n", beside)
+
     def test_an_empty_setting_writes_nothing(self):
         err = self.run_done("")
         self.assertNotIn("notes:", err)

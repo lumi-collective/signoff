@@ -443,7 +443,7 @@ def line_note(line, quote=None, att=0, comment="look here"):
 
 
 class LineRule(unittest.TestCase):
-    """One rule for a line note's line and quote, pinned by tests/line_rule.json, which the page's test reads too:
+    """One rule for a line note's line and quote, pinned by tests/line_rule.json; the page's count must match it:
     the text split on LF, one CR cut off each line, no line after a final newline, a quote cut to 300 code points."""
 
     def setUp(self):
@@ -506,7 +506,8 @@ class LineRule(unittest.TestCase):
         for bad in (dict(good, line=0), dict(good, line=True), dict(good, line=1.0), dict(good, line="1"),
                     dict(good, quote=None), dict(good, quote="x" * 301), dict(good, comment=""),
                     dict(good, comment=None), dict(good, comment="x" * (signoff.MAX_TEXT + 1)),
-                    dict(good, side="new"), {k: v for k, v in good.items() if k != "quote"}, [good], "x"):
+                    dict(good, side="new"), {k: v for k, v in good.items() if k != "quote"}, [good], "x",
+                    dict(good, line=signoff.MAX_ATTACHMENT + 1), dict(good, line=2 ** 53 + 1)):
             self.assertIn("line note 1 must be", self.bad([bad]), bad)
         self.assertIn("list of up to 50", self.bad(good))
         self.assertEqual(self.check([dict(good, comment="x" * signoff.MAX_TEXT)])["answers"]["filters"]["lines"][0]
@@ -554,9 +555,14 @@ class LineRule(unittest.TestCase):
                   "answers": {"filters": {"choice": ["date"], "lines": [stale]}}}
         self.assertEqual(signoff.check_answers(stored, self.decisions, stored=True)["answers"]["filters"]["lines"],
                          [stale])
-        stored["answers"]["filters"]["lines"] = [dict(stale, att=2)]  # an index past the item's attachments
-        with self.assertRaises(ValueError):
-            signoff.check_answers(stored, self.decisions, stored=True)
+        stored["answers"]["filters"]["lines"] = [dict(stale, line=signoff.MAX_ATTACHMENT)]  # no file has more lines
+        self.assertEqual(len(signoff.check_answers(stored, self.decisions, stored=True)["answers"]["filters"]["lines"]),
+                         1)
+        # An index past the item's attachments; a line past any file's, which a page would round past 2^53.
+        for bad in (dict(stale, att=2), dict(stale, line=signoff.MAX_ATTACHMENT + 1), dict(stale, line=2 ** 53 + 1)):
+            stored["answers"]["filters"]["lines"] = [bad]
+            with self.assertRaises(ValueError):
+                signoff.check_answers(stored, self.decisions, stored=True)
 
 
 if __name__ == "__main__":

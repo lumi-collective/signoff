@@ -130,7 +130,8 @@ project's folder is not refused. A value that is still the setting's
 `${user_config.…}` placeholder is off, as an empty one, with no message. When a run exits 0, after
 its answers paths are on stdout, it writes one note for each round that was open when it started, from the round's
 answers file: the [Markdown copy](answers-file.md), except that a private answer's item has only its title,
-`(private)` and the agent's own stakes, cannot be undone and settled lines. The round's free text (Anything else) always goes in: it has no Private mark. One round whose answers
+`(private)` and the agent's own stakes, cannot be undone and settled lines, and a line note names its attachment,
+the line's number and the comment, never the line it quotes (the agent's file text). The round's free text (Anything else) always goes in: it has no Private mark. One round whose answers
 file cannot be read or used gets one stderr line and no note; the others still get theirs. A waiter whose rounds were answered in the inbox writes them too; the inbox itself never does. A run
 that exits 1, 2 or 130, a run killed after Done, and a round finished while no run waited on it (an orphan round, or
 one another program finished) get no note. A later run shows done rounds read only and writes none for them.

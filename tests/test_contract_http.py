@@ -606,6 +606,31 @@ class Exits(unittest.TestCase):
         self.assertEqual(run.save(0, body(good, dict(good, line=1, quote="--- a/x")))[0].status, 200)
         saved = json.loads(folder.answers.read_text(encoding="utf-8"))
         self.assertEqual(saved["answers"]["layout"]["lines"], [good, dict(good, line=1, quote="--- a/x")])
+        self.assertEqual(run.save(0, body(dict(good, line=262145)))[0].status, 400)  # past any file's lines
+
+    def test_a_stored_line_note_past_any_files_lines_is_refused(self):
+        # A page would round a line past 2^53 and then fail every save of the round: such a file does not load.
+        folder = Folder()
+        self.addCleanup(folder.cleanup)
+        (folder.path / "change.diff").write_bytes(b"--- a/x\n+++ b/x\n")
+        data = sample_decisions()
+        data["items"][0].update(attachments=[{"src": "change.diff"}], lines=True)
+        folder.write(data)
+        stored = {"version": 1, "done": False, "saved": "2026-01-01T12:00:00Z", "free_text": "",
+                  "answers": {"layout": {"choice": "two", "lines": [
+                      {"att": 0, "line": 2 ** 53 + 1, "quote": "+++ b/x", "comment": "here"}]}}}
+        folder.answers.write_text(json.dumps(stored), encoding="utf-8")
+        done = subprocess.run(COMMAND + [str(folder.target), "--no-open"], stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE, universal_newlines=True, encoding="utf-8", timeout=30)
+        self.assertEqual((done.returncode, done.stdout), (1, ""), done.stderr)
+        self.assertNotIn("Traceback", done.stderr)
+        stored["answers"]["layout"]["lines"][0]["line"] = 262144  # at the ceiling: it loads
+        folder.answers.write_text(json.dumps(stored), encoding="utf-8")
+        run = Run(folder.target)
+        self.addCleanup(run.stop)
+        run.open()
+        body = {"answers": stored["answers"], "free_text": "", "done": False}
+        self.assertEqual(run.save(0, body)[0].status, 200)  # sent back unchanged: kept as stored, not matched
 
     def test_invalid_input_exits_1(self):
         rounds = Rounds(1)

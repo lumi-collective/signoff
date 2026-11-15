@@ -696,7 +696,8 @@ def _check_lines(notes, item, key, old):
     for n, note in enumerate(notes, 1):
         ok = isinstance(note, dict) and set(note) == LINE_NOTE_KEYS
         ok = ok and type(note["att"]) is int and 0 <= note["att"] < len(atts)
-        ok = ok and type(note["line"]) is int and note["line"] >= 1
+        # No file within MAX_ATTACHMENT bytes has more lines; a larger line a page would round past 2^53.
+        ok = ok and type(note["line"]) is int and 1 <= note["line"] <= MAX_ATTACHMENT
         ok = ok and isinstance(note["quote"], str) and len(note["quote"]) <= MAX_QUOTE
         ok = ok and isinstance(note["comment"], str) and 1 <= len(note["comment"]) <= MAX_TEXT
         if not ok:
@@ -932,7 +933,8 @@ MD_LABELS = {
            "user": "the user", "notification": "recommendation, accepted from a notification", "unknown": "unknown", "yes_at": "yes, %s", "changed": "no, changed after it was accepted",
            "command": "Command", "elsewhere": "decided elsewhere, marked by the agent", "stakes": "Stakes",
            "low": "low", "medium": "medium", "high": "high", "irreversible": "Cannot be undone",
-           "settled": "Settled earlier, says the agent", "line": "Line note, %s line %d, “%s”: %s"},
+           "settled": "Settled earlier, says the agent", "line": "Line note, %s line %d%s: %s",
+           "quote": ", “%s”"},
     "hu": {"choice": "Választás", "source": "Forrás", "comment": "Megjegyzés", "mark": "Jelölés %d, %d. kép, %s "
            "(x, y, sz, m, %%-ban): %s", "attachment": "Melléklet", "saved": "Mentve", "accepted": "Elfogadva",
            "done": "Kész", "yes": "igen", "no": "nem", "skipped": "Kihagyva", "other": "Egyéb", "rec": "javasolt",
@@ -942,7 +944,8 @@ MD_LABELS = {
            "changed": "nem, elfogadás után módosítva", "command": "Parancs",
            "elsewhere": "máshol eldőlt, az ágens jelölte", "stakes": "Tét", "low": "alacsony",
            "medium": "közepes", "high": "magas", "irreversible": "Nem vonható vissza",
-           "settled": "Korábban eldőlt, az ágens szerint", "line": "Sor-megjegyzés, %s %d. sora, „%s”: %s"},
+           "settled": "Korábban eldőlt, az ágens szerint", "line": "Sor-megjegyzés, %s %d. sora%s: %s",
+           "quote": ", „%s”"},
 }
 
 
@@ -1024,10 +1027,14 @@ def answers_markdown(decisions, record, hide_private=False):
         for k, mark in enumerate(ans.get("marks", []), 1):
             out.append("- " + lb["mark"] % (k, mark["image"] + 1, ", ".join("%g" % v for v in mark["box"]),
                                             text(mark["comment"])))
-        for note in ans.get("lines", []):  # the quote through md_line: a stored one is unchecked file text
-            out.append("- " + lb["line"] % (md_line(item["attachments"][note["att"]]["src"]), note["line"],
-                                            md_line(note["quote"], ""), text(note["comment"])))
-        for att in item.get("attachments", []):  # its name only: the text is the agent's, and stays in its file
+        for note in ans.get("lines", []):
+            # The quote is the agent's file text (a stored one unchecked), so md_line, and never in the notes
+            # folder's copy, which may be synced elsewhere: there the name, the number and the comment only.
+            quote = "" if hide_private else lb["quote"] % md_line(note["quote"], "")
+            out.append("- " + lb["line"] % (md_line(item["attachments"][note["att"]]["src"]), note["line"], quote,
+                                            text(note["comment"])))
+        # Each attachment by its name only: its text stays in its file, but for a noted line's quote above.
+        for att in item.get("attachments", []):
             name = md_line(att["src"])
             caption = att.get("caption", "")
             out.append("- %s: %s" % (lb["attachment"], "%s (%s)" % (md_line(caption), name) if caption.strip() else name))

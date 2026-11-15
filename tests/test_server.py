@@ -685,6 +685,27 @@ class LineNotes(unittest.TestCase):
         decisions = signoff.load_decisions(self.folder.decisions)[0]
         self.assertIn("- Sor-megjegyzés, notes/change.diff 6. sora, „a b c # headU+202E”: x",
                       signoff.answers_markdown(decisions, record))
+        # The attachment's name is the agent's text too: a line break in it must not split the note's line.
+        decisions["items"][0]["attachments"][0]["src"] = "notes/a" + chr(0x2028) + "# b.diff"
+        md = signoff.answers_markdown(decisions, record)
+        [line] = [ln for ln in md.split("\n") if "Sor-megjegyzés" in ln]
+        self.assertTrue(line.startswith("- Sor-megjegyzés, notes/a # b.diff 6. sora, „"), line)
+
+    def test_the_notes_folder_copy_leaves_the_quote_out(self):
+        # The copy in the notes folder may be synced elsewhere: a noted line of the agent's file stays out of it.
+        decisions = signoff.load_decisions(self.folder.decisions)[0]
+        record = dict(noted(note(quote="+API_KEY=abc", comment="not this")), saved="2026-01-01T12:00:00Z")
+        beside = signoff.answers_markdown(decisions, record)
+        self.assertIn("- Line note, notes/change.diff line 6, “+API\\_KEY=abc”: not this\n", beside)
+        copy = signoff.answers_markdown(decisions, record, hide_private=True)
+        self.assertIn("- Line note, notes/change.diff line 6: not this\n", copy)
+        self.assertNotIn("API", copy)
+        private = dict(record, answers={"layout": dict(record["answers"]["layout"], private=True)})
+        self.assertNotIn("not this", signoff.answers_markdown(decisions, private, hide_private=True))
+        self.folder.write(with_lines("hu"))
+        decisions = signoff.load_decisions(self.folder.decisions)[0]
+        self.assertIn("- Sor-megjegyzés, notes/change.diff 6. sora: not this\n",
+                      signoff.answers_markdown(decisions, record, hide_private=True))
 
     def test_an_old_round_keeps_its_body_limit(self):
         self.folder.write(sample_decisions())
