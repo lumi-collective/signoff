@@ -1128,6 +1128,25 @@ class MarkdownEscape(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertEqual(signoff.md_text(text), want)
 
+    BREAKS = ["\r", "\r\n", " ", " ", "\x85", "\x0b", "\x0c", "\x1c", "\x1d", "\x1e"]
+
+    def test_one_line_fields_stay_on_one_line(self):
+        for br in self.BREAKS:
+            with self.subTest(br=repr(br)):
+                d = sample_decisions()
+                item = d["items"][0]
+                d["title"] = "T1" + br + "$x$"
+                item["title"] = "I1" + br + "$x$"
+                item["group"] = "G1" + br + "$x$"
+                item["options"][0]["label"] = "L1" + br + "$x$"
+                d["free_text"] = dict(d["free_text"], title="F1" + br + "$x$")
+                record = {"answers": {item["id"]: {"choice": item["options"][0]["id"], "comment": ""}},
+                          "free_text": "", "done": False, "saved": "2026-01-01T12:00:00Z"}
+                lines = signoff.answers_markdown(d, record).splitlines()
+                for head in ("# T1", "## G1", "### 1. I1", "## F1"):
+                    self.assertTrue(any(l.startswith(head) and "$x$" in l for l in lines), head)
+                self.assertTrue(any(l.startswith("- Choice:") and "L1" in l and "$x$" in l for l in lines))
+
     def test_no_control_or_format_character_survives(self):
         import unicodedata
         hostile = [chr(c) for c in range(0x110000) if unicodedata.category(chr(c)) in ("Cc", "Cf", "Cs")]

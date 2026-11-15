@@ -887,17 +887,23 @@ def md_text(text, none="(none)"):
     return "  \n  ".join(out) or none
 
 
+def md_line(text, none="(none)"):
+    """md_text for a heading or list line: every line break that splitlines() honours (CR, U+2028, NEL, ...) is a
+    space, so the field cannot split its line and leave a second part as body text."""
+    return md_text(" ".join(text.splitlines()), none)
+
+
 def answers_markdown(decisions, record, hide_private=False):
     """The answers as a Markdown page for people, its labels in the round's language; the JSON stays the source of
     truth. Agent text is never translated. hide_private: a private answer's item gets its title and (private) only
     (the notes folder's copy, which may be synced elsewhere)."""
     lb = md_labels(decisions)
-    out = ["# " + md_text(decisions["title"].replace("\n", " ")), ""]
+    out = ["# " + md_line(decisions["title"]), ""]
     group = None
     for n, item in enumerate(decisions["items"], 1):
         if item.get("group") and item["group"] != group:
             group = item["group"]
-            out += ["## " + md_text(group.replace("\n", " ")), ""]
+            out += ["## " + md_line(group), ""]
         ans = record["answers"].get(item["id"], {})
         choice = ans.get("choice")
         picked = choice if isinstance(choice, list) else ([] if choice is None else [choice])
@@ -906,20 +912,20 @@ def answers_markdown(decisions, record, hide_private=False):
         # A private answer keeps its text in the JSON for the agent; this copy for people only says it is there.
         private = ans.get("private") is True
         if private and hide_private:
-            out += ["### %d. %s" % (n, md_text(item["title"].replace("\n", " "))), "", lb["private"], ""]
+            out += ["### %d. %s" % (n, md_line(item["title"])), "", lb["private"], ""]
             continue
 
         def text(value):
             return lb["private"] if private and value.strip() else md_text(value, lb["none"])
-        labels = {o["id"]: md_text(o["label"]) for o in item.get("options", [])}
+        labels = {o["id"]: md_line(o["label"]) for o in item.get("options", [])}
         if item["select"] == "number" and _number(choice):  # the value is ours to write; the unit is the agent's
-            labels[choice] = _num_text(item, choice, lambda unit: md_text(unit, ""))
+            labels[choice] = _num_text(item, choice, lambda unit: md_line(unit, ""))
         labels[SKIP] = lb["skipped"]
         labels[OTHER] = lb["other"] + ": " + text(ans.get("other", ""))
         # Whether a choice was the recommendation only means something when there was one.
         shown = ", ".join(labels[c] + ("" if not rec else " (%s)" % (lb["rec"] if c in rec else lb["not_rec"]))
                           for c in picked) or lb["nothing"]
-        out += ["### %d. %s" % (n, md_text(item["title"].replace("\n", " "))), "",
+        out += ["### %d. %s" % (n, md_line(item["title"])), "",
                 "- %s: %s" % (lb["choice"], shown),
                 "- %s: %s" % (lb["source"], lb[ans["source"]] if ans.get("source") in SOURCE_VALUES else lb["unknown"])]
         if ans.get("comment", "").strip():  # no empty line for a comment nobody wrote
@@ -928,16 +934,16 @@ def answers_markdown(decisions, record, hide_private=False):
             out.append("- " + lb["mark"] % (k, mark["image"] + 1, ", ".join("%g" % v for v in mark["box"]),
                                             text(mark["comment"])))
         for att in item.get("attachments", []):  # its name only: the text is the agent's, and stays in its file
-            name = md_text(att["src"].replace("\n", " "))
-            caption = att.get("caption", "").replace("\n", " ")
-            out.append("- %s: %s" % (lb["attachment"], "%s (%s)" % (md_text(caption), name) if caption.strip() else name))
+            name = md_line(att["src"])
+            caption = att.get("caption", "")
+            out.append("- %s: %s" % (lb["attachment"], "%s (%s)" % (md_line(caption), name) if caption.strip() else name))
         for cmd in item.get("commands", []):  # for reading, not pasting: md_text drops indentation and blank lines
-            caption = cmd.get("caption", "").replace("\n", " ")
-            out.append("- %s%s: %s" % (lb["command"], " (%s)" % md_text(caption) if caption.strip() else "",
+            caption = cmd.get("caption", "")
+            out.append("- %s%s: %s" % (lb["command"], " (%s)" % md_line(caption) if caption.strip() else "",
                                        md_text(cmd["text"])))
         out.append("")
     title = decisions["free_text"].get("title") or lb["anything"]
-    out += ["## " + md_text(title.replace("\n", " ")), "", md_text(record["free_text"], lb["none"]), "",
+    out += ["## " + md_line(title), "", md_text(record["free_text"], lb["none"]), "",
             "%s: %s  " % (lb["saved"], record["saved"]), "%s: %s  " % (lb["accepted"], _accepted_text(record, lb)),
             "%s: %s" % (lb["done"], lb["yes"] if record["done"] else lb["no"]), ""]
     return "\n".join(out)
