@@ -1752,6 +1752,23 @@ class InboxOffer(InboxTest):
             ("an untouched many item without a recommendation",
              [one_round(question("m", select="many", rec=None), question("q"))],
              {1: record({"m": {"choice": [], "source": "user"}})}, None),
+            # A settled item is decided while it holds its recommendation, the user's earlier answer.
+            ("a settled item, unsaved", [one_round(question("s", settled="round-01"), question("q"))], None,
+             ("R3", "Question q", "Alpha")),
+            ("a settled item left at its recommendation",
+             [one_round(question("s", settled="round-01"), question("q"))],
+             {1: record({"s": {"choice": "a", "source": "recommended"}})}, ("R3", "Question q", "Alpha")),
+            ("a settled many item, the same options in another order",
+             [one_round(question("s", select="many", rec=["a", "c"], settled="round-01"), question("q"))],
+             {1: record({"s": {"choice": ["c", "a"], "source": "recommended"}})}, ("R3", "Question q", "Alpha")),
+            ("a settled number item at its recommendation",
+             [one_round({"id": "n", "title": "How many?", "select": "number", "range": {"min": 0, "max": 5},
+                         "recommended": 2, "settled": "round-01"}, question("q"))],
+             {1: record({"n": {"choice": 2.0, "source": "recommended"}})}, ("R3", "Question q", "Alpha")),
+            ("a settled item changed but only preselected", [one_round(question("s", settled="round-01"),
+                                                                       question("q"))],
+             {1: record({"s": {"choice": "b", "source": "recommended"}})}, None),
+            ("only settled items", [one_round(question("s", settled="round-01"))], None, None),
         ]
         self.start()
         for label, rounds, answers, want in cases:
@@ -1804,6 +1821,24 @@ class InboxOffer(InboxTest):
                 self.assertLess(time.monotonic(), deadline, "state.json never counted the round down")
                 time.sleep(0.02)
             self.assertIsNone(self.offer())  # a done round is offered no more
+
+    def test_accept_also_saves_each_unsaved_settled_item_as_its_recommendation(self):
+        rounds = [one_round(question("s", settled="round-01"), question("q"),
+                            question("m", select="many", rec=["a", "c"], settled="round-01"),
+                            question("p", sensitive=True, settled="round-01"), question("u", settled="round-01"))]
+        topic, e = self.case(rounds, {1: record({"u": {"choice": "a", "comment": "kept", "source": "recommended"}})})
+        self.start()
+        offer = self.offer()
+        self.assertEqual(offer["question"], "Question q")
+        self.assertEqual(self.ctl("accept", offer=offer["id"]), {"ok": True})
+        saved = json.loads((topic / "round-01.answers.json").read_text(encoding="utf-8"))
+        self.assertEqual((saved["done"], saved["accepted"]), (True, True))
+        self.assertEqual(saved["answers"], {
+            "s": {"choice": "a", "comment": "", "source": "recommended"},
+            "q": {"choice": "a", "comment": "", "source": "notification"},
+            "m": {"choice": ["a", "c"], "comment": "", "source": "recommended"},
+            "p": {"choice": "a", "comment": "", "source": "recommended", "private": True},  # as the page starts it
+            "u": {"choice": "a", "comment": "kept", "source": "recommended"}})  # a saved one stays as it is
 
     def test_a_number_item_is_offered_as_its_value_and_unit_and_accepted_as_a_number(self):
         num = {"id": "n", "title": "How many?", "select": "number", "range": {"min": -10, "max": 10, "step": 0.5,
@@ -2044,6 +2079,14 @@ class InboxRows(InboxTest):
         self.end(e)
         self.assertEqual(self.rows(), empty)  # a run that ended is gone
 
+    def test_a_settled_item_is_listed_only_once_it_holds_another_choice(self):
+        self.case([one_round(question("s", settled="round-01"), question("q"), question("t", settled="round-01"))],
+                  {1: record({"t": {"choice": "b", "source": "recommended"}})})
+        self.start()
+        (r,) = self.rows()["rounds"]
+        self.assertEqual((r["item"], r["items"]), (1, [{"item": 1, "title": "Question q"},
+                                                       {"item": 2, "title": "Question t"}]))
+
     def test_a_number_item_is_listed_until_decided(self):
         num = {"id": "n", "title": "How many?", "select": "number", "range": {"min": 0, "max": 5}, "recommended": 2}
         self.case([one_round(question("q"), dict(num), dict(num, id="z", title="Zero"))],
@@ -2162,12 +2205,14 @@ class InboxElsewhere(InboxTest):
         held, _ = self.case([one_round(question("q"))])
         lock = signoff.try_lock(held / "round-01.json.lock")  # a page run started before the inbox
         self.addCleanup(signoff.unlock, lock)
+        settled, _ = self.case([one_round(question("q", settled="round-01"), question("r"))])
         self.start()
         before = self.files(self.root)
         cases = [
             ("an unknown round", self.op(topic, "q", name="round-09.json"), "gone"),
             ("an unknown item", self.op(topic, "zz"), "gone"),
             ("the user's own text", self.op(topic, "r"), "answered"),
+            ("a settled item: its recommendation is the user's earlier answer", self.op(settled, "q"), "answered"),
             ("a done round", self.op(done, "q"), "done"),
             ("a round another run holds", self.op(held, "q"), "held"),
         ]

@@ -226,7 +226,8 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   one item, in the first round of Waiting on you that: belongs to a run whose round locks the inbox holds; is that
   run's last open round; has exactly one item not yet decided (decided, `_decided`: a saved `choice` that is not
   null or an empty list, with a `source` other than `recommended`; an empty list with `source` `user` on an item
-  with `recommended`, the recommendation the user unticked; or a `source` of `elsewhere`) and no item marked
+  with `recommended`, the recommendation the user unticked; a `source` of `elsewhere`; or an item with `settled`
+  whose saved choice (or, unsaved, its recommendation) equals `recommended`, a `many` list in any order) and no item marked
   `elsewhere` (a tap's Done would send a mark the user never saw); and that item has `recommended` (not an empty
   list) and is not `sensitive`. The reply is `{offer: null}` or `{offer: {id, project, round, question, answer}}`: `id` 32
   hex digits; `project` the project's name as the list shows it (a run outside any project: its decisions
@@ -240,7 +241,8 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   item and the round's `rev`), at most `MAX_OFFERS`, for `OFFER_TTL` seconds; no log line or file holds its id.
   `accept` uses it once: a second use, a late one or an unknown id gets `gone`. It saves through the run's own
   writer the saved answers, with the item's `recommended` as its choice and `source: "notification"` (its
-  comment, marks and privacy kept), `accepted` and `done` true, at the offer's `rev`. Every save rule of the page
+  comment, marks and privacy kept), `accepted` and `done` true, at the offer's `rev`, and every unsaved item with
+  `settled` with its `recommended` and `source: "recommended"` (`private: true` when it starts Private). Every save rule of the page
   holds (`rev`, the file on disk, Done is final, the Done gate, the round lock), and each refusal is one word
   (`changed`, `held`, `done`, `failed`) with nothing written (a `failed` write may leave a new Markdown copy, and
   on an orphan round an answer request, as a failed save from the page does: the JSON goes last). `accept` and `open` with an offer look at the runs first, so a round
@@ -662,8 +664,9 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   answers with that item as `{choice: null` (`[]` for `many`), `comment: <note>`, `source: "elsewhere"}`, plus
   `private: true` when the item starts Private on the page (`_private_default`: `sensitive` with a text field), the
   free text kept, `accepted` false, so the round's acceptance resets as a change on the page does. It refuses
-  (exit 1, one stderr line, nothing written) a bad round or answers file, an unknown item, a done round, and an
-  item that holds anything of the user's (`_users`): a choice with a `source` other than `recommended`, an
+  (exit 1, one stderr line, nothing written) a bad round or answers file, an unknown item, a done round, an item
+  with `settled` (its recommendation is the user's earlier answer; `check_answers` refuses `source: "elsewhere"`
+  on one too, from the page or a file), and an item that holds anything of the user's (`_users`): a choice with a `source` other than `recommended`, an
   unticked recommendation (as `_decided` reads it), a comment, `other` text, marks, or `private` other than the
   item starts (an earlier mark of the agent's, with nothing else, may be replaced). The note is one line of at
   most `MAX_NOTE` (500) characters with no tab, line break or character `_hidden` finds (an emoji's variation

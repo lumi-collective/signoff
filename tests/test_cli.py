@@ -1430,6 +1430,17 @@ class CliElsewhere(unittest.TestCase):
             with self.subTest(label):
                 self.refused(args, folder)
 
+    def test_a_settled_item_is_never_marked(self):
+        # The recommendation of a settled item is the user's earlier answer: a mark would replace it unseen.
+        data = marking_decisions()
+        data["items"][0]["settled"] = "round-01, 11-14"
+        self.folder.write(data)
+        self.refused([self.folder.decisions, "layout", "n"], words=("settled", '"layout"'))
+        (self.home / "inbox.lock").touch()  # with the switch on, a refusal still leaves no lock file
+        self.refused([self.folder.decisions, "layout", "n"], words=("settled",))
+        self.assertFalse(self.lock.exists())
+        self.assertEqual(self.mark(self.folder.decisions, "filters", "n")[0], 0)  # another item is marked as before
+
     def test_the_users_own_answer_is_never_overwritten(self):
         theirs = [
             ("a choice", "layout", {"choice": "one", "comment": "", "source": "user"}),

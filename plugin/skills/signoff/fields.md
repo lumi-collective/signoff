@@ -59,3 +59,12 @@
   characters, no line break or tab; a longer value makes the round fail to load. The round's page shows it at
   the top and its inbox row after the tab. Never a prompt, a transcript, a secret or a path. Needs Signoff 0.5.0
   or newer; an inbox an older one started refuses the round, and the user restarts it.
+- `stakes`: `"low"`, `"medium"` or `"high"`, how much rides on the decision. The margin shows it with a glyph
+  and a word; the sidebar marks a high one. Give it where the items differ in weight. Needs Signoff 0.5.0 or newer.
+- `irreversible` when the decision cannot be undone: one line saying why, such as `"irreversible": "Drops the old
+  table"`, 1 to 200 characters, no line break or tab. The margin shows "Cannot be undone" and the line; the
+  sidebar marks the item. Leave it out when it can be undone. Needs Signoff 0.5.0 or newer.
+- `settled` when the user decided this in an earlier round: one line saying where and when (`"round-01, 11-14"`),
+  1 to 200 characters, and `recommended` set to that decision (required with it). The item starts folded with
+  that choice and a Change button, and counts as decided while it holds that choice. Never use `signoff
+  elsewhere` on it. Needs Signoff 0.5.0 or newer.

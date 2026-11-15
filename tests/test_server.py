@@ -214,6 +214,49 @@ class Additions(ServerTest):
         self.run_.save({"answers": {}, "free_text": "", "done": True})
         self.assertTrue(md_path.read_text(encoding="utf-8").rstrip().endswith("Done: yes"))
 
+    def test_markdown_names_stakes_irreversible_and_settled(self):
+        data = sample_decisions()
+        data["items"][0].update(stakes="high", irreversible="Drops the *old* table", settled="round-01, 11-14")
+        data["items"][1]["stakes"] = "low"
+        self.folder.write(data)
+        run = Running(self.folder)
+        try:
+            self.assertEqual(run.save({"answers": {"layout": {"choice": "two", "comment": "", "source": "recommended"}},
+                                       "free_text": "", "done": False})[0].status, 200)
+        finally:
+            run.stop()
+        md = (self.folder.path / "decisions.answers.md").read_text(encoding="utf-8")
+        self.assertIn("- Stakes: high\n- Cannot be undone: Drops the \\*old\\* table\n- Settled: round-01, 11-14\n", md)
+        self.assertIn("- Stakes: low\n", md)
+        self.assertEqual(md.count("Cannot be undone"), 1)
+        answers = json.loads(self.folder.answers.read_text(encoding="utf-8"))
+        self.assertEqual(set(answers["answers"]["layout"]), {"choice", "comment", "source"})  # no new key there
+        decisions = signoff.load_decisions(self.folder.decisions)[0]
+        record = {"answers": {"layout": {"choice": "two", "comment": "mine", "private": True}}, "free_text": "",
+                  "done": False, "saved": "2026-01-01T12:00:00Z"}
+        # The notes folder's copy hides a private answer, not the agent's own lines.
+        hidden = signoff.answers_markdown(decisions, record, hide_private=True)
+        self.assertIn("(private)\n- Stakes: high\n- Cannot be undone: Drops the \\*old\\* table\n"
+                      "- Settled: round-01, 11-14\n", hidden)
+        self.assertNotIn("mine", hidden)
+        hu = signoff.answers_markdown(dict(decisions, lang="hu"), record)
+        self.assertIn("- Tét: magas\n- Nem vonható vissza: Drops the \\*old\\* table\n- Korábban eldőlt: round-01, 11-14\n",
+                      hu)
+
+    def test_a_settled_item_cannot_be_saved_as_decided_elsewhere(self):
+        data = sample_decisions()
+        data["items"][0]["settled"] = "round-01"
+        self.folder.write(data)
+        run = Running(self.folder)
+        try:
+            resp, body = run.save({"answers": {"layout": {"choice": None, "comment": "n", "source": "elsewhere"}},
+                                   "free_text": "", "done": False})
+        finally:
+            run.stop()
+        self.assertEqual(resp.status, 400)
+        self.assertIn(b"settled", body)
+        self.assertFalse(self.folder.answers.exists())
+
 
 class HostAndToken(ServerTest):
     def test_wrong_host(self):

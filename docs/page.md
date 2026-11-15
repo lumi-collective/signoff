@@ -66,6 +66,15 @@
   before running it.
 - **Agent waits on this.** An item the agent's next step waits on carries that badge after its title, and "agent
   waits" after its name in the sidebar, each with a ■ before the words. Answer those first.
+- **Stakes and Cannot be undone.** The margin shows how much rides on an item when the agent says so, as a chip
+  with a glyph and a word: ▲ **High stakes**, ● **Medium stakes**, ▼ **Low stakes**. An item that cannot be
+  undone shows **Cannot be undone** and the agent's reason there. In the sidebar a high one gets "▲ high stakes"
+  after its name and one that cannot be undone "! irreversible".
+- **Settled earlier.** An item you decided in an earlier round starts folded: its title, **Settled earlier** with
+  where and when, the choice it holds, and **Change**, which shows the options (and **Hide options** folds it
+  again); the margin, with its stakes, still shows. Opened, it is answered like any other item; folding is a
+  view, so a reload starts it folded again, with the choice saved. j, k and Focus visit it as any item; the digit
+  keys pick nothing while it is folded. A done round shows the **Settled earlier** line above its answer.
 - **Private** beside a comment marks what you write on that item as private: the agent is asked not to
   repeat it, and the Markdown copy and the Summary hide it. The agent ticks it in advance where an answer may
   hold personal data; you can tick or untick it on any item. It is a request to the agent, not encryption.

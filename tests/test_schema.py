@@ -248,6 +248,54 @@ class DecisionsFile(unittest.TestCase):
             self.assertIn("item 2 (filters)", msg, value)
             self.assertIn("'blocking' must be true or false", msg, value)
 
+    def test_stakes_irreversible_and_settled_are_optional(self):
+        data = sample_decisions()
+        data["items"][0].update(stakes="high", irreversible="Drops the old table", settled="round-01, 11-14")
+        data["items"][1].update(stakes="low", settled="x" * 200)
+        self.folder.write(data)
+        items = signoff.load_decisions(self.folder.decisions)[0]["items"]
+        self.assertEqual((items[0]["stakes"], items[0]["irreversible"], items[0]["settled"]),
+                         ("high", "Drops the old table", "round-01, 11-14"))
+        self.assertNotIn("irreversible", items[1])  # no default: the page shows nothing for a key left out
+        data["items"][1].update(stakes="medium", recommended=[])  # settled on none of them is an earlier answer too
+        self.folder.write(data)
+        self.assertEqual(signoff.load_decisions(self.folder.decisions)[0]["items"][1]["stakes"], "medium")
+
+    def test_stakes_is_low_medium_or_high(self):
+        for value in ("huge", "High", "", 1, None, ["high"], True):
+            msg = self.broken(lambda d, value=value: d["items"][1].update(stakes=value))
+            self.assertIn("item 2 (filters)", msg, value)
+            self.assertIn("'stakes' must be \"low\", \"medium\" or \"high\"", msg, value)
+
+    def test_irreversible_and_settled_are_one_line(self):
+        for key in ("irreversible", "settled"):
+            for value in ("", "   ", "a\nb", "a\tb", "x" * 201, "a" + chr(0x200B) + "b", "a" + chr(0x2028) + "b",
+                          "a" + chr(0x202E) + "b", 3, None, ["x"]):
+                msg = self.broken(lambda d, key=key, value=value: d["items"][0].update(**{key: value}))
+                self.assertIn("item 1 (layout)", msg, (key, value))
+                self.assertIn("'%s' must be one line of 1 to 200 characters" % key, msg, (key, value))
+
+    def test_settled_needs_the_earlier_decision_as_recommended(self):
+        def change(d):
+            del d["items"][0]["recommended"]
+            d["items"][0]["settled"] = "round-01"
+        msg = self.broken(change)
+        self.assertIn("item 1 (layout)", msg)
+        self.assertIn("'settled' needs 'recommended'", msg)
+
+    def test_a_settled_item_is_never_marked_elsewhere(self):
+        data = sample_decisions()
+        data["items"][0]["settled"] = "round-01"
+        self.folder.write(data)
+        decisions = signoff.load_decisions(self.folder.decisions)[0]
+        mark = {"answers": {"layout": {"choice": None, "comment": "n", "source": "elsewhere"}}, "free_text": ""}
+        with self.assertRaises(ValueError) as ctx:
+            signoff.check_answers(mark, decisions)
+        self.assertIn("'layout'", str(ctx.exception))
+        self.assertIn("settled", str(ctx.exception))
+        mark["answers"]["filters"] = dict(mark["answers"].pop("layout"), choice=[])
+        signoff.check_answers(mark, decisions)  # another item takes the mark as before
+
     def test_tab_is_optional_text(self):
         data = sample_decisions()
         data["tab"] = "Layout"
@@ -1213,6 +1261,12 @@ class SchemaFile(unittest.TestCase):
         self.assertEqual(item["properties"]["id"]["pattern"], signoff.ID_PATTERN.pattern)
         self.assertEqual((item["properties"]["blocking"]["type"], item["properties"]["blocking"]["default"]),
                          ("boolean", False))
+        self.assertEqual(item["properties"]["stakes"]["enum"], list(signoff.STAKES_VALUES))
+        for key in ("irreversible", "settled"):
+            self.assertEqual((item["properties"][key]["minLength"], item["properties"][key]["maxLength"]),
+                             (1, signoff.MAX_ITEM_LINE))
+            self.assertEqual(item["properties"][key]["pattern"], self.schema["properties"]["context"]["pattern"])
+        self.assertEqual(item["dependentRequired"], {"settled": ["recommended"]})
 
     def test_number(self):
         rng = self.defs["range"]

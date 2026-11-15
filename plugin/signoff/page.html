@@ -233,7 +233,11 @@ button.icon svg{width:18px;height:18px}
 .outcome{margin:16px 0 0;padding:10px 14px;border-radius:10px;border:1px solid var(--line);border-left:4px solid var(--accent);background:var(--panel)}
 .outcome-log{display:block;color:var(--quiet);font-size:13px}
 .readonly-note.warn{border-style:solid;border-color:var(--box);color:var(--text)}
-.item .b>.readonly-note{margin:0 0 12px}
+.item .b>.readonly-note,.item .q>.settled{margin:0 0 12px}
+.settled strong{color:var(--text)}
+.settled button{padding:3px 10px;margin-left:4px}
+.item.folded .q>:not(.settled),.item.folded .b,.item:not(.folded) .sv{display:none}
+.stakes{margin:0 0 8px}
 .error-text{white-space:pre-wrap;font-size:13px;color:var(--soft)}
 .progress{font-size:13px;font-weight:650;color:var(--soft)}
 button.primary[aria-disabled=true]{cursor:not-allowed}
@@ -666,7 +670,7 @@ body.run .item{padding:20px 22px}
 .margin .rec::before{display:none}
 .m-why{margin:4px 0 0;color:var(--soft);font-size:13px;white-space:pre-line}
 .margin .cost{display:block;margin:0;font-size:13px;color:var(--soft)}
-.margin .rec~.cost{margin-top:10px;padding-top:10px;border-top:1px solid var(--line2)}
+.margin .rec~.cost,.margin .cost~.cost{margin-top:10px;padding-top:10px;border-top:1px solid var(--line2)}
 .margin .cost strong{display:block;margin:0 0 2px}
 @media (min-width:1100px){
   .item.has-margin fieldset{display:grid;grid-template-columns:minmax(0,1fr) 230px;grid-template-rows:auto 1fr;
@@ -675,7 +679,7 @@ body.run .item{padding:20px 22px}
   .item.has-margin .b{grid-area:b}
   .item.has-margin .margin{grid-area:m;align-self:start;margin:0;padding:2px 0 2px 16px;border-left-width:2px;border-radius:0;
     background:none}
-  .item.has-margin .margin .rec~.cost{border-top-color:var(--line)}}
+  .item.has-margin .margin .rec~.cost,.item.has-margin .margin .cost~.cost{border-top-color:var(--line)}}
 .opt input{left:auto;right:14px;top:13px}
 .opt label{display:grid;grid-template-columns:auto minmax(0,1fr);column-gap:10px;align-items:center;min-height:44px;
   padding:9px 42px 9px 12px}
@@ -917,7 +921,10 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
       oldNote: 'Its questions may be out of date: if in doubt, ask the agent before you answer.',
       oldOpenFor: 'This round has been open for {t}.', codeLang: 'code',
       blocking: 'Agent waits on this', blockingShort: 'agent waits', show_blocking: 'Agent waits',
-      numValue: '{t}, value', elsewhere: 'Decided elsewhere'},
+      numValue: '{t}, value', elsewhere: 'Decided elsewhere',
+      stakes_high: 'High stakes', stakes_medium: 'Medium stakes', stakes_low: 'Low stakes', highShort: 'high stakes',
+      irreversible: 'Cannot be undone', undoShort: 'irreversible', settledEarlier: 'Settled earlier',
+      change: 'Change', fold: 'Hide options'},
     hu: {done: 'Kész', doneRounds: 'Kész ({n} kör)', acceptShort: 'Javaslatok elfogadása', acceptRest: '',
       undo: 'Elfogadás visszavonása', recommended: 'Javasolt', cost: 'Költség',
       comment: 'Megjegyzés (nem kötelező)', many: 'Több is választható.', other: 'Egyéb', otherText: 'Egyéb: a te válaszod',
@@ -983,7 +990,10 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
       copy: 'Másolás', copied: 'Másolva', copyFailed: 'Nem sikerült másolni: jelöld ki a szöveget',
       copyLabel: 'A(z) {l} blokk másolása', relDelete: 'Relatív útvonal: futtatás előtt ellenőrizd a mappát',
       codeLang: 'kód', blocking: 'Erre vár az ágens', blockingShort: 'erre vár', show_blocking: 'Erre vár az ágens',
-      numValue: '{t}, érték', elsewhere: 'Máshol eldőlt'}
+      numValue: '{t}, érték', elsewhere: 'Máshol eldőlt',
+      stakes_high: 'Nagy tét', stakes_medium: 'Közepes tét', stakes_low: 'Kis tét', highShort: 'nagy tét',
+      irreversible: 'Nem vonható vissza', undoShort: 'végleges', settledEarlier: 'Korábban eldőlt',
+      change: 'Módosítás', fold: 'Opciók elrejtése'}
   };
   var data = JSON.parse(document.getElementById('signoff-data').textContent);
   var historyMode = data.mode === 'history';
@@ -2863,11 +2873,20 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
   }
 
   // An item the agent's next step waits on: a glyph for the eye and a word for everyone, never colour alone.
-  function waitMark(cls, word) {
-    var s = el('span', cls), g = el('span', 'wg', '■');
+  function waitMark(cls, word, glyph) {
+    var s = el('span', cls), g = el('span', 'wg', glyph || '■');
     g.setAttribute('aria-hidden', 'true');
     s.append(g, word);
     return s;
+  }
+  // High is the worst case, so it takes bad's colour with the up glyph (a fact's ▲ means better).
+  var STAKES = {high: ['▲', 'bad'], medium: ['●', 'mid'], low: ['▼', 'good']};
+  // A folded settled item shows the choice it holds now.
+  function settledLine(ri, item) {
+    var line = byId(key(ri, item) + '-sv');
+    if (line) line.textContent = picks(ri, item).map(function (v) {
+      return v === OTHER ? L.other : v === SKIP ? L.skip : labelOf(item, v);
+    }).join(', ') || L.nothing;
   }
   // A number item: a slider and a field bound together, the unit beside them and the range's ends under the slider.
   // They have no name, so inputs() never takes them for options; picks() reads the slider, which the browser keeps
@@ -2929,6 +2948,24 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
     if (item.blocking) h.append(' ', waitMark('badge warn', L.blocking));  // the space keeps the name two words apart
     legend.append(h);
     field.append(legend, q);
+    if (item.settled) q.append(el('p', 'readonly-note settled', L.settledEarlier + ': ' + item.settled));
+    if (item.settled && !rounds[ri].readonly) {  // folded until Change: a view, never saved
+      var sw = el('span', 'sv', ' · '), sv = el('strong'), chg = el('button', '', L.change);
+      sv.id = key(ri, item) + '-sv';
+      fs.id = key(ri, item) + '-fold';
+      chg.type = 'button';
+      chg.setAttribute('aria-expanded', 'false');
+      chg.setAttribute('aria-controls', fs.id);
+      chg.addEventListener('click', function () {
+        var open = !card.classList.toggle('folded');
+        chg.setAttribute('aria-expanded', String(open));
+        chg.textContent = open ? L.fold : L.change;
+        settledLine(ri, item);
+      });
+      sw.append(sv);
+      q.lastChild.append(sw, ' ', chg);
+      card.classList.add('folded');
+    }
     if (item.description) q.append(el('p', 'desc', item.description));
     if (item.commands && item.commands.length) {  // to run before deciding: the inbox's code block, Copy and all
       var cmds = el('div', 'cmds');
@@ -2944,8 +2981,13 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
       q.append(shots);
     }
     var rec = recList(item);
-    if (rec.length || item.cost) {
+    if (rec.length || item.cost || item.stakes || item.irreversible) {
       var side = el('div', 'margin');
+      if (item.stakes) {  // a fact chip, so its colour pairs are the facts'
+        var st = el('p', 'stakes');
+        st.append(waitMark('fact ' + STAKES[item.stakes][1], L['stakes_' + item.stakes], STAKES[item.stakes][0]));
+        side.append(st);
+      }
       if (rec.length) {
         side.append(el('p', 'm-head', L.agentRecommends), el('p', 'rec', rec.map(function (r) { return labelOf(item, r); }).join(', ')));
         var why = rec.length === 1 && item.options && item.options.filter(function (o) { return o.id === rec[0]; })[0];
@@ -2955,6 +2997,11 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
         var cost = el('p', 'cost');
         cost.append(el('strong', '', L.cost), document.createTextNode(item.cost));
         side.append(cost);
+      }
+      if (item.irreversible) {
+        var undo = el('p', 'cost');
+        undo.append(el('strong', '', L.irreversible), document.createTextNode(item.irreversible));
+        side.append(undo);
       }
       field.append(side);
       card.classList.add('has-margin');
@@ -3128,11 +3175,13 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
   function setChoice(ri, item, values) {
     inputs(ri, item).forEach(function (i) { i.checked = values.indexOf(i.value) >= 0; });
     if (mirrors[key(ri, item)]) mirrors[key(ri, item)]();
-    if (item.select !== 'number') return;
+    // The restore and Accept all fire no change event.
+    if (item.select !== 'number') return settledLine(ri, item);
     var n = values.filter(function (v) { return typeof v === 'number'; })[0];
     // Skipped: the slider still shows a value, the recommendation, for when Skip is unticked; read only, where
     // nothing can be unticked, no value at all.
     setNumber(ri, item, n !== undefined ? n : values.indexOf(SKIP) >= 0 && !rounds[ri].readonly ? item.recommended : null);
+    settledLine(ri, item);
   }
 
   function renderPanel(ri) {
@@ -3517,6 +3566,8 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
       var item = rounds[active].decisions.items[n];
       b.append(el('span', 'n', String(n + 1)), el('span', 'nl', item.title));
       if (item.blocking) b.append(waitMark('st', L.blockingShort));
+      if (item.stakes === 'high') b.append(waitMark('st', L.highShort, '▲'));
+      if (item.irreversible) b.append(waitMark('st', L.undoShort, '!'));
       b.addEventListener('click', function () {
         sh.closeSide(false);
         goItem(n);
@@ -4030,7 +4081,7 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
       }
       return;
     }
-    if (/^[1-9]$/.test(e.key) && current && !current.querySelector('.num-pick')) {
+    if (/^[1-9]$/.test(e.key) && current && !current.querySelector('.num-pick') && !current.classList.contains('folded')) {
       var input = current.querySelectorAll('.choices input[type=radio], .choices input[type=checkbox]')[Number(e.key) - 1];
       if (!input || input.disabled) return;
       e.preventDefault();

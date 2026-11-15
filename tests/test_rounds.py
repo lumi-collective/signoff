@@ -759,6 +759,30 @@ class Page(unittest.TestCase):
             self.assertIn(part, hu)
         self.assertIn("['all', 'comment', 'differs', 'blocking']", self.page)
 
+    def test_stakes_irreversible_and_settled_have_both_languages(self):
+        # The stakes words are read as L['stakes_' + item.stakes], which the Hungarian test above does not see.
+        labels = self.page[self.page.index("var LABELS = {"):self.page.index("var data = JSON.parse")]
+        en, hu = labels[:labels.index("hu: {")], labels[labels.index("hu: {"):]
+        for part in ("stakes_high: 'High stakes'", "stakes_medium: 'Medium stakes'", "stakes_low: 'Low stakes'",
+                     "irreversible: 'Cannot be undone'", "settledEarlier: 'Settled earlier'", "change: 'Change'"):
+            self.assertIn(part, en)
+        for part in ("stakes_high: 'Nagy tét'", "stakes_medium: 'Közepes tét'", "stakes_low: 'Kis tét'",
+                     "irreversible: 'Nem vonható vissza'", "settledEarlier: 'Korábban eldőlt'"):
+            self.assertIn(part, hu)
+        self.assertIn("L['stakes_' + item.stakes]", self.page)
+
+    def test_stakes_marks_use_the_tone_colours_and_a_settled_item_folds(self):
+        # High is the worst case, so it takes bad's colour with the up glyph; the word always says which.
+        self.assertIn("var STAKES = {high: ['▲', 'bad'], medium: ['●', 'mid'], low: ['▼', 'good']};", self.page)
+        script = self.page[self.page.index("function renderItem("):self.page.index("function isPrivate(")]
+        for part in ("item.settled", "'aria-expanded'", "aria-controls", "L.settledEarlier", "L.irreversible"):
+            self.assertIn(part, script)
+        outline = self.page[self.page.index("function drawOutline("):self.page.index("function markOutline(")]
+        self.assertIn("item.stakes === 'high'", outline)
+        self.assertIn("item.irreversible", outline)
+        # The digit keys pick nothing on a folded item: its options are out of sight.
+        self.assertIn("!current.classList.contains('folded')", self.page)
+
     def test_a_number_item_has_its_labels_and_the_digit_keys_skip_it(self):
         labels = self.page[self.page.index("var LABELS = {"):self.page.index("var data = JSON.parse")]
         en, hu = labels[:labels.index("hu: {")], labels[labels.index("hu: {"):]

@@ -48,7 +48,6 @@ How to batch:
   "title": "What goes into the settings redesign?",
   "tab": "Layout",
   "intro": "My recommendation is preselected on each item.",
-  "notice": "Synthetic data only",
   "lang": "en",
   "items": [
     {
@@ -86,7 +85,7 @@ How to batch:
   user's own setup). The item starts marked Private; the user can untick it, or tick Private on any item. It
   only acts on an item with a text field: `comment`, `other` or `marks`.
 - `tab`, `other`, `skippable`, `comment`, `boxes`, boards, `marks`, `group`, `lang`, `notice`, `criteria`,
-  `facts`, `attachments`, `commands`, `blocking`, `range` and `context` are in [fields.md](fields.md): read it before you use one.
+  `facts`, `attachments`, `commands`, `blocking`, `stakes`, `irreversible`, `settled`, `range` and `context` are in [fields.md](fields.md): read it first.
 - All text is plain: line breaks are kept; HTML and Markdown show as typed.
 - The full format is in `${CLAUDE_PLUGIN_ROOT}/signoff/schema.json`.
 

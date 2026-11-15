@@ -69,6 +69,7 @@ DEFAULT_IGNORABLE = ((0x00AD, 0x00AD), (0x034F, 0x034F), (0x061C, 0x061C), (0x11
                      (0xFE00, 0xFE0F), (0xFEFF, 0xFEFF), (0xFFA0, 0xFFA0), (0xFFF0, 0xFFF8), (0x1BCA0, 0x1BCA3),
                      (0x1D173, 0x1D17A), (0xE0000, 0xE0FFF))
 MAX_CONTEXT = 120  # characters in a round's context line: room for a session and its task, not for a transcript
+MAX_ITEM_LINE = 200  # characters in an item's irreversible and settled lines
 MAX_STEPS = 10000  # a number item's values from min to max
 MAX_SCALE = 10 ** 12  # a number item's largest value, in steps: a float holds the grid to a 500th of a step
 MAX_VALUE = 10 ** 15  # a number item's largest value: a float holds every whole number up to it, and no sum overflows
@@ -109,7 +110,7 @@ TOP_KEYS = ("version", "title", "tab", "intro", "notice", "lang", "items", "free
 TOP_REQUIRED = ("version", "title", "items")
 ITEM_KEYS = ("id", "group", "title", "description", "cost", "images", "select", "options", "recommended", "comment",
              "other", "skippable", "marks", "sensitive", "criteria", "attachments", "commands",
-             "blocking", "range")
+             "blocking", "range", "stakes", "irreversible", "settled")
 ITEM_REQUIRED = ("id", "title")  # and options for one and many, range and recommended for number
 RANGE_KEYS = ("min", "max", "step", "unit")
 IMAGE_KEYS = ("src", "html", "caption", "alt", "boxes")
@@ -122,6 +123,7 @@ FACT_KEYS = ("text", "tone")
 TONE_VALUES = ("good", "mid", "bad")  # the page uses them as class names, so the list stays closed
 FREE_TEXT_KEYS = ("title", "placeholder")
 SELECT_VALUES = ("one", "many", "number")
+STAKES_VALUES = ("low", "medium", "high")
 SOURCE_VALUES = ("recommended", "accept_all", "user", "notification", "elsewhere")
 ANSWER_KEYS = ("answers", "free_text", "done", "accepted")
 STORED_KEYS = ANSWER_KEYS + ("version", "saved", "decisions", "accepted_at", "changed_after_accept")
@@ -451,6 +453,21 @@ def _item(item, n, folder, images, used, lenient=False):
             raise DecisionsError("%s: 'commands' must be a list of 1 to %d" % (where, MAX_ITEM_COMMANDS))
         for k, cmd in enumerate(commands, 1):
             _command(cmd, "%s, command %d" % (where, k))
+    if "stakes" in item and item["stakes"] not in STAKES_VALUES:
+        raise DecisionsError("%s: 'stakes' must be \"low\", \"medium\" or \"high\"" % where)
+    for key in ("irreversible", "settled"):
+        if key in item and not _line_ok(item[key], MAX_ITEM_LINE):
+            raise DecisionsError("%s: %r must be one line of 1 to %d characters, with no control or invisible "
+                                 "character" % (where, key, MAX_ITEM_LINE))
+    if "settled" in item and "recommended" not in item:
+        raise DecisionsError("%s: 'settled' needs 'recommended', the choice settled before" % where)
+
+
+def _line_ok(line, limit):
+    """One line the page shows whole: not blank, at most limit characters, no line break or tab, and none of the
+    characters a command refuses as invisible. Never cut, so the agent learns at once that it is too long."""
+    return isinstance(line, str) and bool(line.strip()) and len(line) <= limit and "\t" not in line \
+        and "\n" not in line and _hidden(line) is None
 
 
 def _hidden(text, allowed=()):
@@ -520,11 +537,7 @@ def load_decisions(path, lenient=False):
     for key in ("title", "tab", "intro", "notice", "lang"):
         _text(data, key, "decisions file")
     if "context" in data:
-        line = data["context"]
-        # One line the inbox row shows whole: no line break or tab, none of the characters a command refuses as
-        # invisible, and never cut, so the agent learns at once that it is too long.
-        if not (isinstance(line, str) and line.strip() and len(line) <= MAX_CONTEXT
-                and "\t" not in line and "\n" not in line and _hidden(line) is None):
+        if not _line_ok(data["context"], MAX_CONTEXT):  # the inbox row shows it whole
             raise DecisionsError("decisions file: 'context' must be one line of 1 to %d characters, with no control "
                                  "or invisible character" % MAX_CONTEXT)
     free = data.setdefault("free_text", {})
@@ -604,6 +617,8 @@ def check_answers(state, decisions, stored=False):
         if ans.get("source") == "elsewhere" and (len(comment) > MAX_NOTE or not _typed_line(comment)):
             raise ValueError("answer %r: a note marked elsewhere must be one line of at most %d characters"
                              % (key, MAX_NOTE))
+        if ans.get("source") == "elsewhere" and "settled" in item:
+            raise ValueError("answer %r: a settled item cannot be marked decided elsewhere" % key)
         picked = choice if isinstance(choice, list) else [choice]
         if SKIP in picked and len(picked) > 1:
             raise ValueError("answer %r: skip cannot be combined with another choice" % key)
@@ -859,7 +874,9 @@ MD_LABELS = {
            "not_rec": "not recommended", "nothing": "nothing chosen", "none": "(none)", "private": "(private)",
            "anything": "Anything else", "recommended": "recommendation, not changed", "accept_all": "Accept all",
            "user": "the user", "notification": "recommendation, accepted from a notification", "unknown": "unknown", "yes_at": "yes, %s", "changed": "no, changed after it was accepted",
-           "command": "Command", "elsewhere": "decided elsewhere, marked by the agent"},
+           "command": "Command", "elsewhere": "decided elsewhere, marked by the agent", "stakes": "Stakes",
+           "low": "low", "medium": "medium", "high": "high", "irreversible": "Cannot be undone",
+           "settled": "Settled"},
     "hu": {"choice": "Választás", "source": "Forrás", "comment": "Megjegyzés", "mark": "Jelölés %d, %d. kép, %s "
            "(x, y, sz, m, %%-ban): %s", "attachment": "Melléklet", "saved": "Mentve", "accepted": "Elfogadva",
            "done": "Kész", "yes": "igen", "no": "nem", "skipped": "Kihagyva", "other": "Egyéb", "rec": "javasolt",
@@ -867,7 +884,9 @@ MD_LABELS = {
            "anything": "Bármi más", "recommended": "a javaslat, változatlanul", "accept_all": "Javaslatok elfogadása",
            "user": "a felhasználó", "notification": "a javaslat, értesítésből elfogadva", "unknown": "ismeretlen", "yes_at": "igen, %s",
            "changed": "nem, elfogadás után módosítva", "command": "Parancs",
-           "elsewhere": "máshol eldőlt, az ágens jelölte"},
+           "elsewhere": "máshol eldőlt, az ágens jelölte", "stakes": "Tét", "low": "alacsony",
+           "medium": "közepes", "high": "magas", "irreversible": "Nem vonható vissza",
+           "settled": "Korábban eldőlt"},
 }
 
 
@@ -906,8 +925,9 @@ def md_line(text, none="(none)"):
 
 def answers_markdown(decisions, record, hide_private=False):
     """The answers as a Markdown page for people, its labels in the round's language; the JSON stays the source of
-    truth. Agent text is never translated. hide_private: a private answer's item gets its title and (private) only
-    (the notes folder's copy, which may be synced elsewhere)."""
+    truth. Agent text is never translated. hide_private: a private answer's item gets its title, (private) and
+    the agent's own stakes, irreversible and settled lines only (the notes folder's copy, which may be synced
+    elsewhere)."""
     lb = md_labels(decisions)
     out = ["# " + md_line(decisions["title"]), ""]
     group = None
@@ -922,8 +942,11 @@ def answers_markdown(decisions, record, hide_private=False):
         rec = rec if isinstance(rec, list) else [rec]
         # A private answer keeps its text in the JSON for the agent; this copy for people only says it is there.
         private = ans.get("private") is True
+        # The agent's own lines: the notes folder's copy keeps them beside a private answer too.
+        about = ["- %s: %s" % (lb["stakes"], lb[item["stakes"]])] if "stakes" in item else []
+        about += ["- %s: %s" % (lb[k], md_line(item[k])) for k in ("irreversible", "settled") if k in item]
         if private and hide_private:
-            out += ["### %d. %s" % (n, md_line(item["title"])), "", lb["private"], ""]
+            out += ["### %d. %s" % (n, md_line(item["title"])), "", lb["private"]] + about + [""]
             continue
 
         def text(value):
@@ -939,6 +962,7 @@ def answers_markdown(decisions, record, hide_private=False):
         out += ["### %d. %s" % (n, md_line(item["title"])), "",
                 "- %s: %s" % (lb["choice"], shown),
                 "- %s: %s" % (lb["source"], lb[ans["source"]] if ans.get("source") in SOURCE_VALUES else lb["unknown"])]
+        out += about
         if ans.get("comment", "").strip():  # no empty line for a comment nobody wrote
             out.append("- %s: %s" % (lb["comment"], text(ans["comment"])))
         for k, mark in enumerate(ans.get("marks", []), 1):
@@ -2482,7 +2506,12 @@ def _none_picked(answer, item):
 def _decided(answer, item):
     """Whether an item is decided: a choice that is not null or an empty list, and not the preselected
     recommendation left untouched (the page saves an untouched item without a recommendation as a null choice); a
-    recommendation the user unticked; or marked decided elsewhere by the agent (signoff elsewhere)."""
+    recommendation the user unticked; or marked decided elsewhere by the agent (signoff elsewhere). A settled item
+    is decided while its choice (unsaved: its recommendation) is the recommendation, the user's earlier answer."""
+    if "settled" in item:
+        choice, rec = (answer or {}).get("choice", item["recommended"]), item["recommended"]
+        if choice == rec or isinstance(rec, list) and isinstance(choice, list) and sorted(choice) == sorted(rec):
+            return True
     if not answer:
         return False
     if answer.get("source") == "elsewhere" or _none_picked(answer, item):
@@ -2531,7 +2560,7 @@ def _mark_state(r, item_id, note):
         return None, "done"
     base = r.saved or {"answers": {}, "free_text": ""}
     old = base["answers"].get(item_id)
-    if _users(old, item):
+    if _users(old, item) or "settled" in item:  # a settled item's recommendation is the user's earlier answer
         return None, "answered"
     mark = {"choice": [] if item["select"] == "many" else None, "comment": note, "source": "elsewhere"}
     if _private_default(item):
@@ -2897,7 +2926,8 @@ class InboxServer(_Server):
         """The item a notification may answer, or None: in the first round of Waiting on you that is its run's last
         open round, with its round locks held here, and exactly one item not decided yet, which has a recommendation
         and is not sensitive. A tap saves that recommendation with Done, so it shows all it accepts and wakes the
-        run. The texts are the decisions file's own (and the project's name as the list shows it), one line each,
+        run (each settled item not saved yet is saved as the user's earlier decision, see _accept).
+        The texts are the decisions file's own (and the project's name as the list shows it), one line each,
         capped. Signoff adds no path, link or token of its own and replaces the project's folder and the user's
         home, but does not filter the agent's text: a URL in it stays."""
         with self.scan_lock:
@@ -3078,6 +3108,14 @@ class InboxServer(_Server):
         answer.update(choice=list(rec) if isinstance(rec, list) else rec, source="notification")
         answers = dict(base["answers"])
         answers[item["id"]] = answer
+        # A settled item waits on nothing (_decided), so the Done file answers it with the earlier decision.
+        for it in r.decisions["items"]:
+            if "settled" in it and it["id"] not in answers:
+                earlier = it["recommended"]
+                answers[it["id"]] = {"choice": list(earlier) if isinstance(earlier, list) else earlier,
+                                     "source": "recommended"}
+                if _private_default(it):
+                    answers[it["id"]]["private"] = True  # as the page starts it
         try:
             state = check_answers({"answers": answers, "free_text": base["free_text"], "accepted": True, "done": True},
                                   r.decisions)
@@ -4309,8 +4347,11 @@ def _mark_refusal(why, r, item_id):
         "held": "%s is open in a Signoff run of its own, which alone writes it; nothing was written. Ask the user to "
                 "answer the item on that run's page" % r.path.name,
         "failed": "the Signoff inbox could not write the answers of %s; the JSON was not written" % r.path.name,
-        "answered": "item %s of %s holds the user's own answer (a choice, a comment, Other text, marks or Private); "
-                    "it was left as it is" % (json.dumps(item_id), r.path.name),
+        "answered": "item %s of %s is settled: its recommendation is the user's earlier answer, so it is never "
+                    "marked; it was left as it is" % (json.dumps(item_id), r.path.name) if any(
+            it["id"] == item_id and "settled" in it for it in r.decisions["items"]) else
+        "item %s of %s holds the user's own answer (a choice, a comment, Other text, marks or Private); "
+        "it was left as it is" % (json.dumps(item_id), r.path.name),
         "changed": "the answers of %s kept changing while it was marked; nothing was written. Run the same command "
                    "again" % r.path.name,
     }[why]

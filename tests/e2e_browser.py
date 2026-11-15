@@ -1589,6 +1589,153 @@ def run_blocking(work):
         kill(browser.proc)
 
 
+# A settled item's state: folded, its line, the choice shown there (and whether it is seen), the Change button's
+# state, and whether its options and its stakes chip are seen.
+SETTLED = """(function () {
+  var c = document.querySelector('#panel-0 .item[data-item=theme]'), b = c.querySelector('.settled button'),
+    v = document.getElementById('r0-i1-sv');
+  return [c.classList.contains('folded'), c.querySelector('.settled').firstChild.textContent,
+    v.textContent, v.checkVisibility(), b.textContent, b.getAttribute('aria-expanded'),
+    b.getAttribute('aria-controls'), document.getElementById('r0-i1-o0').closest('.opt').checkVisibility(),
+    c.querySelector('.margin .stakes').checkVisibility()];
+})()"""
+
+
+def run_settled(work):
+    """Stakes, Cannot be undone and Settled earlier: the margin's chip and line, the sidebar's marks, and a settled
+    item that starts folded with its choice; Change opens it, a pick saves, a reload keeps the pick and folds it
+    again, the digit keys pick nothing while it is folded, and Done exits 0 with no new key in the answers."""
+    topic = work / "2026-01-09-settled"
+    topic.mkdir()
+    for sub in ("mockups", "boards", "notes"):
+        shutil.copytree(str(DEMO / sub), str(topic / sub))
+    data = json.loads((DEMO / "round-03.json").read_text(encoding="utf-8"))
+    data["items"][0]["stakes"] = "high"
+    data["items"][1].update(settled="round-01, 11-14", stakes="low")
+    data["items"][3].update(stakes="medium", irreversible="Moves every note to the new store")
+    target = topic / "decisions.json"
+    target.write_text(json.dumps(data), encoding="utf-8")
+    answers_file = topic / "decisions.answers.json"
+
+    def saved():
+        try:
+            return json.loads(answers_file.read_text(encoding="utf-8"))["answers"]
+        except (OSError, ValueError, KeyError):
+            return {}
+    server, out, err, browser = serve(target, str(work / "profile-settled"))
+    try:
+        wait_for("the page", lambda: browser.js("!!document.getElementById('r0-i1-sv')"))
+        # Folded, the margin stays in sight: it is the agent's (stakes, cannot be undone), not the options.
+        folded = [True, "Settled earlier: round-01, 11-14", "Follow the system", True, "Change", "false", "r0-i1-fold",
+                  False, True]
+        check(browser.js(SETTLED) == folded, "the settled item starts folded with its choice: %r" % browser.js(SETTLED))
+        margin = browser.js("Array.prototype.map.call(document.querySelectorAll('#panel-0 .item'), function (c) { "
+                            "var s = c.querySelector('.stakes'), u = c.querySelectorAll('.margin .cost'); return "
+                            "[s ? s.textContent : null, s ? s.querySelector('.wg').getAttribute('aria-hidden') : null, "
+                            "u.length ? u[u.length - 1].textContent : null]; })")
+        check(margin[0][:2] == ["▲High stakes", "true"] and margin[1][0] == "▼Low stakes" and margin[3] == [
+            "●Medium stakes", "true", "Cannot be undoneMoves every note to the new store"] and margin[2][0] is None,
+            "the margins: %r" % margin)
+        marks = browser.js("Array.prototype.map.call(document.querySelectorAll('.outline .nav'), function (b) { "
+                           "return Array.prototype.map.call(b.querySelectorAll('.st'), function (s) { "
+                           "return s.textContent; }); })")
+        check(marks == [["▲high stakes"], [], [], ["!irreversible"]], "the sidebar marks: %r" % marks)
+        name = ax_name(browser, ".outline li:nth-child(4) .nav")
+        check("irreversible" in name and "!" not in name, "the sidebar button's accessible name: %r" % name)
+        # A digit key on the folded item picks nothing out of sight.
+        browser.js("document.querySelector('#panel-0 .item[data-item=theme]').focus()")
+        press(browser, "2", "Digit2", 50, text="2")
+        time.sleep(0.5)
+        check(browser.js("document.getElementById('r0-i1-o0').checked") and "theme" not in saved(),
+              "a digit key on a folded item changed it: %r" % saved())
+        browser.click("#panel-0 .item[data-item=theme] .settled button")
+        opened = browser.js(SETTLED)
+        check(opened[0] is False and opened[3] is False and opened[4:6] == ["Hide options", "true"] and opened[7],
+              "Change shows the options and hides the folded choice: %r" % opened)
+        browser.click("#r0-i1-o1")
+        wait_for("the pick saved", lambda: saved().get("theme", {}).get("choice") == "light")
+        check(saved()["theme"]["source"] == "user", "a changed settled item is the user's: %r" % saved()["theme"])
+        browser.click("#panel-0 .item[data-item=theme] .settled button")  # folded again, the line names the pick
+        check(browser.js(SETTLED)[:4] == [True, folded[1], "Always light", True],
+              "folded after a pick: %r" % browser.js(SETTLED))
+        browser.call("Page.reload")
+        wait_for("the reloaded page", lambda: browser.js("!!document.getElementById('r0-i1-sv') && "
+                                                         "document.getElementById('r0-i1-o1').checked"))
+        again = browser.js(SETTLED)
+        check(again == folded[:2] + ["Always light"] + folded[3:], "a reload folds it again with the pick: %r" % again)
+        check(not browser.js("document.body.innerText.indexOf('undefined') >= 0"), "a label is missing")
+        browser.click("#done")
+        answers = finished(server, out, err, [answers_file])[0]
+        check(answers["answers"]["theme"]["choice"] == "light", "the Done file keeps the pick: %r" % answers)
+        check(not any(k in a for a in answers["answers"].values() for k in ("stakes", "irreversible", "settled")),
+              "the answers hold none of the new keys")
+    except E2EError:
+        sys.stderr.write("--- Signoff stderr ---\n" + "".join(err))
+        raise
+    finally:
+        kill(server)
+        kill(browser.proc)
+    run_settled_views(work)
+
+
+# Which parts of the first item a person sees: the settled line, the question's other parts (description, commands,
+# pictures), the stakes chip, the options' part, and the Change button.
+SETTLED_SEEN = """(function () {
+  var c = document.querySelector('#panel-0 .item'), seen = function (e) { return !!e && e.checkVisibility(); };
+  return [seen(c.querySelector('.settled')), Array.prototype.filter.call(c.querySelectorAll('.q>:not(.settled)'),
+    seen).length, seen(c.querySelector('.stakes')), seen(c.querySelector('.b')), !!c.querySelector('.settled button'),
+    c.classList.contains('folded')];
+})()"""
+
+
+def run_settled_views(work):
+    """A settled item with a description, a picture, a board and a command, on a phone, where the page opens in Focus:
+    folded it shows only its line and its margin. In a done round it shows the line above its answer, unfolded, with
+    no Change."""
+    topic = work / "2026-01-09-settled-phone"
+    topic.mkdir()
+    for sub in ("mockups", "boards", "notes"):
+        shutil.copytree(str(DEMO / sub), str(topic / sub))
+    data = json.loads((DEMO / "round-03.json").read_text(encoding="utf-8"))
+    data["items"][0].update(settled="round-01, 11-14", stakes="high", commands=COMMANDS[:1])
+    data["items"][0]["images"].append({"src": "mockups/settings-two-columns.png", "caption": "Two columns"})
+    (topic / "round-01.json").write_text(json.dumps(data), encoding="utf-8")
+    server, out, err, browser = serve(topic, str(work / "profile-settled-phone"), size=(400, 900))
+    try:
+        wait_for("the page in Focus", lambda: browser.js("!!document.body && document.body.classList.contains('focusing') && "
+                                                         "!!document.querySelector('#panel-0 .item .settled')"))
+        seen = browser.js(SETTLED_SEEN)
+        check(seen == [True, 0, True, False, True, True], "folded on a phone in Focus: %r" % seen)
+    except E2EError:
+        sys.stderr.write("--- Signoff stderr ---\n" + "".join(err))
+        raise
+    finally:
+        kill(server)
+        kill(browser.proc)
+    # Round 1 done, round 2 open: round 1's settled item is read only.
+    shutil.copyfile(str(DEMO / "round-04.json"), str(topic / "round-02.json"))
+    sha = hashlib.sha256((topic / "round-01.json").read_bytes()).hexdigest()
+    (topic / "round-01.answers.json").write_text(json.dumps({
+        "version": 1, "done": True, "saved": "2026-01-09T10:00:00Z", "free_text": "",
+        "decisions": {"file": "round-01.json", "sha256": sha}, "answers": {}}), encoding="utf-8")
+    server, out, err, browser = serve(topic, str(work / "profile-settled-done"))
+    try:
+        wait_for("the page", lambda: browser.js("!!document.getElementById('tab-0')"))
+        browser.click("#tab-0")
+        seen = wait_for("the done round", lambda: browser.js("!!document.querySelector('#panel-0 .item .settled') "
+                                                             "&& document.querySelector('#panel-0').checkVisibility() "
+                                                             "&& " + SETTLED_SEEN))
+        line = browser.js("document.querySelector('#panel-0 .item .settled').textContent")
+        check(seen[0] and seen[3] and not seen[4] and not seen[5] and line == "Settled earlier: round-01, 11-14",
+              "a done round's settled item: %r, %r" % (seen, line))
+    except E2EError:
+        sys.stderr.write("--- Signoff stderr ---\n" + "".join(err))
+        raise
+    finally:
+        kill(server)
+        kill(browser.proc)
+
+
 NUMBER_ITEMS = [
     {"id": "budget", "title": "How much of the budget?", "description": "A share of this quarter's budget.",
      "select": "number", "range": {"min": -10, "max": 10, "step": 0.5, "unit": "%"}, "recommended": 2.5,
@@ -2936,6 +3083,7 @@ def run():
     run_commands(work)
     run_commands_elsewhere(work)
     run_blocking(work)
+    run_settled(work)
     run_number(work)
     run_elsewhere(work)
     run_elsewhere_private(work)
@@ -3088,6 +3236,9 @@ def main():
           "round and --history Copy is exact too; "
           "items the agent waits on: a badge in the title and the sidebar, a fourth Summary filter showing only them, "
           "Hungarian too, exit 0, three filters without the key; "
+          "stakes and Cannot be undone in the margin and the sidebar, a settled item folded with its choice, no digit "
+          "key on it, Change opens it, a pick saves, a reload folds it again with the pick, exit 0; folded on a "
+          "phone in Focus it shows only its line and its margin, and a done round shows the line with no Change; "
           "a number item: slider and field bound both ways, typing (0 kept, off-grid snapped), arrows, j, no digit "
           "key, Skip, Accept all and undo, the Summary's value and flag, 390 px, Hungarian, JSON numbers, exit 0, "
           "read only when done; "

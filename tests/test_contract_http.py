@@ -607,6 +607,16 @@ class Exits(unittest.TestCase):
         data["items"][0]["blocking"] = "yes"
         folder.write(data)
         bad_commands.append([str(folder.target)])  # not a command, but checked the same way: exit 1 with a message
+        # stakes outside its list, irreversible on two lines, settled with no recommended (the earlier decision).
+        for change in ({"stakes": "huge"}, {"irreversible": "drops\nthe table"}, {"settled": "round-01"}):
+            folder = Folder()
+            self.addCleanup(folder.cleanup)
+            data = sample_decisions()
+            data["items"][0].update(change)
+            if "settled" in change:
+                del data["items"][0]["recommended"]
+            folder.write(data)
+            bad_commands.append([str(folder.target)])
         folder = Folder()
         self.addCleanup(folder.cleanup)
         data = sample_decisions()
@@ -1351,7 +1361,9 @@ class InboxOffer(unittest.TestCase):
         os.makedirs(os.path.join(cls.home, "runs"), mode=0o700)
         os.makedirs(cls.folder)
         data = sample_decisions()
-        data["items"] = [cls.item(data)]  # one item, with a recommendation: the one a tap may answer
+        # one item, with a recommendation: the one a tap may answer; and the settled items the accept fills in
+        data["items"] = [cls.item(data)] + [dict(it, settled="round-01, 11-14") for it in data["items"]
+                                            if it["id"] in cls.SETTLED]
         with open(os.path.join(cls.folder, "round-01.json"), "w", encoding="utf-8") as f:
             json.dump(data, f)
         cls.answers = os.path.join(cls.folder, "round-01.answers.json")
@@ -1378,6 +1390,7 @@ class InboxOffer(unittest.TestCase):
 
     # The item offered, and what the offer and the answers file must say for it.
     ANSWER, CHOICE = "Two columns", "two"
+    SETTLED = ()  # ids of sample_decisions' items added as settled, each with its recommendation
 
     @staticmethod
     def item(data):
@@ -1423,6 +1436,10 @@ class InboxOffer(unittest.TestCase):
         self.assertEqual((saved["answers"]["layout"]["choice"], saved["answers"]["layout"]["source"]),
                          (self.CHOICE, "notification"))
         self.assertIs(type(saved["answers"]["layout"]["choice"]), type(self.CHOICE))
+        self.assertEqual(sorted(saved["answers"]), sorted(("layout",) + self.SETTLED))
+        rec = {it["id"]: it["recommended"] for it in sample_decisions()["items"]}
+        for item_id in self.SETTLED:
+            self.assertEqual(saved["answers"][item_id], {"choice": rec[item_id], "comment": "", "source": "recommended"})
         self.assertEqual(self.ask({"op": "accept", "offer": offer["id"]}), {"error": "gone"})
         with open(self.answers, "rb") as f:
             self.assertEqual(f.read(), before)
@@ -1440,6 +1457,13 @@ class InboxNumberOffer(InboxOffer):
     def item(data):
         return {"id": "layout", "title": "Two columns or one?", "select": "number",
                 "range": {"min": -10, "max": 90, "step": 2.5, "unit": "%"}, "recommended": 12.5}
+
+
+@unittest.skipIf(sys.platform == "win32", "the inbox's control socket is a Unix socket; no inbox on Windows yet")
+class InboxSettledOffer(InboxOffer):
+    """The same beside a settled item: it waits on nothing, so the other is offered, and accept answers it too."""
+
+    SETTLED = ("filters",)
 
 
 @unittest.skipIf(sys.platform == "win32", "the inbox's control socket is a Unix socket; no inbox on Windows yet")
