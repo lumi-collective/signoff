@@ -1828,6 +1828,42 @@ class InboxOffer(InboxTest):
                 time.sleep(0.02)
             self.assertIsNone(self.offer())  # a done round is offered no more
 
+    def test_accept_keeps_line_notes_even_when_their_file_changed_since(self):
+        attached = {"attachments": [{"src": "change.diff"}], "lines": True}
+        stale = {"att": 0, "line": 2, "quote": "+what line 2 said before", "comment": "mine"}
+        topic, e = self.case([one_round(question("q", **attached), question("r", **attached))], {1: record({
+            "q": {"choice": None, "comment": "", "source": "user", "lines": [stale], "private": True},
+            "r": {"choice": "b", "comment": "", "source": "user", "lines": [stale]}})})
+        (topic / "change.diff").write_text("--- a/x\n+++ b/x\n", encoding="utf-8")  # line 2 is not the quote now
+        self.start()
+        offer = self.offer()
+        self.assertEqual(offer["question"], "Question q")
+        self.assertEqual(self.ctl("accept", offer=offer["id"]), {"ok": True})
+        saved = json.loads((topic / "round-01.answers.json").read_text(encoding="utf-8"))
+        self.assertTrue(saved["done"])
+        self.assertEqual(saved["answers"]["q"], {"choice": "a", "comment": "", "lines": [stale], "private": True,
+                                                 "source": "notification"})
+        self.assertEqual(saved["answers"]["r"]["lines"], [stale])
+
+    def test_an_inbox_save_checks_line_notes(self):
+        attached = {"attachments": [{"src": "change.diff"}], "lines": True}
+        topic, e = self.case([one_round(question("q", **attached))])
+        (topic / "change.diff").write_text("--- a/x\n+++ b/x\n", encoding="utf-8")
+        self.start()
+        start, page = self.open()
+        good = {"att": 0, "line": 2, "quote": "+++ b/x", "comment": "why here?"}
+
+        def body(*notes):
+            return {"answers": {"q": {"choice": "a", "comment": "", "source": "user", "lines": list(notes)}},
+                    "free_text": "", "done": False}
+        resp, data = self.save(page, body(good, dict(good, line=3)))
+        self.assertEqual(resp.status, 400)
+        self.assertIn(b"line note 2 ", data)
+        self.assertFalse((topic / "round-01.answers.json").exists())
+        self.assertEqual(self.save(page, body(good))[0].status, 200)
+        saved = json.loads((topic / "round-01.answers.json").read_text(encoding="utf-8"))
+        self.assertEqual(saved["answers"]["q"]["lines"], [good])
+
     def test_a_round_is_offered_once_its_settled_items_are_saved_and_accept_writes_only_the_offered_one(self):
         rounds = [one_round(question("s", settled="round-01"), question("q"),
                             question("m", select="many", rec=["a", "c"], settled="round-01"))]
@@ -2299,6 +2335,21 @@ class InboxElsewhere(InboxTest):
         self.assertNotIn("q", self.saved(topic)["answers"])
         with mock.patch.object(signoff, "write_atomic", side_effect=OSError(28, "No space left on device")):
             self.assertEqual(self.op(topic, "q"), {"error": "failed"})
+
+    def test_a_line_note_is_the_users_own_and_a_stale_one_never_blocks_a_mark(self):
+        attached = {"attachments": [{"src": "change.diff"}], "lines": True}
+        stale = {"att": 0, "line": 2, "quote": "+what line 2 said before", "comment": "mine"}
+        topic, _ = self.case([one_round(question("q", **attached), question("r"))], {1: record({
+            "q": {"choice": None, "comment": "", "source": "recommended", "lines": [stale]}})})
+        (topic / "change.diff").write_text("--- a/x\n+++ b/x\n", encoding="utf-8")
+        self.start()
+        before = self.files(self.root)
+        self.assertEqual(self.op(topic, "q"), {"error": "answered"})
+        self.assertEqual(self.files(self.root), before)
+        self.assertEqual(self.op(topic, "r", "said in chat"), {"ok": True})
+        saved = self.saved(topic)
+        self.assertEqual(saved["answers"]["q"]["lines"], [stale])
+        self.assertEqual(saved["answers"]["r"]["source"], "elsewhere")
 
     def test_a_round_with_a_mark_is_never_offered(self):
         two, _ = self.case([one_round(question("q"), question("r"))])

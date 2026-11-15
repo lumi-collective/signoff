@@ -1304,6 +1304,20 @@ class SchemaFile(unittest.TestCase):
         self.assertEqual(self.defs["item"]["properties"]["attachments"]["items"], {"$ref": "#/$defs/attachment"})
         self.assertEqual(self.defs["item"]["properties"]["attachments"]["maxItems"], signoff.MAX_ITEM_ATTACHMENTS)
 
+    def test_attachment_types_open_and_line_notes(self):
+        att = self.defs["attachment"]["properties"]
+        self.assertEqual(signoff.ATTACHMENT_TYPES, (".md", ".txt", ".diff", ".patch"))
+        self.assertIn(".md, .txt, .diff or .patch file", att["src"]["description"])
+        self.assertEqual((att["open"]["type"], att["open"]["default"]), ("boolean", False))
+        item = self.defs["item"]
+        self.assertEqual((item["properties"]["lines"]["type"], item["properties"]["lines"]["default"]),
+                         ("boolean", False))
+        self.assertIn("lines", signoff.ITEM_KEYS)
+        self.assertEqual(item["dependentSchemas"], {"lines": {
+            "if": {"properties": {"lines": {"const": True}}},
+            "then": {"required": ["attachments"], "properties": {"attachments": {"minItems": 1}}}}})
+        self.assertIn("lines", item["properties"]["sensitive"]["description"])
+
     def test_command(self):
         cmd = self.defs["command"]
         self.assertEqual(set(cmd["properties"]), set(signoff.COMMAND_KEYS))

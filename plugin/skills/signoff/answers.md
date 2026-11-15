@@ -65,6 +65,12 @@ as `<folder>/round-02.answers.json`. Read every line, not only the last:
 - `marks` (only on items with `marks: true`): `[{"image": 0, "box": [x, y, w, h], "comment": "…"}]`, where
   `image` is the picture's position in the item's `images` from 0 and `box` is in percent like `boxes`. Each one
   is the user pointing at something; act on its comment as you would on the item's comment.
+- `lines` (only on items with `lines: true`): `[{"att": 0, "line": 12, "quote": "…", "comment": "…"}]`, where
+  `att` is the attachment's position in the item's `attachments` from 0, `line` the line's number in that file
+  from 1 (split at each line feed, a carriage return at its end dropped), and `quote` the line's first 300
+  characters. For a diff, find the file and its line from the hunk around that line. When `quote` no longer
+  matches the file's line, the file changed since the note: find the quoted line, or ask. Act on each comment as
+  you would on the item's comment.
 - `<folder>/round-NN.answers.md` holds the same answers as Markdown for people, as of the last write by Signoff.
   Read the JSON, not the Markdown.
 - Compare each choice with your `recommended`: where they differ, the user overruled you. Read every comment

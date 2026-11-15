@@ -75,7 +75,8 @@ Instructions for coding agents working on Signoff. The README says what it does 
 - `tests/`: unittest suites. `support.py` makes a temporary topic folder (one file, or `round-NN.json`
   rounds) and runs a server on a thread. It points `SIGNOFF_INBOX_HOME` at a missing folder for every test and
   child process, so a run is the plain run unless a test passes its own home; `XDG_CACHE_HOME` and
-  `XDG_CONFIG_HOME` likewise, so no test reads or writes the user's Uptick files. `test_contract_http.py` checks
+  `XDG_CONFIG_HOME` likewise, so no test reads or writes the user's Uptick files. `line_rule.json` pins how a
+  line note counts an attachment's lines (`attachment_lines`), read by the server's tests; the page's count must match it. `test_contract_http.py` checks
   the security and run contract against the command line as a separate process, over HTTP, its exit code and
   stdout only; `SIGNOFF_CONTRACT_CMD` (POSIX shell words: forward slashes in a Windows path) swaps in another
   implementation. It must take the same arguments (`--no-open`, `--timeout`, `--history`, `--port`, and
@@ -243,7 +244,7 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   item and the round's `rev`), at most `MAX_OFFERS`, for `OFFER_TTL` seconds; no log line or file holds its id.
   `accept` uses it once: a second use, a late one or an unknown id gets `gone`. It saves through the run's own
   writer the saved answers, with the item's `recommended` as its choice and `source: "notification"` (its
-  comment, marks and privacy kept), `accepted` and `done` true, at the offer's `rev`. Every save rule of the page
+  comment, marks, line notes and privacy kept), `accepted` and `done` true, at the offer's `rev`. Every save rule of the page
   holds (`rev`, the file on disk, Done is final, the Done gate, the round lock), and each refusal is one word
   (`changed`, `held`, `done`, `failed`) with nothing written (a `failed` write may leave a new Markdown copy, and
   on an orphan round an answer request, as a failed save from the page does: the JSON goes last). `accept` and `open` with an offer look at the runs first, so a round
@@ -488,7 +489,7 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
 - **Only listed files are served.** Pictures and boards by number, each resolved inside the decisions file's
   folder; read into memory at start for a decisions run, read on request (with the same link check) for the
   past-decisions page. No SVG, no directory listing, no path from the request ever touches the disk.
-  Attachments (`.md`, `.txt`) follow the same folder rule, are read at start, on both pages, and go inside
+  Attachments (`.md`, `.txt`, `.diff`, `.patch`) follow the same folder rule, are read at start, on both pages, and go inside
   the page data as text; no route serves them. Every such path is checked as text before it is resolved: no
   control character, and no drive-relative or network path in Windows syntax (`C:foo`, `\\host`, `//host`), on
   every OS. An absolute local path still works for pictures and boards inside the folder, as in 0.1.0; attachments
@@ -682,8 +683,8 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   (exit 1, one stderr line, nothing written) a bad round or answers file, an unknown item, a done round, an item
   with `settled` (its recommendation is the user's earlier answer; `check_answers` refuses `source: "elsewhere"`
   on one too, from the page or a file), and an item that holds anything of the user's (`_users`): a choice with a `source` other than `recommended`, an
-  unticked recommendation (as `_decided` reads it), a comment, `other` text, marks, or `private` other than the
-  item starts (an earlier mark of the agent's, with nothing else, may be replaced). The note is one line of at
+  unticked recommendation (as `_decided` reads it), a comment, `other` text, marks, line notes, or `private` other
+  than the item starts (an earlier mark of the agent's, with nothing else, may be replaced). The note is one line of at
   most `MAX_NOTE` (500) characters with no tab, line break or character `_hidden` finds (an emoji's variation
   selector and joiner aside), checked in the command and again by the inbox (on the inbox's own Python, which may
   know fewer characters). `check_answers` holds a `source: "elsewhere"` comment, from the page or a file, to the

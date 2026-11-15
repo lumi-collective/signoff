@@ -57,7 +57,7 @@
   shows its facts as small chips, and a **Cards / Table** toggle lays the options side by side, a row per
   criterion. Pick in either view: it is the same choice. The view itself is not saved. On a phone the table
   scrolls sideways in its own box, the criteria column staying in place.
-- **Attachments.** Where an item lists text files (`.md` or `.txt`) the detail behind a choice shows under the
+- **Attachments.** Where an item lists text files (`.md`, `.txt`, `.diff` or `.patch`) the detail behind a choice shows under the
   options in a box that starts closed, as plain text. Nothing in it is rendered as Markdown or HTML.
 - **Commands.** A command the agent asks you to run before you decide shows under the item's text as a code
   block, as in the inbox: its language, a **Copy** button that copies it exactly, and a hint under one that

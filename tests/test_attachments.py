@@ -130,12 +130,55 @@ class AttachmentFile(unittest.TestCase):
         self.note("latin.txt", "café".encode("latin-1"))
         self.assertIn("UTF-8", self.broken("notes/latin.txt"))
 
-    def test_only_md_and_txt(self):
-        for name in ("page.html", "pic.svg", "run.js", "README"):
+    def test_only_the_text_types(self):
+        for name in ("page.html", "pic.svg", "run.js", "README", "x.diff.html", "x.patches"):
             self.note(name, b"text")
-            self.assertIn(".md or .txt", self.broken("notes/" + name))
-        self.note("UPPER.TXT", b"text")
-        self.assertEqual(self.load(with_attachment("notes/UPPER.TXT"))[0]["text"], "text")
+            self.assertIn(".md, .txt, .diff or .patch", self.broken("notes/" + name))
+        for name in ("UPPER.TXT", "change.diff", "fix.patch", "OLD.DIFF"):
+            self.note(name, b"text")
+            self.assertEqual(self.load(with_attachment("notes/" + name))[0]["text"], "text", name)
+
+    def test_a_diff_keeps_the_path_and_size_rules(self):
+        (self.outside / "secret.diff").write_text("SECRET", encoding="utf-8")
+        self.assertIn("outside", self.broken("../" + self.outside.name + "/secret.diff"))
+        self.assertIn("relative", self.broken(str(self.folder.path / "notes" / "x.diff")))
+        for src in ("\\\\host\\share\\x.diff", "//host/share/x.patch", "C:foo.diff"):
+            self.assertIn("relative", self.broken(src), src)
+        self.assertIn("control character", self.broken("notes/a\x01.diff"))
+        self.note("big.diff", b"x" * (256 * KIB + 1))
+        self.assertIn("256 KiB", self.broken("notes/big.diff"))
+        self.assertIn("not found", self.broken("notes/none.patch"))
+        if os.name != "nt":  # symlinks need extra rights on Windows
+            (self.folder.path / "notes" / "out.patch").symlink_to(self.outside / "secret.diff")
+            self.assertIn("outside", self.broken("notes/out.patch"))
+
+    def test_open_is_an_optional_bool(self):
+        self.assertNotIn("open", self.load(with_attachment())[0])  # an old round's page data stays as it was
+        self.assertIs(self.load(with_attachment(open=True))[0]["open"], True)
+        self.assertIs(self.load(with_attachment(open=False))[0]["open"], False)
+        for bad in ("true", 1, None, []):
+            self.assertIn("'open' must be true or false", self.broken(data=with_attachment(open=bad)), bad)
+
+    def test_item_lines_needs_an_attachment(self):
+        data = with_attachment()
+        data["items"][1]["lines"] = True
+        self.folder.write(data)
+        self.assertIs(signoff.load_decisions(self.folder.decisions)[0]["items"][1]["lines"], True)
+        for attachments in (None, []):
+            data = sample_decisions()
+            data["items"][1]["lines"] = True
+            if attachments is not None:
+                data["items"][1]["attachments"] = attachments
+            self.assertIn("'lines' needs at least one attachment", self.broken(data=data))
+        data = sample_decisions()
+        data["items"][1]["lines"] = False  # the default, said out loud
+        self.folder.write(data)
+        self.assertIs(signoff.load_decisions(self.folder.decisions)[0]["items"][1]["lines"], False)
+        self.assertNotIn("lines", signoff.load_decisions(self.folder.decisions)[0]["items"][0])  # no default added
+        for bad in ("yes", 1, None):
+            data = with_attachment()
+            data["items"][1]["lines"] = bad
+            self.assertIn("'lines' must be true or false", self.broken(data=data), bad)
 
     def test_control_character_in_the_name(self):
         for src in ("notes/cut\x00.md", "notes/cut\x01.md", "notes/cut\n.md", "notes/cut\x7f.md"):
@@ -376,6 +419,144 @@ class AttachmentInHistory(unittest.TestCase):
             write(self.topic / "round-01.json", data)
             e = self.entry(None)
             self.assertEqual(e["status"], "error", src)
+
+    def test_line_notes_on_a_changed_file_still_show(self):
+        # The past-decisions page reads the answers as stored: a note whose line changed since is kept, not checked.
+        data = with_attachment("notes/cut.md")
+        data["items"][1]["lines"] = True
+        write(self.topic / "round-01.json", data)
+        note = {"att": 0, "line": 99, "quote": "a line long gone", "comment": "was wrong"}
+        write(self.topic / "round-01.answers.json", {"version": 1, "done": True, "saved": "2026-03-04T10:00:00Z",
+                                                     "answers": {"filters": {"choice": ["date"], "lines": [note]}},
+                                                     "free_text": ""})
+        e = self.entry(None)
+        self.assertEqual(e["status"], "done", e.get("error"))
+        self.assertEqual(e["answers"]["answers"]["filters"]["lines"], [note])
+
+
+LINE_RULE = json.loads((Path(__file__).resolve().parent / "line_rule.json").read_text(encoding="ascii"))
+
+
+def line_note(line, quote=None, att=0, comment="look here"):
+    return {"att": att, "line": line, "quote": LINE_RULE["quotes"][line - 1] if quote is None else quote,
+            "comment": comment}
+
+
+class LineRule(unittest.TestCase):
+    """One rule for a line note's line and quote, pinned by tests/line_rule.json, which the page's test reads too:
+    the text split on LF, one CR cut off each line, no line after a final newline, a quote cut to 300 code points."""
+
+    def setUp(self):
+        self.folder = Folder()
+        self.addCleanup(self.folder.cleanup)
+        (self.folder.path / "notes").mkdir()
+        (self.folder.path / "notes" / "rule.diff").write_bytes(LINE_RULE["text"].encode("utf-8"))  # its BOM too
+        (self.folder.path / "notes" / "cut.md").write_bytes(TEXT.encode("utf-8"))
+        data = sample_decisions()
+        data["items"][1]["attachments"] = [{"src": "notes/cut.md"}, {"src": "notes/rule.diff"}]
+        data["items"][1]["lines"] = True
+        self.folder.write(data)
+        self.decisions = signoff.load_decisions(self.folder.decisions)[0]
+
+    def check(self, notes, previous=None):
+        state = {"answers": {"filters": {"choice": ["date"], "comment": "", "lines": notes}}, "free_text": "",
+                 "done": False}
+        return signoff.check_answers(state, self.decisions, previous=previous)
+
+    def bad(self, notes, previous=None):
+        with self.assertRaises(ValueError) as ctx:
+            self.check(notes, previous)
+        return str(ctx.exception)
+
+    def test_the_fixture_holds_every_case(self):
+        text = LINE_RULE["text"]
+        self.assertTrue(text.startswith("﻿"))
+        self.assertIn("\r\n", text)
+        self.assertIn(" ", text)
+        self.assertRegex(text, "\r[^\n]")
+        self.assertFalse(text.endswith("\n"))
+        astral = [q for q in LINE_RULE["quotes"] if len(q) == 300]
+        self.assertEqual(len(astral), 1)
+        self.assertGreater(ord(astral[0][-1]), 0xFFFF)  # a UTF-16 cut would split it
+
+    def test_every_line_of_the_fixture_matches_and_nothing_past_it(self):
+        lines, quotes = LINE_RULE["lines"], LINE_RULE["quotes"]
+        self.assertEqual(signoff.attachment_lines(self.decisions["items"][1]["attachments"][1]["text"]), lines)
+        self.assertEqual([line[:signoff.MAX_QUOTE] for line in lines], quotes)
+        notes = [line_note(n, att=1) for n in range(1, len(lines) + 1)]
+        self.assertEqual(self.check(notes)["answers"]["filters"]["lines"], notes)
+        self.assertIn("line note 1 ", self.bad([line_note(len(lines) + 1, quote="", att=1)]))
+        for n, line in enumerate(lines, 1):
+            if line != quotes[n - 1]:  # the long line: the whole of it is not its quote
+                self.bad([line_note(n, quote=line, att=1)])
+                self.bad([line_note(n, quote=line[:299], att=1)])
+            self.bad([line_note(n, quote=quotes[n - 1] + "x", att=1)])
+        self.bad([line_note(1, quote="﻿first", att=1)])  # the BOM is not in the text
+        self.bad([line_note(2, quote="lone", att=1)])  # a lone CR ends no line
+        self.bad([line_note(5, quote="trail", att=1)])  # only one CR is cut off
+
+    def test_a_note_names_its_attachment_by_index(self):
+        self.assertEqual(len(self.check([line_note(1, quote="# Cut list", att=0)])["answers"]["filters"]["lines"]), 1)
+        self.bad([line_note(1, quote="# Cut list", att=1)])
+        for att in (2, -1, True, 0.0, "0", None):
+            self.assertIn("line note 1 must be", self.bad([line_note(1, quote="# Cut list", att=att)]), att)
+
+    def test_a_note_is_exactly_four_fields(self):
+        good = line_note(1, att=1)
+        for bad in (dict(good, line=0), dict(good, line=True), dict(good, line=1.0), dict(good, line="1"),
+                    dict(good, quote=None), dict(good, quote="x" * 301), dict(good, comment=""),
+                    dict(good, comment=None), dict(good, comment="x" * (signoff.MAX_TEXT + 1)),
+                    dict(good, side="new"), {k: v for k, v in good.items() if k != "quote"}, [good], "x"):
+            self.assertIn("line note 1 must be", self.bad([bad]), bad)
+        self.assertIn("list of up to 50", self.bad(good))
+        self.assertEqual(self.check([dict(good, comment="x" * signoff.MAX_TEXT)])["answers"]["filters"]["lines"][0]
+                         ["comment"], "x" * signoff.MAX_TEXT)
+
+    def test_at_most_50(self):
+        self.assertEqual(len(self.check([line_note(1, att=1)] * 50)["answers"]["filters"]["lines"]), 50)
+        self.assertIn("list of up to 50", self.bad([line_note(1, att=1)] * 51))
+
+    def test_the_error_names_the_position_only(self):
+        msg = self.bad([line_note(1, att=1), line_note(2, quote="SECRET QUOTE", att=1, comment="SECRET NOTE")])
+        self.assertIn("line note 2 ", msg)
+        self.assertNotIn("SECRET", msg)
+        msg = self.bad([line_note(1, att=1), dict(line_note(2, att=1), comment=7, extra="SECRET")])
+        self.assertNotIn("SECRET", msg)
+
+    def test_only_on_an_item_with_lines(self):
+        state = {"answers": {"layout": {"choice": "two", "comment": "", "lines": []}}, "free_text": "", "done": False}
+        with self.assertRaises(ValueError) as ctx:
+            signoff.check_answers(state, self.decisions)
+        self.assertIn("takes no line notes", str(ctx.exception))
+        self.assertEqual(self.check([])["answers"]["filters"]["lines"], [])
+
+    def test_an_unchanged_note_is_not_checked_again(self):
+        stale = line_note(3, quote="what line 3 said before", att=1)
+        previous = {"answers": {"filters": {"choice": ["date"], "comment": "", "lines": [stale]}}}
+        self.assertEqual(self.check([stale, line_note(1, att=1)], previous)["answers"]["filters"]["lines"][0], stale)
+        self.assertIn("line note 1 ", self.bad([dict(stale, comment="changed")], previous))
+        self.assertIn("line note 1 ", self.bad([dict(stale, line=4)], previous))
+        # The same note on another item of the stored answers is not this item's.
+        self.bad([stale], {"answers": {"layout": {"choice": "two", "lines": [stale]}}})
+        self.bad([stale])
+
+    def test_a_note_is_the_users_own_and_sensitive_acts_on_an_item_with_lines(self):
+        item = self.decisions["items"][1]  # comment false, no other, no marks: lines is its only text field
+        self.assertFalse(signoff._private_default(dict(item, sensitive=True, lines=False)))
+        self.assertTrue(signoff._private_default(dict(item, sensitive=True)))
+        self.assertFalse(signoff._private_default(item))
+        self.assertFalse(signoff._users({"choice": [], "source": "recommended", "lines": []}, item))
+        self.assertTrue(signoff._users({"choice": [], "source": "recommended", "lines": [line_note(1, att=1)]}, item))
+
+    def test_a_stored_read_checks_the_shape_only(self):
+        stale = line_note(99, quote="gone", att=1)
+        stored = {"version": 1, "saved": "2026-01-01T12:00:00Z", "done": False, "free_text": "",
+                  "answers": {"filters": {"choice": ["date"], "lines": [stale]}}}
+        self.assertEqual(signoff.check_answers(stored, self.decisions, stored=True)["answers"]["filters"]["lines"],
+                         [stale])
+        stored["answers"]["filters"]["lines"] = [dict(stale, att=2)]  # an index past the item's attachments
+        with self.assertRaises(ValueError):
+            signoff.check_answers(stored, self.decisions, stored=True)
 
 
 if __name__ == "__main__":

@@ -36,8 +36,17 @@ Beside each round, `round-NN.answers.json`, from the first change on the page:
   and an older inbox (`signoff inbox stop`, then `signoff inbox open`), before the agent marks an item.
 - `marks`: your rectangles, `image` being the picture's position in the item's `images` (from 0) and `box` in
   percent like `boxes`.
-- `private`: `true` when you marked the item Private. Its comment, Other text and mark comments stay in this
-  file; the Markdown copy shows `(private)` in their place (`(privát)` in a Hungarian round).
+- `lines`: your notes on lines of the item's attachments (an item with `lines: true`), at most 50, each
+  `{att, line, quote, comment}`: `att` the attachment's position in the item's `attachments` (from 0), `line`
+  the line's number in the file (from 1: the text split at each line feed, a carriage return at a line's end
+  dropped, no line after a final line feed), `quote` that line's first 300 characters as the page showed it, and
+  `comment` your note (1 to 20,000 characters). A save checks a new or changed note against the file as Signoff
+  read it at start; a note saved before is kept as it is, so a `quote` that no longer matches the file's line
+  means the file changed since. Needs Signoff 0.5.0 or newer: an older one refuses an answers file with `lines`
+  (it cannot resume it, and the past-decisions page shows the round as broken).
+- `private`: `true` when you marked the item Private. Its comment, Other text, mark comments and line note
+  comments stay in this file; the Markdown copy shows `(private)` in their place (`(privát)` in a Hungarian
+  round).
 - `accepted`, `accepted_at`: you accepted this round, and when; Done counts as accepting a single round.
   `changed_after_accept` is `true` while the round was changed after an earlier acceptance and not accepted
   again. The agent sees nothing of this until Done.
@@ -56,7 +65,8 @@ also the joiner inside an emoji sequence and a soft hyphen) and a lone surrogate
 is handled (checked in Obsidian 1.15.1): a `%` after a `%` is escaped. The others were not checked. Its
 labels follow the round's `lang` (`en` or `hu`; anything else gets English), and an empty comment leaves no
 line. An item's commands get a line each, for reading, not for pasting: the copy drops their indentation and
-blank lines. Agents read the JSON.
+blank lines. Each line note gets a line too: the attachment's name, the line's number, its quote and the comment.
+Agents read the JSON.
 
 With `--notes` (the Notes folder setting), a run that ends with Done also puts a copy of each round's Markdown
 in your notes folder, written from the answers file at that moment. There a private answer's item has its

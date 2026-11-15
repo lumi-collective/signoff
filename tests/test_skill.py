@@ -69,6 +69,17 @@ class SkillTest(unittest.TestCase):
         for name in linked():
             self.assertNotIn("${", (SKILL / name).read_text(encoding="utf-8"), name)
 
+    def test_line_notes_are_taught(self):
+        # SKILL.md lists the key and sends the agent on; the rest is in the two files it reads.
+        skill = " ".join((SKILL / "SKILL.md").read_text(encoding="utf-8").split())
+        self.assertIn("`attachments`, `lines`, `commands`", skill)
+        fields = " ".join((SKILL / "fields.md").read_text(encoding="utf-8").split())
+        for words in ("`.diff`", "`.patch`", '"open": true', '"lines": true'):
+            self.assertIn(words, fields)
+        answers = " ".join((SKILL / "answers.md").read_text(encoding="utf-8").split())
+        for words in ("`lines`", "`att`", "`quote`"):
+            self.assertIn(words, answers)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -46,7 +46,7 @@ IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
                ".gif": "image/gif"}
 BOARD_TYPES = (".html", ".htm")
 MAX_BOARD = 2 * 1024 * 1024
-ATTACHMENT_TYPES = (".md", ".txt")
+ATTACHMENT_TYPES = (".md", ".txt", ".diff", ".patch")
 MAX_ATTACHMENT = 256 * 1024
 # Attachments go inside the page, so these count their size there, escaped (a "<" takes 6 bytes).
 MAX_ATTACHMENTS = 2 * 1024 * 1024  # one round's together
@@ -75,6 +75,9 @@ MAX_SCALE = 10 ** 12  # a number item's largest value, in steps: a float holds t
 MAX_VALUE = 10 ** 15  # a number item's largest value: a float holds every whole number up to it, and no sum overflows
 MAX_UNIT = 16  # characters in a number item's unit
 MAX_MARKS = 50
+MAX_LINE_NOTES = 50  # an answer's notes on its item's attachment lines
+MAX_QUOTE = 300  # code points of the noted line kept with a note, its anchor when the file changes
+LINE_NOTE_KEYS = {"att", "line", "quote", "comment"}
 HISTORY_BUDGET = 200 * 1024 * 1024
 HISTORY_TEXT_BUDGET = 16 * 1024 * 1024  # all attachments on the past-decisions page
 HISTORY_DATA_BUDGET = 32 * 1024 * 1024  # every round's own text there (decisions, answers, outcome), as sent
@@ -110,11 +113,11 @@ TOP_KEYS = ("version", "title", "tab", "intro", "notice", "lang", "items", "free
 TOP_REQUIRED = ("version", "title", "items")
 ITEM_KEYS = ("id", "group", "title", "description", "cost", "images", "select", "options", "recommended", "comment",
              "other", "skippable", "marks", "sensitive", "criteria", "attachments", "commands",
-             "blocking", "range", "stakes", "irreversible", "settled")
+             "blocking", "range", "stakes", "irreversible", "settled", "lines")
 ITEM_REQUIRED = ("id", "title")  # and options for one and many, range and recommended for number
 RANGE_KEYS = ("min", "max", "step", "unit")
 IMAGE_KEYS = ("src", "html", "caption", "alt", "boxes")
-ATTACHMENT_KEYS = ("src", "caption")
+ATTACHMENT_KEYS = ("src", "caption", "open")
 COMMAND_KEYS = ("text", "lang", "caption")
 OUTCOME_KEYS = ("log", "line", "date")
 OPTION_KEYS = ("id", "label", "detail", "facts")
@@ -312,14 +315,16 @@ def _attachment(att, folder, where, used, lenient=False):
     'missing', the reason. used[0] counts the round's bytes so far, as they go into the page. Messages name src
     as written, never a local path."""
     _keys(att, ATTACHMENT_KEYS, ("src",), where)
-    for key in ATTACHMENT_KEYS:
+    for key in ("src", "caption"):
         _text(att, key, where)
+    if not isinstance(att.get("open", False), bool):
+        raise DecisionsError("%s: 'open' must be true or false" % where)
     src = att["src"]
     if PureWindowsPath(src).anchor:  # a new key, and the page shows src: no local path, not even a rooted one
         raise DecisionsError("%s: the path must be relative to the decisions file's folder" % where)
     path = _inside(folder, src, where)
     if path.suffix.lower() not in ATTACHMENT_TYPES:
-        raise DecisionsError("%s: %r must be a text file, .md or .txt" % (where, src))
+        raise DecisionsError("%s: %r must be a text file, .md, .txt, .diff or .patch" % (where, src))
     reason = None
     try:
         if not path.exists():
@@ -447,6 +452,10 @@ def _item(item, n, folder, images, used, lenient=False):
         raise DecisionsError("%s: more than %d attachments in this round" % (where, MAX_ROUND_ATTACHMENTS))
     for k, att in enumerate(attachments, 1):
         _attachment(att, folder, "%s, attachment %d" % (where, k), used, lenient)
+    if not isinstance(item.get("lines", False), bool):
+        raise DecisionsError("%s: 'lines' must be true or false" % where)
+    if item.get("lines") and not attachments:
+        raise DecisionsError("%s: 'lines' needs at least one attachment, whose lines the user notes" % where)
     if "commands" in item:
         commands = item["commands"]
         if not isinstance(commands, list) or not 1 <= len(commands) <= MAX_ITEM_COMMANDS:
@@ -556,8 +565,10 @@ def load_decisions(path, lenient=False):
     return data, images
 
 
-def check_answers(state, decisions, stored=False):
-    """Check a save body (or, with stored=True, the answers file) against the decisions. Raises ValueError."""
+def check_answers(state, decisions, stored=False, previous=None):
+    """Check a save body (or, with stored=True, the answers file) against the decisions. Raises ValueError.
+    previous: the round's stored answers, for a save: a line note found there unchanged is not matched against its
+    attachment's text again, so a file changed since never blocks a save. A stored read matches no note."""
     if not isinstance(state, dict):
         raise ValueError("answers must be an object")
     extra = set(state) - set(STORED_KEYS if stored else ANSWER_KEYS)
@@ -589,8 +600,9 @@ def check_answers(state, decisions, stored=False):
         item = items.get(key)
         if item is None:
             raise ValueError("answer for unknown item %r" % key)
-        if not isinstance(ans, dict) or set(ans) - {"choice", "comment", "source", "other", "marks", "private"}:
-            raise ValueError("answer %r must be {choice, comment, source, other, marks, private}" % key)
+        if not isinstance(ans, dict) or set(ans) - {"choice", "comment", "source", "other", "marks", "private",
+                                                     "lines"}:
+            raise ValueError("answer %r must be {choice, comment, source, other, marks, private, lines}" % key)
         if not isinstance(ans.get("private", False), bool):
             raise ValueError("answer %r: private must be true or false" % key)
         choice, comment = ans.get("choice"), ans.get("comment", "")
@@ -632,6 +644,9 @@ def check_answers(state, decisions, stored=False):
             raise ValueError("answer %r: other text without the Other choice" % key)
         if "marks" in ans:
             clean[key]["marks"] = _check_marks(ans["marks"], item, key)
+        if "lines" in ans:
+            old = None if stored else ((previous or {}).get("answers") or {}).get(key, {}).get("lines", [])
+            clean[key]["lines"] = _check_lines(ans["lines"], item, key, old)
         if "source" in ans:
             clean[key]["source"] = ans["source"]
         if "private" in ans:
@@ -658,6 +673,47 @@ def _check_marks(marks, item, key):
             raise ValueError("answer %r: a mark must be {image: <picture index>, box: [x, y, w, h] in percent, "
                              "comment: <text>}" % key)
     return marks
+
+
+def attachment_lines(text):
+    """An attachment's lines as a line note counts them (the page counts alike): split on LF only, one CR cut off
+    each line's end, no line after a final LF. A lone CR or U+2028 stays inside its line, so not splitlines()."""
+    lines = text.split("\n")
+    if lines[-1] == "":
+        lines.pop()
+    return [line[:-1] if line.endswith("\r") else line for line in lines]
+
+
+def _check_lines(notes, item, key, old):
+    """An answer's line notes. Each names an attachment of the item by index, a line from 1 and that line's first
+    MAX_QUOTE code points. old: the notes stored for this item, whose unchanged ones are not matched again; None
+    (a stored read) matches none. Errors name a note's position only, never its text."""
+    if not item.get("lines"):
+        raise ValueError("answer %r: this item takes no line notes" % key)
+    if not isinstance(notes, list) or len(notes) > MAX_LINE_NOTES:
+        raise ValueError("answer %r: lines must be a list of up to %d" % (key, MAX_LINE_NOTES))
+    atts = item.get("attachments", [])
+    for n, note in enumerate(notes, 1):
+        ok = isinstance(note, dict) and set(note) == LINE_NOTE_KEYS
+        ok = ok and type(note["att"]) is int and 0 <= note["att"] < len(atts)
+        ok = ok and type(note["line"]) is int and note["line"] >= 1
+        ok = ok and isinstance(note["quote"], str) and len(note["quote"]) <= MAX_QUOTE
+        ok = ok and isinstance(note["comment"], str) and 1 <= len(note["comment"]) <= MAX_TEXT
+        if not ok:
+            raise ValueError("answer %r: line note %d must be {att: <attachment index>, line: <line from 1>, quote: "
+                             "<the line, up to %d characters>, comment: <text>}" % (key, n, MAX_QUOTE))
+    if old is None:
+        return notes
+    found = {}
+    for n, note in enumerate(notes, 1):
+        if note in old:  # the types are checked above, so True never equals 1 here
+            continue
+        if note["att"] not in found:
+            found[note["att"]] = attachment_lines(atts[note["att"]].get("text", ""))  # no text: a file not read
+        lines = found[note["att"]]
+        if note["line"] > len(lines) or lines[note["line"] - 1][:MAX_QUOTE] != note["quote"]:
+            raise ValueError("answer %r: line note %d does not match its line in the attachment" % (key, n))
+    return notes
 
 
 def load_outcome(path):
@@ -876,7 +932,7 @@ MD_LABELS = {
            "user": "the user", "notification": "recommendation, accepted from a notification", "unknown": "unknown", "yes_at": "yes, %s", "changed": "no, changed after it was accepted",
            "command": "Command", "elsewhere": "decided elsewhere, marked by the agent", "stakes": "Stakes",
            "low": "low", "medium": "medium", "high": "high", "irreversible": "Cannot be undone",
-           "settled": "Settled earlier, says the agent"},
+           "settled": "Settled earlier, says the agent", "line": "Line note, %s line %d, “%s”: %s"},
     "hu": {"choice": "Választás", "source": "Forrás", "comment": "Megjegyzés", "mark": "Jelölés %d, %d. kép, %s "
            "(x, y, sz, m, %%-ban): %s", "attachment": "Melléklet", "saved": "Mentve", "accepted": "Elfogadva",
            "done": "Kész", "yes": "igen", "no": "nem", "skipped": "Kihagyva", "other": "Egyéb", "rec": "javasolt",
@@ -886,7 +942,7 @@ MD_LABELS = {
            "changed": "nem, elfogadás után módosítva", "command": "Parancs",
            "elsewhere": "máshol eldőlt, az ágens jelölte", "stakes": "Tét", "low": "alacsony",
            "medium": "közepes", "high": "magas", "irreversible": "Nem vonható vissza",
-           "settled": "Korábban eldőlt, az ágens szerint"},
+           "settled": "Korábban eldőlt, az ágens szerint", "line": "Sor-megjegyzés, %s %d. sora, „%s”: %s"},
 }
 
 
@@ -968,6 +1024,9 @@ def answers_markdown(decisions, record, hide_private=False):
         for k, mark in enumerate(ans.get("marks", []), 1):
             out.append("- " + lb["mark"] % (k, mark["image"] + 1, ", ".join("%g" % v for v in mark["box"]),
                                             text(mark["comment"])))
+        for note in ans.get("lines", []):  # the quote through md_line: a stored one is unchecked file text
+            out.append("- " + lb["line"] % (md_line(item["attachments"][note["att"]]["src"]), note["line"],
+                                            md_line(note["quote"], ""), text(note["comment"])))
         for att in item.get("attachments", []):  # its name only: the text is the agent's, and stays in its file
             name = md_line(att["src"])
             caption = att.get("caption", "")
@@ -1710,7 +1769,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             rev = body.pop("rev", None) if isinstance(body, dict) else None
             if rev is not None and (not isinstance(rev, int) or isinstance(rev, bool) or rev < 0):
                 raise ValueError("'rev' must be a count of saves")
-            state = check_answers(body, round_.decisions)
+            state = check_answers(body, round_.decisions, previous=round_.saved)
         except (ValueError, RecursionError) as e:  # bad JSON, bad UTF-8, too deep, bad answers
             return self._send(400, ("bad answers: %s\n" % str(e)[:200]).encode("utf-8", "replace"))
         try:
@@ -1770,8 +1829,9 @@ class Round:
         items = self.decisions["items"]
         texts = 1 + sum(it["comment"] for it in items) + sum(it["other"] for it in items) \
             + MAX_MARKS * sum(it["marks"] for it in items)
+        notes = MAX_LINE_NOTES * (MAX_TEXT + MAX_QUOTE) * sum(bool(it.get("lines")) for it in items)
         # Room for every text field full: up to 6 bytes a character once JSON-escaped, plus the rest of the body.
-        self.max_body = min(MAX_ROUND_BODY, max(MAX_BODY, texts * MAX_TEXT * 6 + 64 * 1024))
+        self.max_body = min(MAX_ROUND_BODY, max(MAX_BODY, (texts * MAX_TEXT + notes) * 6 + 64 * 1024))
 
 
 def _not_taken_in(r, key, why):
@@ -2551,16 +2611,18 @@ def _note_ok(note):
 
 def _private_default(item):
     """Whether the page starts an item Private: a sensitive one with a text field (the box is there only then)."""
-    return bool(item["sensitive"] and (item["comment"] or item["other"] or item["marks"]))
+    return bool(item["sensitive"] and (item["comment"] or item["other"] or item["marks"] or item.get("lines")))
 
 
 def _users(answer, item):
     """Whether a saved answer holds anything of the user's, which a mark must never replace: a choice (not the
-    recommendation left untouched; an unticked recommendation too), a comment, Other text, marks, or Private set
-    otherwise than the item starts. A mark of the agent's own holds only its note, which a new mark may replace."""
+    recommendation left untouched; an unticked recommendation too), a comment, Other text, marks, line notes, or
+    Private set otherwise than the item starts. A mark of the agent's own holds only its note, which a new mark may
+    replace."""
     if not answer:
         return False
-    if answer.get("marks") or answer.get("other") or bool(answer.get("private")) != _private_default(item):
+    if answer.get("marks") or answer.get("lines") or answer.get("other") \
+            or bool(answer.get("private")) != _private_default(item):
         return True
     if answer.get("source") == "elsewhere":
         return False
@@ -2589,7 +2651,7 @@ def _mark_state(r, item_id, note):
         return None, None
     answers = dict(base["answers"], **{item_id: mark})
     return check_answers({"answers": answers, "free_text": base["free_text"], "accepted": False, "done": False},
-                         r.decisions), None
+                         r.decisions, previous=base), None
 
 
 def _whole(n):
@@ -3128,14 +3190,15 @@ class InboxServer(_Server):
             base = r.saved or {"answers": {}, "free_text": ""}
         item = next(it for it in r.decisions["items"] if it["id"] == o["item"])
         old = base["answers"].get(item["id"], {})
-        answer = {k: old[k] for k in ("comment", "marks", "private") if k in old}  # an Other text goes with its choice
+        # An Other text goes with its choice.
+        answer = {k: old[k] for k in ("comment", "marks", "lines", "private") if k in old}
         rec = item["recommended"]
         answer.update(choice=list(rec) if isinstance(rec, list) else rec, source="notification")
         answers = dict(base["answers"])
         answers[item["id"]] = answer
         try:
             state = check_answers({"answers": answers, "free_text": base["free_text"], "accepted": True, "done": True},
-                                  r.decisions)
+                                  r.decisions, previous=base)
             result = g.store(o["round"], state, o["rev"])
         except (ValueError, OSError):
             return "failed"

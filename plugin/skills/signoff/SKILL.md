@@ -82,10 +82,10 @@ How to batch:
   option order, each with `caption` set to the option's `label`. Two or more visual options get one picture
   each, never a single picture for all.
 - `sensitive: true` when the answer may hold personal data (health, money, family, someone else's details, the
-  user's own setup). The item starts marked Private; the user can untick it, or tick Private on any item. It
-  only acts on an item with a text field: `comment`, `other` or `marks`.
+  user's own setup). The item starts marked Private; the user can untick it, or tick it on any item. It
+  acts only with a text field: `comment`, `other`, `marks` or `lines`.
 - `tab`, `other`, `skippable`, `comment`, `boxes`, boards, `marks`, `group`, `lang`, `notice`, `criteria`,
-  `facts`, `attachments`, `commands`, `blocking`, `stakes`, `irreversible`, `settled`, `range` and `context` are in [fields.md](fields.md): read it first.
+  `facts`, `attachments`, `lines`, `commands`, `blocking`, `stakes`, `irreversible`, `settled`, `range` and `context` are in [fields.md](fields.md): read it first.
 - All text is plain: line breaks are kept; HTML and Markdown show as typed.
 - The full format is in `${CLAUDE_PLUGIN_ROOT}/signoff/schema.json`.
 
@@ -146,8 +146,8 @@ and outcome files directly instead.
   file, its images or its answers into a cloud service, an issue, a pull request or a chat that leaves the
   machine. Screenshots of real systems may show secrets or personal data: crop them or use a mockup.
   Put nothing secret in a board or an attachment either.
-- **Private text stays with you.** The text of an answer with `private: true` (its comment, `other` text and
-  mark comments) never goes into a commit, your memory, a cloud service or the decision log, and not into
+- **Private text stays with you.** The text of an answer with `private: true` (its comment, `other` text,
+  mark and line note comments) never goes into a commit, your memory, a cloud service or the decision log, and not into
   the outcome file's `line`. Record only the
   decision, in your own words, without the private details. Signoff does not enforce this: the answers file
   holds the text in plain JSON, and keeping it there is up to you.

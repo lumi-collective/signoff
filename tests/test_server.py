@@ -572,5 +572,125 @@ class Resume(unittest.TestCase):
             signoff.make_server(self.folder.decisions)
 
 
+DIFF = "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1,2 +1,2 @@\n-old *line*\n+new <b>line</b>\n"
+
+
+def with_lines(lang=None):
+    """The sample round, its first item with a diff attached and line notes on."""
+    data = sample_decisions()
+    data["items"][0]["attachments"] = [{"src": "notes/change.diff", "caption": "The change"}]
+    data["items"][0]["lines"] = True
+    if lang:
+        data["lang"] = lang
+    return data
+
+
+def noted(*notes, private=None):
+    ans = {"choice": "two", "comment": "", "source": "user", "lines": list(notes)}
+    if private is not None:
+        ans["private"] = private
+    return {"answers": {"layout": ans}, "free_text": "", "done": False}
+
+
+def note(line=6, quote="+new <b>line</b>", comment="see *this*"):
+    return {"att": 0, "line": line, "quote": quote, "comment": comment}
+
+
+class LineNotes(unittest.TestCase):
+    """An answer's line notes: checked against the attachment's text on save when new or changed, kept as stored
+    otherwise, counted in the round's body limit, and one line each in the Markdown copy."""
+
+    def setUp(self):
+        self.folder = Folder(with_lines())
+        self.addCleanup(self.folder.cleanup)
+        (self.folder.path / "notes").mkdir()
+        self.diff = self.folder.path / "notes" / "change.diff"
+        self.diff.write_bytes(DIFF.encode("utf-8"))
+
+    def serve(self):
+        run = Running(self.folder)
+        self.addCleanup(run.stop)
+        return run
+
+    def saved(self):
+        return json.loads(self.folder.answers.read_text(encoding="utf-8"))
+
+    def test_a_good_note_is_saved_and_a_bad_one_refused(self):
+        run = self.serve()
+        self.assertEqual(run.save(noted(note(), note(1, "diff --git a/x b/x")))[0].status, 200)
+        self.assertEqual(self.saved()["answers"]["layout"]["lines"], [note(), note(1, "diff --git a/x b/x")])
+        before = self.folder.answers.read_bytes()
+        for bad in (note(quote="+new <b>SECRET</b>"), note(line=7, quote=""), note(line=5), note(comment="")):
+            resp, body = run.save(noted(note(), bad))
+            self.assertEqual(resp.status, 400, bad)
+            self.assertIn(b"line note 2 ", body)
+            self.assertNotIn(b"SECRET", body)
+        self.assertEqual(self.folder.answers.read_bytes(), before)
+
+    def test_an_unchanged_note_saves_after_its_attachment_changed(self):
+        self.assertEqual(self.serve().save(noted(note()))[0].status, 200)
+        self.diff.write_bytes(DIFF.replace("+new", "+newer").encode("utf-8"))  # line 6 is not what the note quotes
+        run = self.serve()  # the new text is read at start; the stored note loads all the same
+        self.assertEqual(run.save(dict(noted(note(), note(6, "+newer <b>line</b>")), rev=0))[0].status, 200)
+        self.assertEqual(self.saved()["answers"]["layout"]["lines"][0], note())
+        self.assertEqual(run.save(dict(noted(note(comment="changed")), rev=1))[0].status, 400)  # changed: checked
+        self.assertEqual(run.save(dict(noted(note()), rev=1))[0].status, 200)
+
+    def test_at_most_50_notes(self):
+        run = self.serve()
+        self.assertEqual(run.save(noted(*[note()] * 50))[0].status, 200)
+        resp, body = run.save(noted(*[note()] * 51))
+        self.assertEqual(resp.status, 400)
+        self.assertIn(b"up to 50", body)
+
+    def test_only_an_item_with_lines_takes_notes(self):
+        run = self.serve()
+        other = {"answers": {"filters": {"choice": ["date"], "lines": []}}, "free_text": "", "done": False}
+        self.assertEqual(run.save(other)[0].status, 400)
+        self.assertEqual(run.save(noted())[0].status, 200)
+
+    def test_the_body_limit_has_room_for_50_full_notes(self):
+        run = self.serve()
+        texts = 2  # the free text and layout's comment
+        want = texts * signoff.MAX_TEXT * 6 + 64 * 1024 + signoff.MAX_LINE_NOTES * (signoff.MAX_TEXT + 300) * 6
+        self.assertEqual(run.server.rounds[0].max_body, want)
+        full = noted(*[note(comment="\x01" * signoff.MAX_TEXT)] * 50, private=False)
+        full["answers"]["layout"]["comment"] = "\x01" * signoff.MAX_TEXT
+        full["free_text"] = "\x01" * signoff.MAX_TEXT
+        self.assertEqual(run.save(full)[0].status, 200)  # each \x01 takes 6 bytes as JSON
+
+    def test_markdown_writes_a_line_per_note_and_private_hides_its_comment(self):
+        run = self.serve()
+        self.assertEqual(run.save(noted(note(), note(1, "diff --git a/x b/x", "first")))[0].status, 200)
+        md = (self.folder.path / "decisions.answers.md").read_text(encoding="utf-8")
+        self.assertIn("- Line note, notes/change.diff line 6, “+new \\<b\\>line\\</b\\>”: see \\*this\\*\n", md)
+        self.assertIn("- Line note, notes/change.diff line 1, “diff --git a/x b/x”: first\n", md)
+        self.assertEqual(run.save(dict(noted(note(comment="a SECRET reason"), private=True), rev=1))[0].status, 200)
+        md = (self.folder.path / "decisions.answers.md").read_text(encoding="utf-8")
+        self.assertIn("- Line note, notes/change.diff line 6, “+new \\<b\\>line\\</b\\>”: (private)\n", md)
+        self.assertNotIn("SECRET", md)
+
+    def test_markdown_keeps_a_stored_quote_on_its_line(self):
+        # A stored note is not checked against the text, so its quote may hold anything a file can.
+        decisions = signoff.load_decisions(self.folder.decisions)[0]
+        record = dict(noted(note(quote="a\rb c\n# head‮", comment="x\n## y")),
+                      saved="2026-01-01T12:00:00Z")
+        md = signoff.answers_markdown(decisions, record)
+        [line] = [ln for ln in md.split("\n") if "Line note" in ln]
+        self.assertTrue(line.startswith("- Line note, notes/change.diff line 6, “a b c # headU+202E”: x"),
+                        line)
+        self.assertNotIn("‮", md)
+        self.assertIn("”: x  \n  \\## y\n", md)  # the comment's second line is no heading
+        self.folder.write(with_lines("hu"))
+        decisions = signoff.load_decisions(self.folder.decisions)[0]
+        self.assertIn("- Sor-megjegyzés, notes/change.diff 6. sora, „a b c # headU+202E”: x",
+                      signoff.answers_markdown(decisions, record))
+
+    def test_an_old_round_keeps_its_body_limit(self):
+        self.folder.write(sample_decisions())
+        self.assertEqual(self.serve().server.rounds[0].max_body,
+                         max(signoff.MAX_BODY, 2 * signoff.MAX_TEXT * 6 + 64 * 1024))
+
+
 if __name__ == "__main__":
     unittest.main()

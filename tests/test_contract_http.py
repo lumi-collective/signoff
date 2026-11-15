@@ -581,6 +581,32 @@ class Exits(unittest.TestCase):
             self.assertEqual(saved["answers"]["budget"]["choice"], choice)
             self.assertNotIsInstance(saved["answers"]["budget"]["choice"], bool)
 
+    def test_a_line_note_is_checked_against_its_attachment(self):
+        folder = Folder()
+        self.addCleanup(folder.cleanup)
+        (folder.path / "change.patch").write_bytes(b"--- a/x\r\n+++ b/x\r\n@@ -1 +1 @@\r\n-old\r\n+new")
+        data = sample_decisions()
+        data["items"][0].update(attachments=[{"src": "change.patch", "open": True}], lines=True)
+        folder.write(data)
+        run = Run(folder.target)
+        self.addCleanup(run.stop)
+        run.open()
+
+        def body(*notes):
+            return {"answers": {"layout": {"choice": "two", "comment": "", "lines": list(notes)}}, "free_text": "",
+                    "done": False}
+        good = {"att": 0, "line": 5, "quote": "+new", "comment": "why?"}
+        for bad in (dict(good, line=6), dict(good, quote="+new\r"), dict(good, att=1), dict(good, att=True),
+                    dict(good, comment=""), dict(good, side="new")):
+            self.assertEqual(run.save(0, body(good, bad))[0].status, 400, bad)
+        other = {"answers": {"filters": {"choice": [], "lines": []}}, "free_text": "", "done": False}
+        self.assertEqual(run.save(0, other)[0].status, 400)  # an item without lines takes no notes
+        self.assertEqual(run.save(0, body(*[good] * 51))[0].status, 400)
+        self.assertFalse(folder.answers.exists())
+        self.assertEqual(run.save(0, body(good, dict(good, line=1, quote="--- a/x")))[0].status, 200)
+        saved = json.loads(folder.answers.read_text(encoding="utf-8"))
+        self.assertEqual(saved["answers"]["layout"]["lines"], [good, dict(good, line=1, quote="--- a/x")])
+
     def test_invalid_input_exits_1(self):
         rounds = Rounds(1)
         self.addCleanup(rounds.cleanup)

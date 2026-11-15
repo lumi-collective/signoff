@@ -89,8 +89,8 @@ line-separator character; an emoji with its variation selector or joiner is fine
 must be accepted again, as after any change. An item that starts Private keeps Private. The page then shows the
 item as **Decided elsewhere** with the note, keeps it through your other saves and **Accept all**, and makes it
 yours again once you pick one of its options or type in it. It never marks an item that already holds your own
-answer: a choice (unticking every recommended option too), a comment, Other text, marks, or Private set otherwise
-than the item starts.
+answer: a choice (unticking every recommended option too), a comment, Other text, marks, line notes, or Private
+set otherwise than the item starts.
 
 It writes the way the round's own writer does:
 
