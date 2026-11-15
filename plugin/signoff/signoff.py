@@ -2924,10 +2924,9 @@ class InboxServer(_Server):
 
     def make_offer(self):
         """The item a notification may answer, or None: in the first round of Waiting on you that is its run's last
-        open round, with its round locks held here, and exactly one item not decided yet, which has a recommendation
-        and is not sensitive. A tap saves that recommendation with Done, so it shows all it accepts and wakes the
-        run (each settled item not saved yet is saved as the user's earlier decision, see _accept).
-        The texts are the decisions file's own (and the project's name as the list shows it), one line each,
+        open round, with its round locks held here, every settled item saved, and exactly one item not decided yet,
+        which has a recommendation and is neither sensitive nor irreversible. A tap saves that recommendation with
+        Done, so it shows all it accepts and wakes the run. The texts are the decisions file's own (and the project's name as the list shows it), one line each,
         capped. Signoff adds no path, link or token of its own and replaces the project's folder and the user's
         home, but does not filter the agent's text: a URL in it stays."""
         with self.scan_lock:
@@ -2942,12 +2941,14 @@ class InboxServer(_Server):
                     r = g.rounds[left[0]]
                     saved = (r.saved or {}).get("answers", {})
                     undecided = [it for it in r.decisions["items"] if not _decided(saved.get(it["id"]), it)]
-                    # A mark of the agent's: a tap's Done would send it without the user having seen it.
-                    if len(undecided) != 1 or any(a.get("source") == "elsewhere" for a in saved.values()):
+                    # A mark of the agent's, or a settled item never saved from the page: a tap's Done would send it
+                    # without the user having seen it.
+                    if len(undecided) != 1 or any(a.get("source") == "elsewhere" for a in saved.values()) or any(
+                            "settled" in it and it["id"] not in saved for it in r.decisions["items"]):
                         continue
                     item, rev = undecided[0], r.rev
                 rec = item.get("recommended")
-                if rec is None or rec == [] or item["sensitive"]:
+                if rec is None or rec == [] or item["sensitive"] or "irreversible" in item:  # the banner cannot warn
                     continue
                 labels = {o["id"]: o["label"] for o in item.get("options", [])}
                 if item["select"] == "number":
@@ -3108,14 +3109,6 @@ class InboxServer(_Server):
         answer.update(choice=list(rec) if isinstance(rec, list) else rec, source="notification")
         answers = dict(base["answers"])
         answers[item["id"]] = answer
-        # A settled item waits on nothing (_decided), so the Done file answers it with the earlier decision.
-        for it in r.decisions["items"]:
-            if "settled" in it and it["id"] not in answers:
-                earlier = it["recommended"]
-                answers[it["id"]] = {"choice": list(earlier) if isinstance(earlier, list) else earlier,
-                                     "source": "recommended"}
-                if _private_default(it):
-                    answers[it["id"]]["private"] = True  # as the page starts it
         try:
             state = check_answers({"answers": answers, "free_text": base["free_text"], "accepted": True, "done": True},
                                   r.decisions)

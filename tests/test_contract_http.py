@@ -1361,9 +1361,7 @@ class InboxOffer(unittest.TestCase):
         os.makedirs(os.path.join(cls.home, "runs"), mode=0o700)
         os.makedirs(cls.folder)
         data = sample_decisions()
-        # one item, with a recommendation: the one a tap may answer; and the settled items the accept fills in
-        data["items"] = [cls.item(data)] + [dict(it, settled="round-01, 11-14") for it in data["items"]
-                                            if it["id"] in cls.SETTLED]
+        data["items"] = [cls.item(data)]  # one item, with a recommendation: the one a tap may answer
         with open(os.path.join(cls.folder, "round-01.json"), "w", encoding="utf-8") as f:
             json.dump(data, f)
         cls.answers = os.path.join(cls.folder, "round-01.answers.json")
@@ -1390,7 +1388,6 @@ class InboxOffer(unittest.TestCase):
 
     # The item offered, and what the offer and the answers file must say for it.
     ANSWER, CHOICE = "Two columns", "two"
-    SETTLED = ()  # ids of sample_decisions' items added as settled, each with its recommendation
 
     @staticmethod
     def item(data):
@@ -1436,10 +1433,6 @@ class InboxOffer(unittest.TestCase):
         self.assertEqual((saved["answers"]["layout"]["choice"], saved["answers"]["layout"]["source"]),
                          (self.CHOICE, "notification"))
         self.assertIs(type(saved["answers"]["layout"]["choice"]), type(self.CHOICE))
-        self.assertEqual(sorted(saved["answers"]), sorted(("layout",) + self.SETTLED))
-        rec = {it["id"]: it["recommended"] for it in sample_decisions()["items"]}
-        for item_id in self.SETTLED:
-            self.assertEqual(saved["answers"][item_id], {"choice": rec[item_id], "comment": "", "source": "recommended"})
         self.assertEqual(self.ask({"op": "accept", "offer": offer["id"]}), {"error": "gone"})
         with open(self.answers, "rb") as f:
             self.assertEqual(f.read(), before)
@@ -1460,10 +1453,81 @@ class InboxNumberOffer(InboxOffer):
 
 
 @unittest.skipIf(sys.platform == "win32", "the inbox's control socket is a Unix socket; no inbox on Windows yet")
-class InboxSettledOffer(InboxOffer):
-    """The same beside a settled item: it waits on nothing, so the other is offered, and accept answers it too."""
+class InboxOfferSkips(unittest.TestCase):
+    """Rounds a notification never offers, in an inbox in a separate process: one with a settled item the user has
+    not saved on its page (a tap's Done would answer it unseen), and one whose last item cannot be undone (the banner
+    cannot say so). High stakes are offered, and so is a round whose settled item is saved; accept then writes the
+    offered item only."""
 
-    SETTLED = ("filters",)
+    ROUNDS = [  # title, item changes, the settled item's saved answer or None
+        ("Settled unsaved", {}, None),
+        ("Cannot be undone", {"irreversible": "Drops the old table"}, None),
+        ("High stakes", {"stakes": "high"}, None),
+        ("Settled saved", {}, {"choice": ["date", "tag"], "comment": "", "source": "recommended"}),
+    ]
+    ask = InboxOffer.__dict__["ask"]  # the same classmethod, on this class's home
+
+    @classmethod
+    def setUpClass(cls):
+        cls._tmp = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(cls._tmp.cleanup)
+        base = os.path.realpath(cls._tmp.name)
+        cls.home = os.path.join(base, "home")
+        os.makedirs(os.path.join(cls.home, "runs"), mode=0o700)
+        cls.answers = []
+        for n, (title, change, saved) in enumerate(cls.ROUNDS):
+            folder = os.path.join(base, "topic-%d" % n)
+            os.makedirs(folder)
+            data = sample_decisions()
+            data["title"] = title
+            layout = dict(data["items"][0], images=[], **change)
+            data["items"] = [layout] + ([dict(data["items"][1], settled="round-01, 11-14")]
+                                        if title.startswith("Settled") else [])
+            with open(os.path.join(folder, "round-01.json"), "w", encoding="utf-8") as f:
+                json.dump(data, f)
+            cls.answers.append(os.path.join(folder, "round-01.answers.json"))
+            if saved:
+                with open(cls.answers[-1], "w", encoding="utf-8") as f:
+                    json.dump({"version": 1, "done": False, "saved": "2026-01-01T12:00:00Z", "free_text": "",
+                               "answers": {"filters": saved}}, f)
+            run = "%016x" % (n + 1)
+            entry = {"schema": 1, "run": run, "project": None, "folder": folder, "rounds": ["round-01.json"],
+                     "mode": "waiter", "pid": os.getpid(), "started": "2026-01-01T00:00:0%dZ" % n}
+            with open(os.path.join(cls.home, "runs", run + ".json"), "w", encoding="utf-8") as f:
+                json.dump(entry, f)
+        cls.proc = subprocess.Popen(COMMAND + ["inbox", "serve"], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                    env=dict(os.environ, SIGNOFF_INBOX_HOME=cls.home))
+
+        def stop():
+            if cls.proc.poll() is None:
+                cls.proc.kill()
+            cls.proc.communicate()
+        cls.addClassCleanup(stop)
+        deadline = time.monotonic() + 30
+        while True:
+            try:
+                cls.ask({"op": "ping"})
+                break
+            except OSError:
+                assert cls.proc.poll() is None and time.monotonic() < deadline, "the inbox did not start"
+                time.sleep(0.1)
+
+    def offer_and_accept(self, title):
+        offer = self.ask({"op": "offer"})["offer"]
+        self.assertEqual(offer and offer["round"], title)
+        self.assertEqual(self.ask({"op": "accept", "offer": offer["id"]}), {"ok": True})
+
+    def test_which_rounds_are_offered(self):
+        self.offer_and_accept("High stakes")
+        self.offer_and_accept("Settled saved")
+        with open(self.answers[3], encoding="utf-8") as f:
+            saved = json.load(f)
+        self.assertTrue(saved["done"])
+        self.assertEqual(saved["answers"], {"filters": dict(self.ROUNDS[3][2]),
+                                            "layout": {"choice": "two", "comment": "", "source": "notification"}})
+        self.assertEqual(self.ask({"op": "offer"}), {"offer": None})
+        self.assertFalse(os.path.exists(self.answers[0]) or os.path.exists(self.answers[1]))
+        self.assertIsNone(self.proc.poll())
 
 
 @unittest.skipIf(sys.platform == "win32", "the inbox's control socket is a Unix socket; no inbox on Windows yet")

@@ -1726,6 +1726,9 @@ class InboxOffer(InboxTest):
             ("two undecided items", [one_round(question("q"), question("r"))], None, None),
             ("no recommendation", [one_round(question("q", rec=None))], None, None),
             ("sensitive", [one_round(question("q", sensitive=True))], None, None),
+            # The banner cannot show "Cannot be undone"; high stakes it may answer.
+            ("irreversible", [one_round(question("q", irreversible="Drops the old table"))], None, None),
+            ("high stakes", [one_round(question("q", stakes="high"))], None, ("R3", "Question q", "Alpha")),
             ("many, a list", [one_round(question("q", select="many", rec=["a", "c"]), tab=None)], None,
              ("Ship it", "Question q", "Alpha + Gamma")),
             ("many, recommends nothing", [one_round(question("q", select="many", rec=[]))], None, None),
@@ -1752,9 +1755,12 @@ class InboxOffer(InboxTest):
             ("an untouched many item without a recommendation",
              [one_round(question("m", select="many", rec=None), question("q"))],
              {1: record({"m": {"choice": [], "source": "user"}})}, None),
-            # A settled item is decided while it holds its recommendation, the user's earlier answer.
-            ("a settled item, unsaved", [one_round(question("s", settled="round-01"), question("q"))], None,
-             ("R3", "Question q", "Alpha")),
+            # A settled item is decided while it holds its recommendation, the user's earlier answer. Unsaved, the
+            # user never saw it on this round's page, and a tap's Done would answer it unseen: no offer.
+            ("a settled item, unsaved", [one_round(question("s", settled="round-01"), question("q"))], None, None),
+            ("a settled item, unsaved, beside a saved round",
+             [one_round(question("s", settled="round-01"), question("q"), question("r"))],
+             {1: record({"r": {"choice": "a", "source": "user"}})}, None),
             ("a settled item left at its recommendation",
              [one_round(question("s", settled="round-01"), question("q"))],
              {1: record({"s": {"choice": "a", "source": "recommended"}})}, ("R3", "Question q", "Alpha")),
@@ -1822,23 +1828,28 @@ class InboxOffer(InboxTest):
                 time.sleep(0.02)
             self.assertIsNone(self.offer())  # a done round is offered no more
 
-    def test_accept_also_saves_each_unsaved_settled_item_as_its_recommendation(self):
+    def test_a_round_is_offered_once_its_settled_items_are_saved_and_accept_writes_only_the_offered_one(self):
         rounds = [one_round(question("s", settled="round-01"), question("q"),
-                            question("m", select="many", rec=["a", "c"], settled="round-01"),
-                            question("p", sensitive=True, settled="round-01"), question("u", settled="round-01"))]
-        topic, e = self.case(rounds, {1: record({"u": {"choice": "a", "comment": "kept", "source": "recommended"}})})
-        self.start()
-        offer = self.offer()
-        self.assertEqual(offer["question"], "Question q")
-        self.assertEqual(self.ctl("accept", offer=offer["id"]), {"ok": True})
+                            question("m", select="many", rec=["a", "c"], settled="round-01"))]
+        topic, e = self.case(rounds)
+        with mock.patch.object(signoff, "STATE_EVERY", 0.05):
+            self.start()
+            self.assertIsNone(self.offer())  # the settled items were never on a page the user saved
+            # A page save sends every item: the settled ones as their recommendation, the rest untouched.
+            settled = {"s": {"choice": "a", "comment": "", "source": "recommended"},
+                       "m": {"choice": ["c", "a"], "comment": "", "source": "recommended"}}
+            write_outside(topic / "round-01.answers.json", dict(record(settled), saved=signoff.utc_now()))
+            deadline = time.monotonic() + 10
+            offer = self.offer()
+            while offer is None:
+                self.assertLess(time.monotonic(), deadline, "the round was never offered once saved")
+                time.sleep(0.05)
+                offer = self.offer()
+            self.assertEqual(offer["question"], "Question q")
+            self.assertEqual(self.ctl("accept", offer=offer["id"]), {"ok": True})
         saved = json.loads((topic / "round-01.answers.json").read_text(encoding="utf-8"))
         self.assertEqual((saved["done"], saved["accepted"]), (True, True))
-        self.assertEqual(saved["answers"], {
-            "s": {"choice": "a", "comment": "", "source": "recommended"},
-            "q": {"choice": "a", "comment": "", "source": "notification"},
-            "m": {"choice": ["a", "c"], "comment": "", "source": "recommended"},
-            "p": {"choice": "a", "comment": "", "source": "recommended", "private": True},  # as the page starts it
-            "u": {"choice": "a", "comment": "kept", "source": "recommended"}})  # a saved one stays as it is
+        self.assertEqual(saved["answers"], dict(settled, q={"choice": "a", "comment": "", "source": "notification"}))
 
     def test_a_number_item_is_offered_as_its_value_and_unit_and_accepted_as_a_number(self):
         num = {"id": "n", "title": "How many?", "select": "number", "range": {"min": -10, "max": 10, "step": 0.5,

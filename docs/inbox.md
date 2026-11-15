@@ -222,7 +222,8 @@ inbox in a panel under it (a link of its own, the page's narrow layout; a round 
 you click elsewhere. A right click on the icon offers Open Signoff and Quit Signoff. With many menu bar icons,
 macOS may tuck it away with the others it hides. Quitting the app leaves the inbox running (`signoff inbox
 stop` ends it). macOS asks once whether the app may send notifications. When the one round left of a run has a
-single question still open, and it has a recommendation and is not marked sensitive, the notification shows the
+single question still open, and it has a recommendation and is marked neither sensitive nor as one that cannot be
+undone (and any item settled earlier was saved once on the round's page), the notification shows the
 project, the round, the question and the recommended answer, as the agent wrote them (your home folder as `~`):
 Accept & send answers it with the recommendation and Done, and the agent goes on (the next such question, if any,
 comes as a new notification); Other answer… opens that question in the window. Otherwise a notification says only

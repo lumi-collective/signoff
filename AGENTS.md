@@ -227,9 +227,11 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   run's last open round; has exactly one item not yet decided (decided, `_decided`: a saved `choice` that is not
   null or an empty list, with a `source` other than `recommended`; an empty list with `source` `user` on an item
   with `recommended`, the recommendation the user unticked; a `source` of `elsewhere`; or an item with `settled`
-  whose saved choice (or, unsaved, its recommendation) equals `recommended`, a `many` list in any order) and no item marked
-  `elsewhere` (a tap's Done would send a mark the user never saw); and that item has `recommended` (not an empty
-  list) and is not `sensitive`. The reply is `{offer: null}` or `{offer: {id, project, round, question, answer}}`: `id` 32
+  whose saved choice (or, unsaved, its recommendation) equals `recommended`, a `many` list in any order), no item marked
+  `elsewhere` and no item with `settled` without a saved answer (a tap's Done would send what the user never saw:
+  a page save sends every item, so the round is offered once the user saved on its page); and that item has
+  `recommended` (not an empty list) and is neither `sensitive` nor `irreversible` (the banner cannot say it cannot
+  be undone; `stakes` does not matter). The reply is `{offer: null}` or `{offer: {id, project, round, question, answer}}`: `id` 32
   hex digits; `project` the project's name as the list shows it (a run outside any project: its decisions
   folder's name, the login name when that folder is the home itself), the other three the decisions file's own
   texts (a number item's answer: its `recommended` as its grid point, a whole value without a point or an
@@ -241,8 +243,7 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   item and the round's `rev`), at most `MAX_OFFERS`, for `OFFER_TTL` seconds; no log line or file holds its id.
   `accept` uses it once: a second use, a late one or an unknown id gets `gone`. It saves through the run's own
   writer the saved answers, with the item's `recommended` as its choice and `source: "notification"` (its
-  comment, marks and privacy kept), `accepted` and `done` true, at the offer's `rev`, and every unsaved item with
-  `settled` with its `recommended` and `source: "recommended"` (`private: true` when it starts Private). Every save rule of the page
+  comment, marks and privacy kept), `accepted` and `done` true, at the offer's `rev`. Every save rule of the page
   holds (`rev`, the file on disk, Done is final, the Done gate, the round lock), and each refusal is one word
   (`changed`, `held`, `done`, `failed`) with nothing written (a `failed` write may leave a new Markdown copy, and
   on an orphan round an answer request, as a failed save from the page does: the JSON goes last). `accept` and `open` with an offer look at the runs first, so a round
