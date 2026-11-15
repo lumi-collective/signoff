@@ -3740,6 +3740,12 @@ def _lock_time(home):
         return None
 
 
+def _server_id(home):
+    """The running inbox's id in inbox.json. An inbox writes it before its first touch of inbox.lock, so read after
+    _lock_time it never pairs a new inbox's touch with the inbox before it."""
+    return (_read_json(home / "inbox.json", 4096) or {}).get("server_id")
+
+
 def _inbox_refused(rounds, home):
     """Whether the live inbox shows none of these open rounds: it locks every round of a run it takes in (0.4.0 did
     too), and a round it refuses (one from before a key the round uses) gets no lock. Any lock held, a file system
@@ -3757,21 +3763,25 @@ def _inbox_refused(rounds, home):
     return bool(rounds) and inbox_alive(home)
 
 
-def _wait(rounds, home=None):
+def _wait(rounds, home):
     """Waiter mode: the inbox serves the page and writes the answers, so this run only looks at its answers files,
-    once a second, with no idle timeout. With the inbox's home, once inbox.lock's time has changed twice since the
-    run noted itself (the inbox touches it at each look, before it reads runs/, so a whole look has seen the entry),
-    it checks once that the inbox took the rounds in. No look, no verdict: a slow inbox only makes it later. Returns
+    once a second, with no idle timeout. With the inbox's home (None when the run's entry could not be written, which
+    no inbox can see), once inbox.lock's time has changed twice since the run noted itself, with the same inbox in
+    inbox.json (the inbox touches it at each look, before it reads runs/, so a whole look has seen the entry), it
+    checks once that the inbox took the rounds in. No look, no verdict: a slow inbox only makes it later. Returns
     'done', 'refused' or 'stopped'."""
     stamp, looks = (_lock_time(home), 0) if home else (None, None)
+    owner = _server_id(home) if home else None
     try:
         while not all(r.finished for r in rounds):
             time.sleep(1.0)
             for r in rounds:
                 _reread(r)
             if looks is not None:
-                now = _lock_time(home)
-                if now is not None and now != stamp:
+                now, sid = _lock_time(home), _server_id(home)  # in this order: see _server_id
+                if sid != owner:  # another inbox started since: only its own looks count
+                    owner, stamp, looks = sid, now, 0
+                elif now is not None and now != stamp:
                     stamp, looks = now, looks + 1
                 if looks >= 2:
                     looks = None
@@ -3807,7 +3817,7 @@ def _stop_on_signals():
 def register_run(home, rounds, mode):
     """Write runs/<run>.json in the Signoff home, so the inbox knows which rounds this run waits on, and whether on
     its own page or as a waiter. Returns a function that marks the entry ended, with the exit code when given (0: its
-    answers paths are on stdout). A failed write is said on stderr and changes nothing else. A run killed some other
+    answers paths are on stdout), and whether the entry was written. A failed write is said on stderr. A run killed some other
     way, or whose paths could not reach stdout, leaves no ended: a reader checks pid and started."""
     folder = rounds[0].path.parent
     root = project_root(folder)
@@ -3820,9 +3830,11 @@ def register_run(home, rounds, mode):
         try:
             path.parent.mkdir(mode=0o700, exist_ok=True)
             write_atomic(path, json.dumps(entry, indent=2) + "\n")
+            return True
         except OSError as e:
             print("signoff: could not write %s (%s); the inbox will not see this run" % (path, e), file=sys.stderr,
                   flush=True)
+            return False
 
     def end(code=None):
         entry["ended"] = utc_now()
@@ -3830,8 +3842,7 @@ def register_run(home, rounds, mode):
             entry["exit"] = code
         write()
 
-    write()
-    return end
+    return end, write()
 
 
 # "working" comes from UserPromptSubmit alone, no PreToolUse: it also fires on the turn that wakes the agent when its
@@ -4154,6 +4165,8 @@ def main(argv=None):
         waiter = inbox and inbox_alive(home)
         if waiter:
             rounds = load_rounds(args.decisions)
+            # The inbox reads the pictures and boards when it takes the rounds in: a bad one fails here, as on a page.
+            _Rounds()._read_media(rounds)
         else:
             server = make_server(args.decisions)
             rounds = server.rounds
@@ -4179,14 +4192,16 @@ def main(argv=None):
     except OSError as e:
         print("signoff: could not write .gitignore (%s); keep *.answers.json, *.answers.md and *.json.lock in %s "
               "out of git" % (e, folder), file=sys.stderr)
-    end = register_run(home, rounds, "waiter" if waiter else "page") if inbox else (lambda code=None: None)
+    end, noted = (lambda code=None: None), False
+    if inbox:
+        end, noted = register_run(home, rounds, "waiter" if waiter else "page")
     previous, stopping = _stop_on_signals()
     result = None  # an unexpected error ends the entry with no exit code, as before the key came
     try:
         if waiter:
             print("signoff: the inbox is open, so the questions are there; waiting for the answers in %s (Ctrl+C "
                   "stops it)" % folder, file=sys.stderr, flush=True)
-            result = _wait(rounds, home)
+            result = _wait(rounds, home if noted else None)  # no inbox sees an entry never written: no verdict
         else:
             def poll():  # an answers file another program finished with Done ends the run, as a Done on the page does
                 while not server.finished.wait(1.0):

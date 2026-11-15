@@ -70,12 +70,15 @@ later writes covers them; where the topic folder already had its own (one an old
 in git as untracked files until you add `*.json.lock` to it. While the
 inbox is open, a run opens no page and starts no server: it
 waits, with no idle timeout, until the answers the inbox writes are done, then exits with the same codes and
-stdout. Once the inbox has looked at the runs twice since the run started (it does every two seconds), the run
-checks that the inbox holds its rounds' locks, as it does for every round it shows. When no one holds any, the
-inbox did not take them in, as an inbox an older Signoff started (it keeps running after an update) refuses a round
-with a key it does not know: the run says so on stderr, to restart the inbox (`signoff inbox stop`, then
-`signoff inbox open`) and run the same command again, and exits 1. An inbox that does not look, or a round lock
-another run holds, leaves the run waiting, and so does an inbox from 0.3.0, which does not touch `inbox.lock`.
+stdout. It reads its pictures and boards at start, as the inbox does, so a bad one fails there with its own error.
+Once the same inbox has looked at the runs twice since the run started (it does every two seconds), the run
+checks that some process holds its rounds' locks: the inbox locks each round it takes in, unless another run holds
+it already (the inbox then shows it read only) or the file system cannot lock. When no one holds any, the inbox did
+not take them in, as an inbox an older Signoff started (it keeps running after an update) refuses a round with a
+key it does not know: the run says so on stderr, to restart the inbox (`signoff inbox stop`, then `signoff inbox
+open`) and run the same command again, and exits 1. An inbox that does not look, a round lock another run holds, a
+file system that cannot lock, or an entry in `runs/` that could not be written leaves the run waiting, and so does
+an inbox from 0.3.0, which does not touch `inbox.lock`.
 
 With `inbox.lock` there, the plugin's hooks also note each Claude Code session in the home, so the inbox can show
 whether a session is working, idle or waiting on you, from what the session itself reported. `projects/<id>.json`

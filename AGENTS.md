@@ -89,10 +89,12 @@ Instructions for coding agents working on Signoff. The README says what it does 
   of the suite's environment); its `InboxTodoPath` class starts a fourth for projects whose `todo` key names a
   file inside the root, or one out of it (`..`, an absolute path, a link), too big or not a file, and checks the
   list page and messages; its `InboxWaiter` class runs `<command> <folder>` as a waiter, once beside a stand-in
-  inbox that holds `inbox.lock`, touches it and locks no round (exit 1, nothing on stdout, no lock file made), and
-  once beside `<command> inbox serve` (still waiting after several looks, the round's lock held). `test_cli.py`
-  runs a waiter against the real 0.4.0 inbox from `git show v0.4.0:` (skipped without the tag, as in a shallow
-  clone). `test_inbox.py` covers the
+  inbox that holds `inbox.lock`, touches it and locks no round (exit 1, nothing on stdout, no lock file made), once
+  beside one whose look locks the round 1.5 s after its touch (still waiting), and once beside `<command> inbox
+  serve` (still waiting after several looks, the round's lock held). `test_cli.py` runs a waiter against the real
+  0.4.0 inbox from `git show v0.4.0:` (skipped without the tag, as in a shallow clone), and its `WaiterVerdict`
+  class steps the check poll by poll (rounds answered in the poll of the verdict, an inbox gone or started again
+  between the looks). `test_inbox.py` covers the
   inbox in process: the `todo.md` reader and the `todo` key, the Markdown tree, routes, pairs, locks, the waiter it wakes, messages,
   the OSV section, the theme it keeps, the answer from a notification, the panel's rows and their targets, and
   `inbox open --app` with its app opener (`APP_OPEN`) swapped for a stand-in and its app folders (`APP_DIRS`)
@@ -600,10 +602,12 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   it ends, and exits 1 when another process holds one, unless a second look finds the inbox alive: it is then a
   waiter (a file system that cannot lock: a stderr line, no lock).
   While the inbox holds `inbox.lock`, a run is a waiter: no port, no browser, no idle timeout, no lock; it looks
-  at its answers files once a second and exits as a run does. It also checks once that the inbox took its rounds
-  in: after its entry is written, once `inbox.lock`'s time has changed twice (the inbox touches it at each look,
-  before it reads `runs/`, so a whole look saw the entry), it tries each open round's lock without creating the
-  file and lets go at once. When every one is free or absent and the inbox is still alive, the inbox did not take
+  at its answers files once a second and exits as a run does. It reads its pictures and boards at start, as the
+  inbox does when it takes the rounds in, so a bad one is a load error (exit 1), as for a page run. It also checks
+  once that the inbox took its rounds in: once its entry is written (a failed write: no check), and once
+  `inbox.lock`'s time has changed twice while `inbox.json`'s `server_id` stayed the same (the inbox touches it at
+  each look, before it reads `runs/`, so a whole look of one inbox saw the entry; another `server_id` counts
+  afresh), it tries each open round's lock without creating the file and lets go at once. When every one is free or absent and the inbox is still alive, the inbox did not take
   them in (an inbox an older Signoff started refuses a round with a key it does not know, and locks nothing): one
   stderr line saying to restart the inbox and run the command again, and exit 1 with nothing on stdout. Any lock
   held (the inbox's, or another run's while the inbox shows the rounds read only), a file system that cannot

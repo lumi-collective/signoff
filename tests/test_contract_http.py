@@ -1363,20 +1363,33 @@ class InboxWaiter(unittest.TestCase):
         self.addCleanup(stop)
         return proc
 
-    def test_a_waiter_whose_round_the_inbox_does_not_take_in_exits_1(self):
+    def stand_in(self, every=0.3, lock_after=None):
+        """An inbox that lives here (it holds inbox.lock) and touches inbox.lock every `every` seconds. Without
+        lock_after it locks no round, as an inbox that refused it; with it, a look that met an entry in runs/ at its
+        touch locks the round that many seconds later, as a slow current inbox does."""
         import fcntl
         fd = os.open(os.path.join(self.home, "inbox.lock"), os.O_RDWR | os.O_CREAT, 0o600)
         self.addCleanup(os.close, fd)
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)  # an inbox lives here, looks, and locks no round
-        stop = threading.Event()
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        stop, held = threading.Event(), []
 
         def look():
-            while not stop.wait(0.3):
+            while not stop.wait(every):
                 os.utime(os.path.join(self.home, "inbox.lock"))
+                runs = os.path.join(self.home, "runs")
+                met = os.path.isdir(runs) and any(not n.startswith(".") for n in os.listdir(runs))
+                if lock_after is not None and met and not held and not stop.wait(lock_after):
+                    f = os.open(self.lock, os.O_RDWR | os.O_CREAT, 0o600)
+                    fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    held.append(f)
         looks = threading.Thread(target=look, daemon=True)
         looks.start()
+        self.addCleanup(lambda: [os.close(f) for f in held])
         self.addCleanup(looks.join)
         self.addCleanup(stop.set)
+
+    def test_a_waiter_whose_round_the_inbox_does_not_take_in_exits_1(self):
+        self.stand_in()
         proc = self.child(self.folder, "--no-open")
         out, err = proc.communicate(timeout=30)
         self.assertEqual((proc.returncode, out), (1, ""), err)
@@ -1384,6 +1397,13 @@ class InboxWaiter(unittest.TestCase):
         self.assertNotIn("http://", err)
         self.assertFalse(os.path.exists(self.lock))
         self.assertFalse(os.path.exists(os.path.join(self.folder, "round-01.answers.json")))
+
+    def test_a_waiter_on_an_inbox_whose_look_locks_late_keeps_waiting(self):
+        # The round is locked 1.5 s after the touch: judged on one touch, it would seem refused.
+        self.stand_in(every=2.0, lock_after=1.5)
+        proc = self.child(self.folder, "--no-open")
+        time.sleep(9)
+        self.assertIsNone(proc.poll(), proc.poll() is not None and proc.communicate())
 
     def test_a_waiter_whose_round_a_live_inbox_took_in_keeps_waiting(self):
         self.child("inbox", "serve")

@@ -725,17 +725,26 @@ class CliInbox(unittest.TestCase):
         self.assertIn("ended", self.entry_of(proc))
         self.assertFalse((self.rounds.path / "round-02.json.lock").exists())
 
-    def looking(self):
-        """An inbox's looks: inbox.lock's time changes every 0.3 s, as a live inbox touches it at the start of each."""
+    def looking(self, every=0.3, lock_after=None):
+        """An inbox's looks: inbox.lock's time changes every `every` seconds, as a live inbox touches it at the start
+        of each. With lock_after, a slow current inbox: a look that met an entry in runs/ at its touch locks the
+        open rounds that many seconds later, as the inbox reads runs/ after the touch and locks what it takes in."""
         stop = threading.Event()
 
         def touch():
-            while not stop.wait(0.3):
+            while not stop.wait(every):
                 os.utime(str(self.home / "inbox.lock"))
+                runs = self.home / "runs"
+                met = runs.is_dir() and any(runs.glob("[!.]*.json"))
+                if lock_after is not None and met and not locked and not stop.wait(lock_after):
+                    # Held until the test ends, as the inbox holds them while the run lives.
+                    locked.extend(signoff.try_lock(self.rounds.path / ("round-%02d.json.lock" % n)) for n in (1, 2))
+        locked = []
         t = threading.Thread(target=touch, daemon=True)
         t.start()
+        self.addCleanup(lambda: [signoff.unlock(fd) for fd in locked if fd is not None])
         self.addCleanup(t.join)
-        self.addCleanup(stop.set)  # cleanups run last first: stop, then join
+        self.addCleanup(stop.set)  # cleanups run last first: stop, join, then let go of the locks
 
     def refused(self, proc, began):
         out, err = self.finish(proc)
@@ -785,6 +794,47 @@ class CliInbox(unittest.TestCase):
         self.assertIn("inbox", proc.stderr.readline())
         time.sleep(3.5)
         self.assertIsNone(proc.poll())
+
+    @unittest.skipIf(sys.platform == "win32", "the inbox does not run on Windows")
+    def test_a_waiter_on_a_slow_current_inbox_keeps_waiting(self):
+        # Its look locks the rounds 1.5 s after its touch: judged after one touch, they would seem refused.
+        self.hold(self.home / "inbox.lock")
+        self.looking(every=2.0, lock_after=1.5)
+        proc = self.start()
+        self.assertIn("inbox", proc.stderr.readline())
+        time.sleep(9)  # the second touch comes 3.5 s after the first, the verdict within a second of it
+        self.assertIsNone(proc.poll(), "a waiter on a slow current inbox keeps waiting")
+        self.finish_outside()
+        out, err = self.finish(proc)
+        self.assertEqual((proc.returncode, out), (0, self.paths()), err)
+
+    def test_a_waiter_checks_its_pictures_and_boards_as_the_inbox_does(self):
+        # The inbox refuses a round whose board is not UTF-8 at its look: the waiter says why, up front, as a run does.
+        self.hold(self.home / "inbox.lock")
+        (self.rounds.path / "mockups" / "bad.html").write_bytes(b"<p>\xff\xfe</p>")
+        data = json.loads(self.rounds.round(1).read_text(encoding="utf-8"))
+        data["items"][0]["images"].append({"html": "mockups/bad.html"})
+        self.rounds.write(1, data)
+        out, err = self.finish(self.start())
+        self.assertEqual(out, "")
+        self.assertIn("UTF-8", err)
+        self.assertNotIn("restart", err.lower())
+        self.assertEqual(self.entries(), [])  # it never noted itself, as a run that fails to load
+
+    @unittest.skipIf(sys.platform == "win32" or (hasattr(os, "getuid") and os.getuid() == 0),
+                     "the inbox does not run on Windows; root writes into a 0500 folder")
+    def test_a_waiter_whose_entry_could_not_be_written_keeps_waiting(self):
+        # The inbox cannot see such a run, so its locks say nothing about the inbox's age: no verdict.
+        self.hold(self.home / "inbox.lock")
+        self.looking()
+        (self.home / "runs").mkdir(mode=0o500)
+        try:
+            proc = self.start()
+            self.assertIn("will not see this run", proc.stderr.readline())
+            time.sleep(3.5)
+            self.assertIsNone(proc.poll(), "no verdict for a run the inbox cannot see")
+        finally:
+            os.chmod(str(self.home / "runs"), 0o700)  # before tearDown removes the home
 
     @unittest.skipIf(sys.platform == "win32", "the inbox does not run on Windows")
     def test_a_waiter_on_a_real_0_4_0_inbox_that_refuses_its_round_exits_1(self):
@@ -901,12 +951,12 @@ class CliInbox(unittest.TestCase):
         real = signoff.register_run
 
         def register(*args):
-            end = real(*args)
+            end, noted = real(*args)
 
             def ending(*code):
                 os.kill(os.getpid(), signal.SIGTERM)  # a SIGTERM just as the run ends by itself
                 end(*code)
-            return ending
+            return ending, noted
 
         self.assertEqual(signal.getsignal(signal.SIGTERM), signal.SIG_DFL)  # not one an earlier test left behind
         with mock.patch.dict(os.environ, {"SIGNOFF_INBOX_HOME": str(self.home)}), \
@@ -1032,6 +1082,65 @@ class CliRounds(unittest.TestCase):
         self.assertEqual(proc.returncode, 1)
         self.assertIn("done", err)
         self.assertNotIn("Traceback", err)
+
+
+class WaiterVerdict(unittest.TestCase):
+    """The waiter's one check, poll by poll and with no real sleep: inbox.lock's time changes at every poll, as an
+    inbox that looks each second would; inbox.json and the locks change as each test says."""
+
+    def setUp(self):
+        self.rounds = Rounds(1)
+        self.addCleanup(self.rounds.cleanup)
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.home = Path(tmp.name).resolve()
+        (self.home / "inbox.lock").write_bytes(b"")
+        self.held = []
+        self.addCleanup(lambda: [signoff.unlock(fd) for fd in self.held])
+        self.inbox(1)
+
+    def inbox(self, n):
+        (self.home / "inbox.json").write_text(json.dumps({"schema": 1, "server_id": "%032x" % n}), encoding="utf-8")
+
+    def hold(self, path):
+        self.held.append(signoff.try_lock(path))
+
+    def wait(self, finish_at, at=None):
+        """_wait's result: its rounds are answered at poll finish_at; at maps a poll to what happens before it."""
+        rounds, polls = signoff.load_rounds(self.rounds.target), [0]
+
+        def sleep(_):
+            polls[0] += 1
+            (at or {}).get(polls[0], lambda: None)()
+
+        def reread(r):
+            if polls[0] >= finish_at:
+                r.finished = True
+
+        with mock.patch.object(signoff, "_lock_time", lambda home: polls[0]), \
+                mock.patch.object(signoff, "_reread", reread), mock.patch.object(signoff.time, "sleep", sleep):
+            return signoff._wait(rounds, self.home)
+
+    def test_two_looks_and_no_lock_held_refuse(self):
+        self.hold(self.home / "inbox.lock")
+        self.assertEqual(self.wait(finish_at=10), "refused")
+
+    def test_rounds_answered_in_the_polls_of_the_verdict_end_as_done(self):
+        self.hold(self.home / "inbox.lock")
+        self.assertEqual(self.wait(finish_at=2), "done")
+
+    def test_an_inbox_gone_after_its_second_look_gives_no_verdict(self):
+        self.assertEqual(self.wait(finish_at=3), "done")  # nobody holds inbox.lock: the inbox stopped
+
+    def test_an_inbox_started_again_between_the_looks_is_counted_afresh(self):
+        # Inbox 1 looks once and stops; inbox 2 starts, looks, and its slow first look locks the round a poll later.
+        self.hold(self.home / "inbox.lock")
+        lock = self.rounds.path / "round-01.json.lock"
+        self.assertEqual(self.wait(finish_at=6, at={2: lambda: self.inbox(2), 3: lambda: self.hold(lock)}), "done")
+
+    def test_an_inbox_started_again_that_never_locks_is_still_judged(self):
+        self.hold(self.home / "inbox.lock")
+        self.assertEqual(self.wait(finish_at=10, at={2: lambda: self.inbox(2)}), "refused")
 
 
 class CliHistory(unittest.TestCase):
