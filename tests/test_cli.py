@@ -1162,7 +1162,9 @@ class CliPlan(unittest.TestCase):
         for base, dirs, names in os.walk(str(folder or self.base)):
             for n in dirs + names:
                 p = os.path.join(base, n)
-                found[p] = None if os.path.isdir(p) or os.path.islink(p) else Path(p).read_bytes()
+                # A lock file is empty, and on Windows a held one cannot be read: its name is enough.
+                skip = os.path.isdir(p) or os.path.islink(p) or n.endswith(".lock")
+                found[p] = None if skip else Path(p).read_bytes()
         return found
 
     def refused(self, argv, stdin=PLAN_TEXT, cwd=None, words=()):
@@ -1231,7 +1233,8 @@ class CliPlan(unittest.TestCase):
             self.refused(self.argv(topic=topic), words=("--topic",))
         good = self.argv()
         for argv in (good + ["--bogus"], good + ["--resume", "--resume"], good + ["--topic", PLAN_TOPIC],
-                     good[:3], good + ["--folder"], good + ["extra"], self.argv(folder=""),
+                     good[:3], good + ["--folder"], good + ["extra"], self.argv(folder=""), ["plan", "--resume"],
+                     ["plan", "--folder", ".signoff"], ["plan", "--resume", "--folder", ".signoff", PLAN_TOPIC],
                      ["plan", "--topic=" + PLAN_TOPIC, "--topic", PLAN_TOPIC, "--folder", ".signoff"]):
             self.refused(argv)
         # The flags in any order, --resume anywhere, are the same command: here refused only for its stdin.
@@ -1355,6 +1358,7 @@ class CliPlan(unittest.TestCase):
             self.answer(n, topic)
             self.handed_over(proc, n, topic)
 
+    @unittest.skipIf(sys.platform == "win32", "Ctrl+C is sent as SIGINT, which is POSIX only")
     def test_ctrl_c_exits_130_with_nothing_on_stdout(self):
         self.live()
         proc = self.start(self.argv())

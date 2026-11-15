@@ -4822,8 +4822,9 @@ def main(argv=None):
         return _inbox_done(argv[2])
     if len(argv) == 3 and argv[:2] == ["inbox", "rows"]:
         return _inbox_rows(argv[2])
-    # A run takes no --topic, so a decisions folder named "plan" (with options after it) still runs.
-    if argv[:1] == ["plan"] and "--topic" in argv:
+    # A run takes none of these (--folder only with --history, which takes no decisions folder), so a decisions folder
+    # named "plan" (with options after it) still runs.
+    if argv[:1] == ["plan"] and any(w in argv for w in ("--topic", "--folder", "--resume")):
         return _plan(argv[1:])
     # A run has one positional argument, so a decisions folder named "elsewhere" (with options after it) still runs.
     if len(argv) in (3, 4) and argv[0] == "elsewhere" and not argv[1].startswith("-"):

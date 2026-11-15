@@ -747,7 +747,8 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   note goes).
 - **`signoff plan` puts a plan on one fixed round and waits on it beside the inbox.** The mod runs it (AD-29),
   never the agent: `signoff plan --topic <t> --folder <f> [--resume]`, each flag once in any order (taken as this
-  command only when the words hold `--topic`, so a decisions folder named `plan` still runs), the plan on stdin.
+  command only when the words hold one of the three, which no run takes, so a decisions folder named `plan` still
+  runs), the plan on stdin.
   `--topic` matches `[0-9]{4}-[0-9]{2}-[0-9]{2}-plan-[A-Za-z0-9-]{1,8}` in full; `--folder` is absolute or relative
   to `project_root()` of the current folder (none: exit 1). The plan: at most `MAX_DECISIONS` read, strict UTF-8,
   the white space at its end cut by `PLAN_TRIM` (what JavaScript's `trimEnd()` cuts, so the mod holds the same

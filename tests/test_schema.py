@@ -1415,6 +1415,14 @@ class SchemaFile(unittest.TestCase):
         for att in item["attachments"]:
             self.assertLessEqual(set(att), set(self.defs["attachment"]["properties"]))
         self.assertEqual(signoff.plan_round(12)["items"][0]["attachments"][0]["src"], "plan-12.md")
+        # The largest plan signoff plan takes, all of it escaped in the page (6 bytes a "<"), still loads.
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(os.path.join(tmp, "plan-01.md"), "wb") as f:
+                f.write(b"<" * signoff.MAX_ATTACHMENT)
+            with open(os.path.join(tmp, "round-01.json"), "w", encoding="utf-8") as f:
+                json.dump(signoff.plan_round(1), f)
+            decisions, _ = signoff.load_decisions(os.path.join(tmp, "round-01.json"))
+        self.assertEqual(len(decisions["items"][0]["attachments"][0]["text"]), signoff.MAX_ATTACHMENT)
 
     def test_demo_rounds_load_as_tabs(self):
         server = signoff.make_server(ROOT / "examples" / "demo")
