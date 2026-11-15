@@ -470,9 +470,9 @@ class LineRule(unittest.TestCase):
 
     def test_the_fixture_holds_every_case(self):
         text = LINE_RULE["text"]
-        self.assertTrue(text.startswith("﻿"))
+        self.assertTrue(text.startswith(chr(0xFEFF)))
         self.assertIn("\r\n", text)
-        self.assertIn(" ", text)
+        self.assertIn(chr(0x2028), text)
         self.assertRegex(text, "\r[^\n]")
         self.assertFalse(text.endswith("\n"))
         astral = [q for q in LINE_RULE["quotes"] if len(q) == 300]
@@ -491,7 +491,7 @@ class LineRule(unittest.TestCase):
                 self.bad([line_note(n, quote=line, att=1)])
                 self.bad([line_note(n, quote=line[:299], att=1)])
             self.bad([line_note(n, quote=quotes[n - 1] + "x", att=1)])
-        self.bad([line_note(1, quote="﻿first", att=1)])  # the BOM is not in the text
+        self.bad([line_note(1, quote=chr(0xFEFF) + "first", att=1)])  # the BOM is not in the text
         self.bad([line_note(2, quote="lone", att=1)])  # a lone CR ends no line
         self.bad([line_note(5, quote="trail", att=1)])  # only one CR is cut off
 

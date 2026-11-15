@@ -673,13 +673,13 @@ class LineNotes(unittest.TestCase):
     def test_markdown_keeps_a_stored_quote_on_its_line(self):
         # A stored note is not checked against the text, so its quote may hold anything a file can.
         decisions = signoff.load_decisions(self.folder.decisions)[0]
-        record = dict(noted(note(quote="a\rb c\n# head‮", comment="x\n## y")),
+        record = dict(noted(note(quote="a\rb" + chr(0x2028) + "c\n# head" + chr(0x202E), comment="x\n## y")),
                       saved="2026-01-01T12:00:00Z")
         md = signoff.answers_markdown(decisions, record)
         [line] = [ln for ln in md.split("\n") if "Line note" in ln]
         self.assertTrue(line.startswith("- Line note, notes/change.diff line 6, “a b c # headU+202E”: x"),
                         line)
-        self.assertNotIn("‮", md)
+        self.assertNotIn(chr(0x202E), md)
         self.assertIn("”: x  \n  \\## y\n", md)  # the comment's second line is no heading
         self.folder.write(with_lines("hu"))
         decisions = signoff.load_decisions(self.folder.decisions)[0]
