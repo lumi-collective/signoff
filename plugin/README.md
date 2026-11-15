@@ -28,11 +28,11 @@ older one, use two steps: `/plugin marketplace add lumi-collective/signoff`, the
 Auto-update is off by default for a third-party marketplace; turn it on in `/plugin` → Marketplaces → Enable
 auto-update.
 
-To try it, type `/signoff:demo` in a session: it writes a small synthetic round in a temporary folder, outside
-your project, and runs only when you type it.
-
 Then the status line shows one monitor: a small process that only sleeps until you use the Signoff inbox. The
 rest of this page says in detail what the plugin runs, reads and writes.
+
+To try it, type `/signoff:demo` in a session: it writes a small synthetic round in a temporary folder, outside
+your project, and runs only when you type it.
 
 ## What it runs
 

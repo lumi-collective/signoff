@@ -38,6 +38,9 @@ Instructions for coding agents working on Signoff. The README says what it does 
   (`types` in `plugin.json`); the `hint` option in `plugin.json` is `band`, `status` or `off`, without an
   `options` list: Claude Code 2.1.200 refuses the whole plugin, hooks and skills too, over that key (a test checks).
   `plugin/hooks/register.test.tsx` is its test, run by `claude plugin test plugin`.
+- `plugin/commands/demo.md`: `/signoff:demo`, typed only (`disable-model-invocation: true`); its body asks the model
+  to write one synthetic round in a `mktemp -d` folder, run Signoff on it, and give the user the `rm -r` command
+  without running it.
 - `plugin/monitors/monitors.json`: the plugin's monitor for the inbox. Claude Code starts it in every interactive
   session (not with `-p`) and hands each line it prints to the model. It runs `hook.sh monitor`, which runs
   `signoff.py inbox monitor`. A monitor that ends costs the session a model turn, so it never ends while its

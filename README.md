@@ -111,7 +111,8 @@ where they are.
 ## Quick start
 
 **Try the page:** after installing, type `/signoff:demo` in a Claude Code session. It writes a small synthetic round
-in a temporary folder, outside your project, and opens it; it runs only when you type it, and tells you how to
+in a temporary folder, outside your project, and opens it (with the Signoff inbox open, it waits there, outside any
+project); it runs only when you type it, and tells you how to
 remove the folder afterwards. A larger demo, four rounds of a synthetic settings redesign, is in `examples/demo`
 of a clone of this repository:
 
