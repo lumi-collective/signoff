@@ -1496,6 +1496,25 @@ def ax_name(browser, selector):
     return browser.call("Accessibility.getPartialAXTree", nodeId=node, fetchRelatives=False)["nodes"][0]["name"]["value"]
 
 
+# The sidebar's item rows whose title is under 100 px wide or that overflow their button: their marks squeezed them.
+SIDEBAR_SQUEEZED = """Array.prototype.filter.call(document.querySelectorAll('.outline .nav'), function (b) {
+  return b.querySelector('.nl').getBoundingClientRect().width < 100 || b.scrollWidth > b.clientWidth;
+}).map(function (b) { return b.textContent; })"""
+
+
+def sidebar_fits(browser, what):
+    """Each sidebar row keeps its title wide and its marks whole, at 1280 px and in the drawer at 400 px."""
+    check(browser.js(SIDEBAR_SQUEEZED) == [], "%s, the sidebar at 1280 px: %r" % (what, browser.js(SIDEBAR_SQUEEZED)))
+    browser.call("Emulation.setDeviceMetricsOverride", width=400, height=900, deviceScaleFactor=1, mobile=False)
+    time.sleep(0.5)
+    browser.click("header button.icon[aria-controls]")
+    time.sleep(0.5)
+    check(browser.js(SIDEBAR_SQUEEZED) == [], "%s, the drawer at 400 px: %r" % (what, browser.js(SIDEBAR_SQUEEZED)))
+    press(browser, "Escape", "Escape", 27)
+    browser.call("Emulation.setDeviceMetricsOverride", width=1280, height=900, deviceScaleFactor=1, mobile=False)
+    time.sleep(0.5)
+
+
 def run_blocking(work):
     """Items the agent waits on: a badge with a word in the title and in the sidebar's list, a fourth Summary filter
     that shows only them, in English and Hungarian, Done exits 0; a done round keeps its marks, and an open round
@@ -1507,6 +1526,7 @@ def run_blocking(work):
             shutil.copytree(str(DEMO / sub), str(topic / sub))
         data = json.loads((DEMO / "round-03.json").read_text(encoding="utf-8"))
         data["items"][1]["blocking"] = data["items"][3]["blocking"] = True
+        data["items"][3].update(stakes="high", irreversible="Moves every note")  # all three marks on one row
         data["lang"] = lang
         target = topic / "decisions.json"
         target.write_text(json.dumps(data), encoding="utf-8")
@@ -1521,6 +1541,7 @@ def run_blocking(work):
             check(got["outline"] == [None, "■" + short, None, "■" + short], "the sidebar marks (%s): %r" % (lang, got))
             check(got["titles"] == [it["title"] for it in data["items"]] and not got["undef"],
                   "the sidebar titles stay as written, and no label is missing: %r" % got)
+            sidebar_fits(browser, lang)
             name = ax_name(browser, "#panel-0 .item[data-item=theme] h3")
             check(word in name and "■" not in name, "the title's accessible name: %r" % name)
             name = ax_name(browser, ".outline li:nth-child(2) .nav")
