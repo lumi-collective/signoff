@@ -23,6 +23,14 @@ At the prompt of a Claude Code session in a terminal:
 /plugin install signoff --marketplace lumi-collective/signoff
 ```
 
+The one-line `--marketplace` form works from Claude Code 2.1.275 in a session and from 2.1.292 in a shell. In an
+older one, use two steps: `/plugin marketplace add lumi-collective/signoff`, then `/plugin install signoff@signoff`.
+Auto-update is off by default for a third-party marketplace; turn it on in `/plugin` → Marketplaces → Enable
+auto-update.
+
+To try it, type `/signoff:demo` in a session: it writes a small synthetic round in a temporary folder, outside
+your project, and runs only when you type it.
+
 Then the status line shows one monitor: a small process that only sleeps until you use the Signoff inbox. The
 rest of this page says in detail what the plugin runs, reads and writes.
 

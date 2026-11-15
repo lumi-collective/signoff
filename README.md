@@ -78,7 +78,7 @@ has no browser. It sends the same requests the page does.
 | Desktop app, VS Code extension | Untested. |
 | claude.ai (web, mobile) and Cowork | Not supported: the plugin does not install there. |
 | Chrome | Tested, headless, driven over the DevTools protocol. |
-| Firefox, Safari | Untested. |
+| Firefox, Safari | Tested on macOS on 2026-11-14: the inbox page, a synthetic round, and the answers file written with `done: true`. Not tried on other systems. |
 | Other agents (Codex, Cursor, Cline) | Through the experimental [MCP server](docs/mcp.md#other-agents-the-mcp-server); the config snippets are untested. |
 
 ## Install, update, uninstall
@@ -95,26 +95,32 @@ From a shell:
 claude plugin install signoff --marketplace lumi-collective/signoff
 ```
 
+The one-line `--marketplace` form works from Claude Code 2.1.275 in a session and from 2.1.292 in a shell. In an
+older one, use two steps: `/plugin marketplace add lumi-collective/signoff`, then `/plugin install signoff@signoff`.
+
 In the desktop app: + next to the prompt box → Plugins → Add marketplace `lumi-collective/signoff` → Add plugin.
 
 Then the status line shows one monitor: a small process that only sleeps until you use the
 [Signoff inbox](#the-inbox).
 
-Update: `claude plugin update signoff@signoff`, then `/reload-plugins`.
+Auto-update is off by default for a third-party marketplace; turn it on in `/plugin` → Marketplaces → Enable
+auto-update. Update by hand: `claude plugin update signoff@signoff`, then `/reload-plugins`.
 Uninstall: `claude plugin uninstall signoff@signoff`. Decision folders and answers files in your projects stay
 where they are.
 
 ## Quick start
 
-**Try the page** from a clone of this repository:
+**Try the page:** after installing, type `/signoff:demo` in a Claude Code session. It writes a small synthetic round
+in a temporary folder, outside your project, and opens it; it runs only when you type it, and tells you how to
+remove the folder afterwards. A larger demo, four rounds of a synthetic settings redesign, is in `examples/demo`
+of a clone of this repository:
 
 ```
 python3 -I plugin/signoff/signoff.py examples/demo
 ```
 
-Four rounds of a synthetic settings redesign open, listed in the sidebar. Your answers go to `examples/demo/*.answers.json`,
-which git ignores. Run it again and the page resumes from them; a round you finished with Done stays read only,
-and once every round is done Signoff says so and exits.
+Your answers go to `examples/demo/*.answers.json`, which git ignores. Run it again and the page resumes from them;
+a round you finished with Done stays read only, and once every round is done Signoff says so and exits.
 
 **With an agent** there is nothing to set up. When it has a decision for you, or a task that waits on you, the
 `signoff` skill tells it to:
