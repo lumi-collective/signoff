@@ -113,6 +113,11 @@ class Hook(HookBase):
         self.assertIsNone(s["pid"])  # only hook.sh knows Claude Code's pid
         self.assertEqual(sorted(p.name for p in self.written()), sorted([self.pid + ".json", s["session"] + ".json"]))
 
+    def test_a_bad_signoff_port_is_not_the_hooks_business(self):
+        # Exported in a shell profile, it reaches every session's hooks: only the commands that bind read it.
+        self.run_hook(self.event("SessionStart", source="startup"), env=dict(self.env, SIGNOFF_PORT="not a port"))
+        self.assertEqual(self.session()["state"], "idle")
+
     @unittest.skipIf(sys.platform == "win32", "POSIX permissions")
     def test_files_are_0600_in_0700_folders(self):
         self.run_hook(self.event("SessionStart", source="startup"))

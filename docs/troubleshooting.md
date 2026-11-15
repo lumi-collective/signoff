@@ -7,11 +7,15 @@ Signoff prints what went wrong on stderr, starting with `signoff:`. Its exit cod
   name, and in Git Bash on Windows the `py` launcher when there is one. On Windows use the `py` launcher:
   `py -3 -I plugin/signoff/signoff.py <folder>`. The plugin's `signoff.cmd` does the same.
 - **No browser opens.** Signoff prints the start link on stderr before it tries to open a browser, as
-  `signoff: open http://127.0.0.1:<port>/b/…`, and says `no browser opened` when it found none. Open that link in a
+  `signoff: open http://127.0.0.1:<port>/b/…`, and says `no browser opened` when it found none (and in an SSH session, where it tries none). Open that link in a
   browser on the same machine, or see `--no-open` in [the options table](running.md#running-it-yourself).
 - **Closed the tab?** Reopen it with your browser's Reopen closed tab (Ctrl+Shift+T, on a Mac Cmd+Shift+T). The
   start link works only once, so clicking it again stops Signoff (see 410 below).
-- **Over SSH.** Use `--no-open`, as described in [the options table](running.md#running-it-yourself).
+- **Over SSH or in a devcontainer.** Set `SIGNOFF_PORT` and forward that port, as described in
+  [Over SSH or in a devcontainer](running.md#over-ssh-or-in-a-devcontainer). "wrong host" (403) means the page
+  was opened on another port number or host name than the one Signoff listens on.
+- **"port … Address already in use".** Another program, or another Signoff run, holds the port set with `--port`
+  or `SIGNOFF_PORT`. Stop it, or set another port.
 - **410, "This start link was already used".** The link was opened twice, so another program may have used it,
   and Signoff stopped with exit code 1. Ask the agent to open Signoff again: the same command gives a new link
   and keeps the saved answers. Check the answers files first: one that now says `done: true` was finished by the

@@ -1,8 +1,9 @@
 """The security and run contract in AGENTS.md, checked against a separate process. Each test starts the command
 line as a child and talks to it only over HTTP, through its exit code and its stdout, so the same suite can run
 against another implementation (the inbox mode, a port): set SIGNOFF_CONTRACT_CMD to its command, which gets the
-same arguments (<decisions file or folder> or --history ROOT, --timeout, --no-open) and prints its start link on
-stderr. The fixtures from support.py and test_extras.py are files on disk; nothing here calls into signoff.py."""
+same arguments (<decisions file or folder> or --history ROOT, --timeout, --no-open, --port) and SIGNOFF_PORT, and
+prints its start link on stderr. The fixtures from support.py and test_extras.py are files on disk; nothing here
+calls into signoff.py."""
 import hashlib
 import http.client
 import json
@@ -19,7 +20,7 @@ import threading
 import time
 import unittest
 
-from support import ROOT, Folder, Rounds, png_bytes, sample_decisions
+from support import ROOT, Folder, Rounds, free_port, png_bytes, sample_decisions
 from test_extras import BOARD, HistoryRoot, board_folder
 
 # shortcut: shlex splits like a POSIX shell, so a Windows path needs forward slashes or quotes; split it by hand
@@ -34,9 +35,10 @@ PREFS = {"theme": "dark", "palette": "gruvbox"}
 class Run:
     """One Signoff process, its start link read from stderr, and plain HTTP to it."""
 
-    def __init__(self, *args):
+    def __init__(self, *args, env=None):
         self.proc = subprocess.Popen(COMMAND + [str(a) for a in args] + ["--no-open"], stdout=subprocess.PIPE,
                                      stderr=subprocess.PIPE, universal_newlines=True, encoding="utf-8",
+                                     env=dict(os.environ, **env) if env else None,
                                      errors="replace")
         # Both pipes are read as they come, so a process that logs every request or prints a lot never stalls on
         # a full pipe; stderr lines also go to a queue, to wait for the link with a deadline.
@@ -210,12 +212,27 @@ class Refusals(unittest.TestCase):
 
     def test_host_must_be_exact(self):
         port = self.run_.port
-        for host in ("localhost:%d" % port, "127.0.0.1", "127.0.0.1:%d.evil.example" % port, "evil.example",
-                     "[::1]:%d" % port, "127.0.0.1:%d" % (port + 1), None):
+        for host in ("localhost.example:%d" % port, "127.0.0.1", "127.0.0.1:%d.evil.example" % port, "evil.example",
+                     "[::1]:%d" % port, "127.0.0.1:%d" % (port + 1), "localhost", "localhost:%d" % (port + 1),
+                     "localhost:%d.evil.example" % port, "", None):
             hdrs = {"Host": host}
             self.refused(403, "GET", self.page, headers=hdrs)
             self.refused(403, "GET", self.board, headers=hdrs)
             self.save_refused(403, headers=hdrs)
+            self.save_refused(403, headers=dict(hdrs, Origin="http://%s" % host))
+
+    def test_localhost_names_the_same_page(self):
+        # A forwarded port or a devcontainer's Ports tab may open the page as localhost: the same rules hold.
+        local = "localhost:%d" % self.run_.port
+        for path in (self.page, self.board):
+            self.assertEqual(self.run_.request("GET", path, headers={"Host": local})[0].status, 200, path)
+        self.save_refused(403, headers={"Host": local})  # its Origin must be its own Host: here 127.0.0.1's
+        self.save_refused(403, headers={"Origin": "http://" + local})  # and the other way round
+        resp, data = self.run_.save(0, dict(ANSWER, free_text="through localhost"),
+                                    {"Host": local, "Origin": "http://" + local})
+        self.assertEqual(resp.status, 200, data)
+        saved = json.loads(self.folder.answers.read_text(encoding="utf-8"))
+        self.assertEqual(saved["free_text"], "through localhost")
 
     def test_save_needs_json(self):
         for ctype in ("text/plain", "application/x-www-form-urlencoded", "multipart/form-data; boundary=x", None):
@@ -372,12 +389,93 @@ class StartLink(unittest.TestCase):
         self.assertEqual(resp.status, 404)
         self.assertEqual(run.request("GET", run.start)[0].status, 303)
 
+    def test_localhost_may_use_it(self):
+        run = self.run_once()
+        self.assertEqual(run.hostname, "127.0.0.1")  # the link Signoff prints names 127.0.0.1
+        local = "localhost:%d" % run.port
+        resp, _ = run.request("GET", run.start, headers={"Host": local})
+        self.assertEqual(resp.status, 303)
+        self.assertEqual(run.request("GET", resp.getheader("Location"), headers={"Host": local})[0].status, 200)
+        self.assertEqual(run.request("GET", run.start, headers={"Host": local})[0].status, 410)  # once, by either name
+        out, err = run.finish()
+        self.assertEqual((run.proc.returncode, out), (1, ""), err)
+
     def test_each_run_gets_its_own_port_and_tokens(self):
         a, b = self.run_once(), self.run_once()
         self.assertNotEqual(a.port, b.port)
         self.assertNotEqual(a.start, b.start)
         self.assertNotEqual(a.open(), b.open())
         self.assertEqual(a.request("GET", b.page)[0].status, 404)
+
+
+class FixedPort(unittest.TestCase):
+    """--port N and SIGNOFF_PORT (the flag wins): a port of the user's choosing, on 127.0.0.1 only. 0 or unset is
+    a random port; a bad value or a taken port exits 1 with nothing on stdout."""
+
+    def setUp(self):
+        self.folder = Folder()
+        self.addCleanup(self.folder.cleanup)
+
+    def run_on(self, *args, env=None):
+        run = Run(self.folder.target, *args, env=env)
+        self.addCleanup(run.stop)
+        return run
+
+    def refused(self, *args, env=None):
+        proc = subprocess.run(COMMAND + [str(a) for a in args] + ["--no-open"], capture_output=True,
+                              universal_newlines=True, encoding="utf-8", errors="replace",
+                              env=dict(os.environ, **(env or {})), timeout=30)
+        self.assertEqual((proc.returncode, proc.stdout), (1, ""), (args, env, proc.stderr))
+        self.assertFalse(self.folder.answers.exists())
+        return proc.stderr
+
+    def test_the_flag_the_variable_and_the_flag_winning(self):
+        a, b = free_port(), free_port()
+        while b == a:
+            b = free_port()
+        for args, env, want in ((("--port", a), None, a), ((), {"SIGNOFF_PORT": str(b)}, b),
+                                (("--port", a), {"SIGNOFF_PORT": str(b)}, a)):
+            run = self.run_on(*args, env=env)
+            self.assertEqual((run.hostname, run.port), ("127.0.0.1", want), (args, env))
+            run.open()
+            self.assertEqual(run.request("GET", run.page)[0].status, 200)
+            run.stop()
+
+    def test_zero_or_empty_is_a_random_port(self):
+        for args, env in ((("--port", 0), None), ((), {"SIGNOFF_PORT": "0"}), ((), {"SIGNOFF_PORT": ""})):
+            run = self.run_on(*args, env=env)
+            self.assertGreater(run.port, 0)
+            run.stop()
+
+    def test_the_history_page_takes_it_too(self):
+        root = HistoryRoot()
+        self.addCleanup(root.cleanup)
+        port = free_port()
+        run = Run("--history", root.path, env={"SIGNOFF_PORT": str(port)})
+        self.addCleanup(run.stop)
+        self.assertEqual(run.port, port)
+
+    def test_bad_values_are_usage_errors(self):
+        for value in ("-1", "65536", "x", "1.5", "+80", " 80", "0x50", ""):
+            err = self.refused(self.folder.target, "--port", value)
+            self.assertEqual(len(err.strip().splitlines()), 1, (value, err))
+            if value:
+                err = self.refused(self.folder.target, env={"SIGNOFF_PORT": value})
+                self.assertEqual(len(err.strip().splitlines()), 1, (value, err))
+
+    def test_a_taken_port_exits_1_in_one_line_that_names_it(self):
+        root = HistoryRoot()
+        self.addCleanup(root.cleanup)
+        with socket.socket() as taken:
+            taken.bind(("127.0.0.1", 0))
+            taken.listen()
+            port = taken.getsockname()[1]
+            for args, env in (((self.folder.target, "--port", port), None),
+                              ((self.folder.target,), {"SIGNOFF_PORT": str(port)}),
+                              (("--history", root.path, "--port", port), None)):
+                err = self.refused(*args, env=env)
+                self.assertIn(str(port), err)
+                self.assertEqual(len(err.strip().splitlines()), 1, err)
 
 
 class Exits(unittest.TestCase):
@@ -603,7 +701,9 @@ class History(unittest.TestCase):
         self.addCleanup(run.stop)
         run.open()
         self.assertEqual(run.request("GET", run.page)[0].status, 200)
-        self.assertEqual(run.request("GET", run.page, headers={"Host": "evil.example"})[0].status, 403)
+        self.assertEqual(run.request("GET", run.page, headers={"Host": "localhost:%d" % run.port})[0].status, 200)
+        for host in ("evil.example", "localhost.example:%d" % run.port, "[::1]:%d" % run.port, ""):
+            self.assertEqual(run.request("GET", run.page, headers={"Host": host})[0].status, 403, host)
         for round_ in (0, 1):
             self.assertEqual(run.save(round_, ANSWER)[0].status, 405)
         resp, _ = run.request("POST", run.page + "prefs", PREFS, run.save_headers())
@@ -752,10 +852,27 @@ class Inbox(unittest.TestCase):
         for path in ("/", "/" + token, "/%s/" % ("A" * len(token)), "/%s/" % start.split("/")[2], page + "run/9/",
                      page + "run/0", page + "img/0"):
             self.assertEqual(self.request("GET", path)[0].status, 404, path)
-        for host in ("localhost:%d" % self.port, "127.0.0.1", "evil.example", "[::1]:%d" % self.port, None):
+        for host in ("localhost.example:%d" % self.port, "127.0.0.1", "evil.example", "[::1]:%d" % self.port, "",
+                     None):
             for path in (page, page + "run/0/", start):
                 self.assertEqual(self.request("GET", path, headers={"Host": host})[0].status, 403, (host, path))
             self.save_refused(403, page, headers={"Host": host})
+
+    def test_localhost_names_the_same_inbox(self):
+        local = "localhost:%d" % self.port
+        own = {"Host": local, "Origin": "http://" + local}
+        start = LINK.search(self.link()).group(4)
+        resp, _ = self.request("GET", start, headers={"Host": local})
+        self.assertEqual(resp.status, 303)
+        page = resp.getheader("Location")
+        for path in (page, page + "state", page + "run/0/"):
+            self.assertEqual(self.request("GET", path, headers={"Host": local})[0].status, 200, path)
+        self.save_refused(403, page, headers={"Host": local})  # an Origin of the other name is not its own
+        self.save_refused(403, page, headers={"Origin": "http://" + local})
+        resp, data = self.save(page, headers=own)
+        self.assertEqual(resp.status, 200, data)
+        resp, data = self.save(page, {"sort": "oldest"}, own, path="prefs")  # the default: other tests see no change
+        self.assertEqual(resp.status, 200, data)
 
     def test_saves_keep_todays_rules(self):
         start, page = self.open()
@@ -821,7 +938,8 @@ class Inbox(unittest.TestCase):
         for path in ("/state", "/%s/state" % ("A" * len(token)), "/%s/state" % start.split("/")[2],
                      page + "state/", page + "state?theme=dark", page + "run/0/state", "/%s/state" % board.split("/")[1]):
             self.assertEqual(self.request("GET", path)[0].status, 404, path)
-        for host in ("localhost:%d" % self.port, "127.0.0.1", "evil.example", "[::1]:%d" % self.port, None):
+        for host in ("localhost.example:%d" % self.port, "127.0.0.1", "evil.example", "[::1]:%d" % self.port, "",
+                     None):
             self.assertEqual(self.request("GET", page + "state", headers={"Host": host})[0].status, 403, host)
         self.save_refused(404, page, path="state")
         self.assertEqual(self.request("GET", start)[0].status, 410)
@@ -843,7 +961,8 @@ class Inbox(unittest.TestCase):
             self.assertEqual(resp.status, status, (body, headers, path, data))
             self.assertEqual(self.requests(), before)
 
-        for host in ("localhost:%d" % self.port, "127.0.0.1", "evil.example", "[::1]:%d" % self.port, None):
+        for host in ("localhost.example:%d" % self.port, "127.0.0.1", "evil.example", "[::1]:%d" % self.port, "",
+                     None):
             refused(403, headers={"Host": host})
         for origin in ("http://evil.example", "null", "http://localhost:%d" % self.port, self.origin + "/", None):
             refused(403, headers={"Origin": origin})
@@ -892,7 +1011,8 @@ class Inbox(unittest.TestCase):
             self.assertEqual(resp.status, status, (body, headers, path, data))
             self.assertEqual(self.requests(), before)
 
-        for host in ("localhost:%d" % self.port, "127.0.0.1", "evil.example", "[::1]:%d" % self.port, None):
+        for host in ("localhost.example:%d" % self.port, "127.0.0.1", "evil.example", "[::1]:%d" % self.port, "",
+                     None):
             refused(403, headers={"Host": host})
         for origin in ("http://evil.example", "null", "http://localhost:%d" % self.port, self.origin + "/", None):
             refused(403, headers={"Origin": origin})
@@ -939,7 +1059,8 @@ class Inbox(unittest.TestCase):
             self.assertEqual((self.scan_list(), self.requests()), (before, asked))
 
         for body, path in ((scan, "scan"), (vuln, "request")):
-            for host in ("localhost:%d" % self.port, "127.0.0.1", "evil.example", "[::1]:%d" % self.port, None):
+            for host in ("localhost.example:%d" % self.port, "127.0.0.1", "evil.example", "[::1]:%d" % self.port,
+                         "", None):
                 refused(403, body, path, {"Host": host})
             for origin in ("http://evil.example", "null", "http://localhost:%d" % self.port, self.origin + "/", None):
                 refused(403, body, path, {"Origin": origin})
@@ -989,7 +1110,8 @@ class Inbox(unittest.TestCase):
             self.assertEqual(resp.status, status, (body, headers, path, data))
             self.assertEqual(self.prefs(), before)
 
-        for host in ("localhost:%d" % self.port, "127.0.0.1", "evil.example", "[::1]:%d" % self.port, None):
+        for host in ("localhost.example:%d" % self.port, "127.0.0.1", "evil.example", "[::1]:%d" % self.port, "",
+                     None):
             refused(403, headers={"Host": host})
         for origin in ("http://evil.example", "null", "http://localhost:%d" % self.port, self.origin + "/", None):
             refused(403, headers={"Origin": origin})
@@ -1049,6 +1171,64 @@ class Inbox(unittest.TestCase):
                          ("dark", "gruvbox", "comfortable", "project"))
         self.assertEqual(self.request("GET", start)[0].status, 410)
         refused(404)  # a closed pair writes nothing more
+
+
+@unittest.skipIf(sys.platform == "win32", "the inbox's control socket is a Unix socket; no inbox on Windows yet")
+class InboxPort(unittest.TestCase):
+    """`inbox serve` with SIGNOFF_PORT: it listens there and says so in inbox.json; a taken port stops it."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.home = os.path.join(os.path.realpath(tmp.name), "home")
+
+    def serve(self, port):
+        return subprocess.Popen(COMMAND + ["inbox", "serve"], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                universal_newlines=True, encoding="utf-8", errors="replace",
+                                env=dict(os.environ, SIGNOFF_INBOX_HOME=self.home, SIGNOFF_PORT=str(port)))
+
+    def test_the_inbox_takes_signoff_port(self):
+        port = free_port()
+        proc = self.serve(port)
+
+        def stop():
+            if proc.poll() is None:
+                proc.kill()
+            proc.communicate()
+        self.addCleanup(stop)
+        deadline = time.monotonic() + 30
+        while True:
+            try:
+                with socket.socket(socket.AF_UNIX) as s:
+                    s.settimeout(10)
+                    s.connect(os.path.join(self.home, "inbox.sock"))
+                    s.sendall(b'{"op": "open"}\n')
+                    link = json.loads(s.makefile("rb").readline())["link"]
+                break
+            except OSError:
+                self.assertTrue(proc.poll() is None and time.monotonic() < deadline, "the inbox did not start")
+                time.sleep(0.1)
+        found = LINK.search(link)
+        self.assertEqual((found.group(2), int(found.group(3))), ("127.0.0.1", port))
+        with open(os.path.join(self.home, "inbox.json"), encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["port"], port)
+        local = "localhost:%d" % port
+        run = Run.__new__(Run)  # only its plain HTTP
+        run.host, run.port = local, port
+        resp, _ = run.request("GET", found.group(4))
+        self.assertEqual(resp.status, 303)
+        self.assertEqual(run.request("GET", resp.getheader("Location"))[0].status, 200)
+
+    def test_a_taken_port_stops_it_in_one_line(self):
+        with socket.socket() as taken:
+            taken.bind(("127.0.0.1", 0))
+            taken.listen()
+            port = taken.getsockname()[1]
+            proc = self.serve(port)
+            out, err = proc.communicate(timeout=30)
+        self.assertEqual((proc.returncode, out), (1, ""), err)
+        self.assertIn(str(port), err)
+        self.assertEqual(len(err.strip().splitlines()), 1, err)
 
 
 @unittest.skipIf(sys.platform == "win32", "the inbox's control socket is a Unix socket; no inbox on Windows yet")

@@ -2,10 +2,11 @@
 import json
 import os
 import re
+import socket
 import unittest
 from unittest import mock
 
-from support import Folder, Running, png_bytes, sample_decisions, signoff
+from support import Folder, Running, free_port, png_bytes, sample_decisions, signoff
 
 
 def state(done=False):
@@ -39,6 +40,24 @@ class Binding(ServerTest):
             self.assertGreaterEqual(len(other.token), 40)
         finally:
             other.server_close()
+
+    def test_a_fixed_port_on_request(self):
+        port = free_port()
+        other = signoff.make_server(self.folder.decisions, port=port)
+        try:
+            self.assertEqual(other.server_address[:2], ("127.0.0.1", port))
+            self.assertTrue(other.start_url.startswith("http://127.0.0.1:%d/b/" % port), other.start_url)
+        finally:
+            other.server_close()
+
+    def test_a_port_in_use_names_the_port(self):
+        with socket.socket() as taken:
+            taken.bind(("127.0.0.1", 0))
+            taken.listen()
+            port = taken.getsockname()[1]
+            with self.assertRaises(OSError) as caught:
+                signoff.make_server(self.folder.decisions, port=port)
+        self.assertIn("port %d" % port, str(caught.exception))
 
     def test_url(self):
         self.assertEqual(self.run_.server.url, "http://%s/%s/" % (self.run_.host, self.run_.token))
@@ -181,8 +200,32 @@ class HostAndToken(ServerTest):
     def test_wrong_host(self):
         self.assertEqual(self.get(self.page, host="evil.example")[0].status, 403)
 
-    def test_localhost_name_is_not_accepted(self):
-        self.assertEqual(self.get(self.page, host="localhost:%d" % self.run_.port)[0].status, 403)
+    def test_localhost_names_the_same_page(self):
+        # A forwarded port or a devcontainer's Ports tab may open the page as localhost: the same rules hold.
+        local = "localhost:%d" % self.run_.port
+        start = self.run_.server.start_url[len("http://" + self.run_.host):]
+        resp, _ = self.get(start, host=local)
+        self.assertEqual((resp.status, resp.getheader("Location")), (303, self.page))
+        self.assertEqual(self.get(self.page, host=local)[0].status, 200)
+        self.assertEqual(self.get(self.page + "img/0", host=local)[0].status, 200)
+        resp, data = self.run_.save(state(), Host=local, Origin="http://" + local)
+        self.assertEqual(resp.status, 200, data)
+        self.assertTrue(self.folder.answers.exists())
+
+    def test_origin_must_be_its_own_host(self):
+        local = "localhost:%d" % self.run_.port
+        for host, origin in ((self.run_.host, "http://" + local), (local, self.run_.origin)):
+            self.assertEqual(self.run_.save(state(), Host=host, Origin=origin)[0].status, 403, (host, origin))
+        self.assertFalse(self.folder.answers.exists())
+
+    def test_other_names_are_not_accepted(self):
+        port = self.run_.port
+        for host in ("localhost.example:%d" % port, "[::1]:%d" % port, "127.0.0.1:%d" % (port + 1), "localhost",
+                     "localhost:%d.evil.example" % port, ""):
+            self.assertEqual(self.get(self.page, headers={"Host": host})[0].status, 403, host)
+            resp, _ = self.run_.save(state(), Host=host, Origin="http://" + host)
+            self.assertEqual(resp.status, 403, host)
+        self.assertFalse(self.folder.answers.exists())
 
     def test_host_without_port(self):
         self.assertEqual(self.get(self.page, host="127.0.0.1")[0].status, 403)

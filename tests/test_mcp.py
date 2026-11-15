@@ -211,6 +211,19 @@ class Runs(unittest.TestCase):
         self.assertEqual(self.client.tool("signoff_status", run_id=body["run_id"])[1], final)
         self.assertFalse(any("/b/" in line or "127.0.0.1:" in line for line in self.client.seen), self.client.seen)
 
+    def test_over_ssh_the_link_file_is_handed_out(self):
+        # The run opens no browser in an SSH session, so the agent must get the file, as with open_browser=false.
+        self.client.close()
+        self.client = Client(self._tmp.name, SSH_CONNECTION="192.0.2.1 50000 192.0.2.2 22")
+        self.client.call("initialize", {"protocolVersion": "2025-06-18", "capabilities": {},
+                                        "clientInfo": {"name": "test", "version": "1"}})
+        result, body = self.client.tool("signoff_open", path=str(self.folder.decisions))
+        self.assertEqual(body["state"], "waiting", body)
+        self.assertIn("No browser was opened", body["note"])
+        _, page = spend_link(Path(body["link_file"]))
+        self.assertEqual(post_done(page), 200)
+        self.assertEqual(self.wait_for(body["run_id"])[1]["state"], "done")
+
     def test_invalid_decisions_is_an_error_state(self):
         data = sample_decisions()
         data["items"][0]["recommended"] = "three"

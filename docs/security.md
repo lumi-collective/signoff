@@ -79,9 +79,20 @@ The `launcher` link, when it points elsewhere, is replaced by renaming a new lin
 Signoff is a web server on your machine that writes files, and any other web page open in the same browser can
 send requests to `127.0.0.1`. The rules, in short:
 
-- **Loopback, a fresh port, a secret path:** it binds `127.0.0.1` on a port the OS picks, and every request must
+- **Loopback, a fresh port, a secret path:** it binds `127.0.0.1` on a port the OS picks (unless you set one,
+  below), and every request must
   carry a random 256-bit token in its path, compared in constant time. The `Host` header must be exactly
-  `127.0.0.1:<port>`, which stops DNS rebinding. No cookies.
+  `127.0.0.1:<port>` or `localhost:<port>` (both name this machine, as a forwarded port or a devcontainer's
+  Ports tab may), which stops DNS rebinding; a save's `Origin` must be `http://` and that same Host. No cookies.
+- **A fixed port only on request:** `--port` or `SIGNOFF_PORT` sets the port, for a tunnel over SSH or into a
+  devcontainer that is set up once. Any process on the machine, another user's too, can bind a free port
+  first. When it holds yours, Signoff exits 1 and says so, but a browser or tunnel pointed at that port while
+  Signoff is not running reaches that process, which could show a page of its own that looks like Signoff's and
+  read what you type there. It never gets Signoff's tokens or answers files. That is why the port is random unless
+  you set one: set it only on a machine whose other users you trust, and open only a start link Signoff printed
+  for that run. It still binds `127.0.0.1` only, never another address. Open that link with `127.0.0.1`, as
+  printed: a browser may try `localhost` as `::1` first, where Signoff and an `ssh -L` forward do not listen, so
+  another program on that address would get the link, its token included.
 - **A single-use start link:** the browser is opened with a second token, `/b/<start token>/`, which redirects
   once and is dead from then on; that link is what other programs can see in the browser's command line. A
   second visit gets 410 and stops the run with exit code 1. A Done in the first 5 seconds after the link's

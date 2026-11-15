@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Signoff: serve a decisions file as a local page, autosave the answers, exit when the user presses Done.
 
-    python3 -I signoff.py <decisions.json | folder> [--no-open] [--timeout <minutes>]
+    python3 -I signoff.py <decisions.json | folder> [--no-open] [--timeout <minutes>] [--port <n>]
 
 A folder holds one round-NN.json per round; each round is a tab. The answers go to <name>.answers.json beside
 each decisions file. On Done (on the page, or in answers files another program wrote) the absolute path of each
@@ -1546,9 +1546,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def _route(self):
         """Host and token checks for every request. Returns the path after /<token>/, or None after an error."""
         srv = self.server
-        if self.headers.get("Host") != srv.host:
-            self._send(403, ("wrong host: Signoff answers only to %s; over SSH, forward the same port number\n"
-                             % srv.host).encode("utf-8"))
+        if self.headers.get("Host") not in srv.hosts:
+            self._send(403, ("wrong host: Signoff answers only to %s or %s; over SSH, forward the same port number\n"
+                             % srv.hosts).encode("utf-8"))
             return None
         path, mark, query = self.path.partition("?")
         if not path.startswith("/") or "#" in self.path or (mark and query not in THEME_QUERIES):
@@ -1598,7 +1598,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         srv.finish(now=True)
 
     def do_GET(self):
-        if self.headers.get("Host") == self.server.host and self.path.startswith("/b/"):
+        if self.headers.get("Host") in self.server.hosts and self.path.startswith("/b/"):
             return self._start()
         rest = self._route()
         if rest is None:
@@ -1655,7 +1655,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._refuse(404, b"not found\n")
         index = int(m.group(1)) if m else None
         limit = target.rounds[index].max_body if m else MAX_PREFS_BODY if rest == "prefs" else MAX_REQUEST_BODY
-        if self.headers.get("Origin") != srv.origin:
+        # The page's own origin is the name it was loaded by, which _route took as one of this server's.
+        if self.headers.get("Origin") != "http://" + self.headers.get("Host"):
             return self._refuse(403, b"wrong origin\n")
         site = self.headers.get("Sec-Fetch-Site")
         if site is not None and site != "same-origin":
@@ -1831,6 +1832,9 @@ class _Server(http.server.ThreadingHTTPServer):
     daemon_threads = True
     read_only = False
     inbox = False
+    # On Windows SO_REUSEADDR lets a second socket bind a port that is in use, so a fixed port could be shared;
+    # elsewhere it only lets a run take a fixed port that the run before left in TIME_WAIT.
+    allow_reuse_address = sys.platform != "win32"
 
     def server_bind(self):
         # http.server would look up 127.0.0.1's name here, which nothing uses; on a macOS CI machine that lookup
@@ -1838,7 +1842,8 @@ class _Server(http.server.ThreadingHTTPServer):
         socketserver.TCPServer.server_bind(self)
         self.server_name, self.server_port = self.server_address[:2]
 
-    def _listen(self):
+    def _listen(self, port=0):
+        """Bind 127.0.0.1 on port (0: a random one, the default)."""
         self.page = (HERE / "page.html").read_text(encoding="utf-8")
         self.token = secrets.token_urlsafe(32)
         self.board_token = getattr(self, "board_token", None) or secrets.token_urlsafe(32)
@@ -1848,10 +1853,16 @@ class _Server(http.server.ThreadingHTTPServer):
         self.lock = threading.Lock()
         self.finished = threading.Event()
         self.last_activity = time.monotonic()
-        http.server.ThreadingHTTPServer.__init__(self, ("127.0.0.1", 0), Handler)
+        try:
+            http.server.ThreadingHTTPServer.__init__(self, ("127.0.0.1", port), Handler)
+        except OSError as e:
+            if not port:
+                raise
+            raise OSError(e.errno, "port %d: %s" % (port, e.strerror or e)) from None  # say which port is taken
         port = self.server_address[1]
-        self.host = "127.0.0.1:%d" % port
-        self.origin = "http://" + self.host
+        self.host = "127.0.0.1:%d" % port  # the name every link Signoff hands out uses
+        # A forwarded port or a devcontainer's Ports tab may name the machine localhost: the same machine and port.
+        self.hosts = (self.host, "localhost:%d" % port)
         self.url = "http://%s/%s/" % (self.host, self.token)
         self.start_url = "http://%s/b/%s/" % (self.host, self.start_token)
 
@@ -2076,9 +2087,9 @@ class _Rounds:
 
 
 class SignoffServer(_Rounds, _Server):
-    def __init__(self, target):
+    def __init__(self, target, port=0):
         self._read_media(load_rounds(target))
-        self._listen()
+        self._listen(port)
 
 
 class HistoryServer(_Server):
@@ -2086,7 +2097,7 @@ class HistoryServer(_Server):
     written. Broken files are listed with their error; pictures and boards are read when the page asks for them."""
     read_only = True
 
-    def __init__(self, root, since=None, budget=HISTORY_BUDGET, timeout=None, folder=DEFAULT_FOLDER):
+    def __init__(self, root, since=None, budget=HISTORY_BUDGET, timeout=None, folder=DEFAULT_FOLDER, port=0):
         root = Path(root).resolve()
         if not root.is_dir():
             raise DecisionsError("%s: not a folder" % root)
@@ -2161,7 +2172,7 @@ class HistoryServer(_Server):
                             else:
                                 text_used += size
         self.entries = entries
-        self._listen()
+        self._listen(port)
 
     def _entry(self, topic, date, path):
         e = {"topic": topic, "file": path.name, "date": date, "title": None, "tab": None, "status": "new",
@@ -2743,7 +2754,7 @@ class InboxServer(_Server):
     inbox = True
     rounds = ()
 
-    def __init__(self, home):
+    def __init__(self, home, port=0):
         home = Path(home)
         if not home.is_absolute():
             raise DecisionsError("the Signoff home %s is not an absolute path" % home)
@@ -2777,7 +2788,7 @@ class InboxServer(_Server):
             self.done_cache = {}  # answers path -> (stat key, whether it says done), for the orphan look
             self.round_locks = _RoundLocks()
             self.control = _control_socket(home / "inbox.sock")
-            self._listen()
+            self._listen(port)
             write_atomic(home / "inbox.json", json.dumps({
                 "schema": 1, "server_id": secrets.token_hex(16), "port": self.server_address[1],
                 "control": str(home / "inbox.sock")}, indent=2) + "\n")
@@ -3613,8 +3624,12 @@ def _inbox_serve():
               file=sys.stderr)
         return EXIT_ERROR
     home = inbox_home()
+    port = env_port()
+    if port is None:
+        print(BAD_ENV_PORT, file=sys.stderr)
+        return EXIT_ERROR
     try:
-        server = InboxServer(home)
+        server = InboxServer(home, port)
     except DecisionsError as e:
         print("signoff: %s" % e, file=sys.stderr)
         return EXIT_ERROR
@@ -3730,6 +3745,29 @@ def _inbox_open_app(target):
     return EXIT_DONE
 
 
+PORT_HELP = "a port number from 1 to 65535, or 0 for a random one"
+BAD_ENV_PORT = "signoff: SIGNOFF_PORT must be " + PORT_HELP
+
+
+def port_number(text):
+    """A port from --port or SIGNOFF_PORT (0: a random one), or None. Plain ASCII digits only: int() would also take
+    ' 80', '+80', '8_0' and other scripts' digits."""
+    if text.isascii() and text.isdigit() and len(text) <= 5 and int(text) <= 65535:
+        return int(text)
+    return None
+
+
+def env_port():
+    """SIGNOFF_PORT, read only by what binds (a run, --history, inbox serve): unset or empty is 0; None when it is
+    not a port. The hooks never read it, so a bad value in a shell profile costs a session nothing."""
+    return port_number(os.environ.get("SIGNOFF_PORT") or "0")
+
+
+def over_ssh():
+    """In an SSH session a browser would open on the remote machine, away from the user: as with --no-open."""
+    return bool(os.environ.get("SSH_CONNECTION") or os.environ.get("SSH_TTY"))
+
+
 def _open_browser(url):
     """webbrowser.open with each of fds 1 and 2 that is not a terminal on /dev/null for the call. A browser it starts
     (xdg-open or gio on Linux) inherits them: on a pipe it would hold the caller's pipe open (the mod waits for its
@@ -3767,15 +3805,19 @@ def _inbox_open(no_open, target=None):
         print("signoff: the Signoff home %s is not an absolute path" % home, file=sys.stderr)
         return EXIT_ERROR
     log = home / "logs" / "inbox.log"
+    child = None
     if not inbox_alive(home):
+        if env_port() is None:  # the inbox it starts would only say so in its log
+            print(BAD_ENV_PORT, file=sys.stderr)
+            return EXIT_ERROR
         try:
             home.mkdir(parents=True, mode=0o700, exist_ok=True)
             log.parent.mkdir(mode=0o700, exist_ok=True)
             fd = os.open(str(log), os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
             with os.fdopen(fd, "ab") as out:
-                subprocess.Popen([sys.executable, "-I", "-B", str(Path(__file__).resolve()), "inbox", "serve"],
-                                 stdin=subprocess.DEVNULL, stdout=out, stderr=out, close_fds=True,
-                                 start_new_session=True)  # not stopped with this command or its terminal
+                child = subprocess.Popen([sys.executable, "-I", "-B", str(Path(__file__).resolve()), "inbox", "serve"],
+                                         stdin=subprocess.DEVNULL, stdout=out, stderr=out, close_fds=True,
+                                         start_new_session=True)  # not stopped with this command or its terminal
         except OSError as e:
             print("signoff: cannot start the inbox (%s)" % e, file=sys.stderr)
             return EXIT_ERROR
@@ -3785,6 +3827,10 @@ def _inbox_open(no_open, target=None):
             link = inbox_request(home, "open", **(target or {})).get("link")
             break
         except OSError:
+            # The one it started has ended (a taken SIGNOFF_PORT, say) and none other came up: no use waiting.
+            if child is not None and child.poll() is not None and not inbox_alive(home):
+                print("signoff: the inbox did not start; see %s" % log, file=sys.stderr)
+                return EXIT_ERROR
             if time.monotonic() > deadline:
                 print("signoff: the inbox does not answer; see %s" % log, file=sys.stderr)
                 return EXIT_ERROR
@@ -3794,7 +3840,7 @@ def _inbox_open(no_open, target=None):
         return EXIT_ERROR
     if no_open:
         print("signoff: open %s  (the link works once)" % link, file=sys.stderr, flush=True)
-    elif _open_browser(link):
+    elif not over_ssh() and _open_browser(link):
         print("signoff: the inbox is open in your browser", file=sys.stderr, flush=True)
     else:
         print("signoff: no browser opened; open %s yourself (it works once)" % link, file=sys.stderr, flush=True)
@@ -3833,14 +3879,15 @@ def _inbox_stop():
     return EXIT_DONE
 
 
-def make_server(target):
-    """A server for one decisions file, or for a folder of round-NN.json files."""
-    return SignoffServer(target)
+def make_server(target, port=0):
+    """A server for one decisions file, or for a folder of round-NN.json files, on 127.0.0.1 (port 0: a random
+    one)."""
+    return SignoffServer(target, port)
 
 
-def make_history_server(root, since=None, budget=HISTORY_BUDGET, timeout=None, folder=DEFAULT_FOLDER):
+def make_history_server(root, since=None, budget=HISTORY_BUDGET, timeout=None, folder=DEFAULT_FOLDER, port=0):
     """A read-only server for every round in the decisions folder under a project root."""
-    return HistoryServer(root, since, budget, timeout, folder)
+    return HistoryServer(root, since, budget, timeout, folder, port)
 
 
 def _minutes(value):
@@ -3873,7 +3920,8 @@ def _serve(server, args, what):
         threading.Thread(target=watch, daemon=True).start()
     print("signoff: open %s  (the link works once; Ctrl+C stops it; %s)" % (server.start_url, what),
           file=sys.stderr, flush=True)
-    if not args.no_open and not _open_browser(server.start_url):  # False: no browser found (headless, WSL)
+    # The line below is the agent's cue to hand the user the link: over SSH too, though no browser is tried there.
+    if not args.no_open and (over_ssh() or not _open_browser(server.start_url)):  # False: headless, WSL
         print("signoff: no browser opened; give the user the link above (it works once)", file=sys.stderr, flush=True)
     try:
         server.serve_forever(poll_interval=0.2)
@@ -4372,7 +4420,7 @@ def _history(args):
         return EXIT_ERROR
     try:
         server = make_history_server(args.history, args.since, timeout=args.timeout or None,
-                                     folder=args.folder or DEFAULT_FOLDER)
+                                     folder=args.folder or DEFAULT_FOLDER, port=args.port)
     except DecisionsError as e:
         print("signoff: %s" % e, file=sys.stderr)
         return EXIT_ERROR
@@ -4467,6 +4515,8 @@ def main(argv=None):
                         "empty: off; not on Windows)")
     parser.add_argument("--timeout", type=_minutes, default=120.0, metavar="MINUTES",
                         help="stop after this many idle minutes, exit code 2 (default 120; 0 = never)")
+    parser.add_argument("--port", metavar="N", help="listen on this port of 127.0.0.1, for a tunnel "
+                        "set up once (default: SIGNOFF_PORT, else 0 = a random port)")
     args = parser.parse_args(argv)
     if (args.decisions is None) == (args.history is None):
         parser.error("give a decisions file or folder, or --history ROOT")
@@ -4474,6 +4524,14 @@ def main(argv=None):
         parser.error("--since goes with --history")
     if args.folder and not args.history:
         parser.error("--folder goes with --history")
+    # Checked here, not by argparse, so a bad value is one line without the usage, as a bad SIGNOFF_PORT is.
+    if args.port is not None:
+        args.port, bad = port_number(args.port), "signoff: --port must be " + PORT_HELP
+    else:
+        args.port, bad = env_port(), BAD_ENV_PORT
+    if args.port is None:
+        print(bad, file=sys.stderr)
+        return EXIT_ERROR
     if args.history:
         return _history(args)
     home = inbox_home()
@@ -4487,7 +4545,7 @@ def main(argv=None):
             # The inbox reads the pictures and boards when it takes the rounds in: a bad one fails here, as on a page.
             _Rounds()._read_media(rounds)
         else:
-            server = make_server(args.decisions)
+            server = make_server(args.decisions, args.port)
             rounds = server.rounds
     except DecisionsError as e:
         print("signoff: %s" % e, file=sys.stderr)

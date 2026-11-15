@@ -78,10 +78,11 @@ Instructions for coding agents working on Signoff. The README says what it does 
   `XDG_CONFIG_HOME` likewise, so no test reads or writes the user's Uptick files. `test_contract_http.py` checks
   the security and run contract against the command line as a separate process, over HTTP, its exit code and
   stdout only; `SIGNOFF_CONTRACT_CMD` (POSIX shell words: forward slashes in a Windows path) swaps in another
-  implementation. It must take the same arguments (`--no-open`, `--timeout`, `--history`, and `elsewhere <round
-  file> <item id> [<note>]`), print its
-  `http://` start link on stderr, and honour `SIGNOFF_INBOX_HOME` (and `XDG_CACHE_HOME`, `XDG_CONFIG_HOME` for
-  Uptick's files). Its inbox must touch `inbox.lock` at each look, as the mod reads that time. It must be the
+  implementation. It must take the same arguments (`--no-open`, `--timeout`, `--history`, `--port`, and
+  `elsewhere <round file> <item id> [<note>]`), print its
+  `http://` start link on stderr, and honour `SIGNOFF_INBOX_HOME` and `SIGNOFF_PORT` (and `XDG_CACHE_HOME`,
+  `XDG_CONFIG_HOME` for Uptick's files). `support.py` also drops `SIGNOFF_PORT`, `SSH_CONNECTION` and `SSH_TTY`
+  from the environment, so every run gets a random port and may open a browser unless a test says otherwise. Its inbox must touch `inbox.lock` at each look, as the mod reads that time. It must be the
   server process itself (a
   launcher that execs, as `plugin/bin/signoff` does): the suite stops it with kill, SIGINT, SIGTERM and SIGHUP. Its `Inbox` class
   starts `<command> inbox serve` and takes start links from the control socket; its `InboxOffer` class starts
@@ -180,9 +181,16 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
 
 ## Invariants
 
-- **Security rules are not optional.** Bind `127.0.0.1` on port 0; a fresh token in the path on every
-  request; `Host` equal to `127.0.0.1:<port>`; a save (`POST /<token>/save/<round>`) needs `application/json`,
-  the page's own `Origin`, and `Sec-Fetch-Site: same-origin` when present; a body within its round's limit,
+- **Security rules are not optional.** Bind `127.0.0.1` only, on port 0 unless the user asks for one: `--port N`
+  on a run or `--history`, else `SIGNOFF_PORT` (also for `inbox serve`), N plain ASCII digits from 1 to 65535, `0`
+  or empty a random port; it is read only by what binds (a run, `--history`, `inbox serve`, and `inbox open`
+  before it starts one), never by the hooks or the monitor. Never a fixed port by default, never another address.
+  On Windows without `SO_REUSEADDR`, which there lets a second socket bind a port in use. Every link Signoff
+  prints or hands out names `127.0.0.1`. A fresh token in the path on every
+  request; `Host` equal to `127.0.0.1:<port>` or `localhost:<port>` (no other name, port or form: not
+  `localhost.example`, `[::1]`, a missing or empty Host); a save (`POST /<token>/save/<round>`) needs
+  `application/json`, the page's own `Origin` (`http://` and the request's own Host, so a page loaded by either
+  name saves and an Origin of the other name is refused), and `Sec-Fetch-Site: same-origin` when present; a body within its round's limit,
   checked against that round's decisions file. Each rule has a test that sends the bad request, in process and
   in `tests/test_contract_http.py` against a separate process; a new route gets the same tests in both.
 - **The browser opens a single-use start link** (`/b/<start token>/`, a second token), never the page URL. Its
@@ -813,10 +821,16 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   print nothing on stdout
   (`open --app` no link on stderr either); `open --no-open` prints its start
   link on stderr, as a run does, and so does `open` when no browser opened (`webbrowser.open` False; a run then
-  says `no browser opened` under its link). A browser a run or `open` starts gets `/dev/null` for each of
+  says `no browser opened` under its link). In an SSH session (`SSH_CONNECTION` or `SSH_TTY` set and not empty)
+  a run, `--history` and `inbox open` try no browser (`over_ssh()`) and print the link on stderr with the
+  `no browser opened` line the skills key on; the MCP server then hands out its link file, as with
+  `open_browser: false`. Nothing else changes there; the mod's panel rows never read `inbox open`'s stderr, so over SSH a row opens
+  nothing visible (a known limit, as on any machine without a browser). A browser a run or `open` starts gets `/dev/null` for each of
   stdout and stderr that is not a terminal (`_open_browser`), so it writes nothing there and holds no caller's
   pipe open (on Linux the stdlib starts `xdg-open` or `gio` with them).
-- **Exit codes are a contract:** 0 Done, 1 invalid input (a usage error, every round already done, a round
+- **Exit codes are a contract:** 0 Done, 1 invalid input (a usage error, a bad `--port` or `SIGNOFF_PORT` (one
+  line, checked after argparse, without the usage), a port in use (one line that names the port; before any
+  `runs/` entry or round lock), every round already done, a round
   locked by another run, the start link used twice, a waiter whose rounds the running inbox did not take in (see
   the one writer rule), or a Python older than 3.9: one stderr line, from the first
   lines of `main()`; `inbox hook` then exits 0 silently and `inbox monitor` sleeps while its parent lives; the
@@ -825,8 +839,10 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   stays ignored; on Windows a stopped process gets no signal it can catch; `--history` and the `inbox` commands
   keep the default for both). `signoff inbox home` exits 0, or 1 for a relative home; `signoff inbox hook` always
   exits 0. `signoff inbox
-  serve` exits 0 when stopped, 1 when it cannot start (another inbox, no Unix sockets), 130 on Ctrl+C; `open`
-  and `stop` exit 0, or 1 when no inbox answers; `open` with a target also exits 1 for a malformed target, and
+  serve` exits 0 when stopped, 1 when it cannot start (another inbox, no Unix sockets, a bad `SIGNOFF_PORT` or a
+  port in use, each one line), 130 on Ctrl+C; `open`
+  and `stop` exit 0, or 1 when no inbox answers (`open` also for a bad `SIGNOFF_PORT` when it would start one, and at once,
+  not after its 15 s, when the inbox it started has ended and none other holds `inbox.lock`, as on a taken port); `open` with a target also exits 1 for a malformed target, and
   `open --app` (with a target or none) exits 1 for a malformed one, off macOS, for a relative home, when no app is found where the mod looks, or
   when `open -a` fails, else 0. `signoff inbox done <id>` exits 0 (also when marked before), or
   1 when there is no such request. `signoff inbox rows <folder>` exits 0 with its line (outside any project

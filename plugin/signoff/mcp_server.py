@@ -76,6 +76,8 @@ def open_run(args):
     open_browser = args.get("open_browser", True)
     if not isinstance(open_browser, bool):
         raise ToolError("open_browser must be true or false")
+    if os.environ.get("SSH_CONNECTION") or os.environ.get("SSH_TTY"):  # the run opens none there: hand out the file
+        open_browser = False
     run_dir = Path(tempfile.mkdtemp(prefix="signoff-run-"))  # 0700: the start link is written here
     command = [sys.executable, "-I", "-B", str(SIGNOFF), str(target)] + ([] if open_browser else ["--no-open"])
     with open(run_dir / "stdout.txt", "wb") as out, open(run_dir / "link.txt", "wb") as err:

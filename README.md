@@ -66,7 +66,8 @@ has no browser. It sends the same requests the page does.
   - macOS: `xcode-select --install` (the Command Line Tools bring Python 3.9), or the installer from python.org.
     If macOS offers to install the Command Line Tools when Signoff first runs, that is this step.
   - Linux: your distribution's `python3` package.
-- **A web browser** on the same machine. Over SSH, see `--no-open` under [Running it yourself](docs/running.md#running-it-yourself).
+- **A web browser** on the same machine. Over SSH or in a devcontainer, set `SIGNOFF_PORT` and forward that
+  port: see [Over SSH or in a devcontainer](docs/running.md#over-ssh-or-in-a-devcontainer).
 
 ## Where it works
 
@@ -215,8 +216,8 @@ The full list: [docs/security.md](docs/security.md#what-runs-and-what-leaves-you
 Signoff is a web server on your machine that writes files, and any other web page open in the same browser can
 send requests to `127.0.0.1`. In short:
 
-- It binds `127.0.0.1` on a port the OS picks, with a random token in every path and an exact `Host` check. No
-  cookies.
+- It binds `127.0.0.1` on a port the OS picks (or the one you set with `SIGNOFF_PORT`), with a random token in
+  every path and an exact `Host` check (`127.0.0.1` or `localhost`, with that port). No cookies.
 - The browser opens a single-use start link; a second use gets 410 and stops the run.
 - A save needs `application/json`, the page's own `Origin`, and a body within its size limit; a stale save gets 409.
 - Only listed files are served, each inside the round's folder; no SVG, no directory listing.

@@ -2,6 +2,7 @@
 import http.client
 import json
 import os
+import socket
 import struct
 import sys
 import tempfile
@@ -20,8 +21,19 @@ os.environ["SIGNOFF_INBOX_HOME"] = str(Path(_NO_HOME.name) / "home")
 # The same for Uptick's files (vulns.json, scan-repos.json): never the user's real ones.
 os.environ["XDG_CACHE_HOME"] = str(Path(_NO_HOME.name) / "cache")
 os.environ["XDG_CONFIG_HOME"] = str(Path(_NO_HOME.name) / "config")
+# A fixed port or an SSH session in the shell that runs the tests would change every run: a test that wants one
+# says so.
+for _name in ("SIGNOFF_PORT", "SSH_CONNECTION", "SSH_TTY"):
+    os.environ.pop(_name, None)
 
 import signoff  # noqa: E402
+
+
+def free_port():
+    """A port nothing listens on just now (another process may take it before the test does)."""
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
 
 
 def png_bytes():

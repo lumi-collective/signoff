@@ -19,7 +19,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from support import ROOT, Folder, Rounds, Running, done_record, png_bytes, sample_decisions, write_outside
+from support import (ROOT, Folder, Rounds, Running, done_record, free_port, png_bytes, sample_decisions,
+                     write_outside)
 from test_extras import BOARD, HistoryRoot, with_board
 
 import signoff
@@ -552,10 +553,40 @@ class InboxPage(InboxTest):
                      page + "run/0", page + "run/9/", page + "run/00/", page + "img/0", page + "?theme=dark",
                      page + "run/0/?x=1"):
             self.assertEqual(self.request("GET", path)[0].status, 404, path)
-        for host in ("localhost:%d" % self.port, "127.0.0.1", "evil.example", None):
+        for host in ("localhost.example:%d" % self.port, "127.0.0.1", "evil.example", "[::1]:%d" % self.port, "", None):
             for path in (page, page + "run/0/", start):
                 self.assertEqual(self.request("GET", path, headers={"Host": host})[0].status, 403, (host, path))
             self.assertEqual(self.save(page, ANSWER, headers={"Host": host})[0].status, 403)
+
+    def test_localhost_names_the_same_inbox(self):
+        # A forwarded port or a devcontainer's Ports tab may open the inbox as localhost: the same rules hold.
+        self.register()
+        self.start()
+        local = "localhost:%d" % self.port
+        own = {"Host": local, "Origin": "http://" + local}
+        link = self.server.new_pair()
+        self.assertTrue(link.startswith("http://127.0.0.1:%d/b/" % self.port), link)  # the link it hands out
+        resp, _ = self.request("GET", link.split(self.host, 1)[1], headers={"Host": local})
+        self.assertEqual(resp.status, 303)
+        page = resp.getheader("Location")
+        for path in (page, page + "state", page + "run/0/", page + "run/0/img/0"):
+            self.assertEqual(self.request("GET", path, headers={"Host": local})[0].status, 200, path)
+        prefs = {"Content-Type": "application/json", "Sec-Fetch-Site": "same-origin"}
+        resp, out = self.request("POST", page + "prefs", {"theme": "dark", "palette": "gruvbox"}, dict(prefs, **own))
+        self.assertEqual(resp.status, 200, out)
+        resp, out = self.save(page, ANSWER, headers=own)
+        self.assertEqual(resp.status, 200, out)
+        # An Origin of the other name is not this request's own.
+        for host, origin in ((local, self.origin), (self.host, "http://" + local)):
+            self.assertEqual(self.save(page, ANSWER, headers={"Host": host, "Origin": origin})[0].status, 403, host)
+
+    def test_a_fixed_port_on_request(self):
+        port = free_port()
+        self.server = signoff.InboxServer(self.home, port=port)
+        self.thread = threading.Thread(target=self.server.serve_forever, args=(0.05,), daemon=True)
+        self.thread.start()
+        self.assertEqual(self.server.server_address[:2], ("127.0.0.1", port))
+        self.assertEqual(json.loads((self.home / "inbox.json").read_text(encoding="utf-8"))["port"], port)
 
     def test_the_inbox_page_lists_what_waits_and_holds_no_paths(self):
         e = self.register()
@@ -889,7 +920,7 @@ class InboxRequests(InboxTest):
         self.start()
         start, page = self.open()
         good = self.message()
-        for host in ("localhost:%d" % self.port, "127.0.0.1", "evil.example", None):
+        for host in ("localhost.example:%d" % self.port, "127.0.0.1", "evil.example", "[::1]:%d" % self.port, "", None):
             self.assertEqual(self.send(page, good, {"Host": host})[0].status, 403, host)
         for origin in ("http://evil.example", "null", "http://localhost:%d" % self.port, self.origin + "/", None):
             self.assertEqual(self.send(page, good, {"Origin": origin})[0].status, 403, origin)
@@ -1230,7 +1261,7 @@ class InboxPrefs(InboxTest):
         self.register()
         self.start()
         start, page = self.open()
-        for host in ("localhost:%d" % self.port, "127.0.0.1", "evil.example", None):
+        for host in ("localhost.example:%d" % self.port, "127.0.0.1", "evil.example", "[::1]:%d" % self.port, "", None):
             self.assertEqual(self.send(page, self.GOOD, {"Host": host})[0].status, 403, host)
         for origin in ("http://evil.example", "null", "http://localhost:%d" % self.port, self.origin + "/", None):
             self.assertEqual(self.send(page, self.GOOD, {"Origin": origin})[0].status, 403, origin)
@@ -1419,7 +1450,7 @@ class InboxState(InboxTest):
                      page + "state?theme=dark", page + "run/0/state", "/%s/state" % board.split("/")[1],
                      "/b/%s/state" % start.split("/")[2]):
             self.assertEqual(self.request("GET", path)[0].status, 404, path)
-        for host in ("localhost:%d" % self.port, "127.0.0.1", "evil.example", None):
+        for host in ("localhost.example:%d" % self.port, "127.0.0.1", "evil.example", "[::1]:%d" % self.port, "", None):
             self.assertEqual(self.request("GET", page + "state", headers={"Host": host})[0].status, 403, host)
         hdrs = {"Content-Type": "application/json", "Origin": self.origin, "Sec-Fetch-Site": "same-origin"}
         self.assertEqual(self.request("POST", page + "state", ANSWER, hdrs)[0].status, 404)
@@ -2967,7 +2998,7 @@ class InboxOsv(InboxTest):
         self.start()
         start, page = self.open()
         good = {"project": self.pid}
-        for host in ("localhost:%d" % self.port, "127.0.0.1", "evil.example", None):
+        for host in ("localhost.example:%d" % self.port, "127.0.0.1", "evil.example", "[::1]:%d" % self.port, "", None):
             self.assertEqual(self.post(page, good, "scan", {"Host": host})[0].status, 403, host)
         for origin in ("http://evil.example", "null", "http://localhost:%d" % self.port, self.origin + "/", None):
             self.assertEqual(self.post(page, good, "scan", {"Origin": origin})[0].status, 403, origin)
@@ -3781,6 +3812,54 @@ class InboxCli(unittest.TestCase):
         self.assertEqual((proc.returncode, out), (0, ""), err)
         self.assertNotIn("/b/", err)  # the server's own output (its log when detached) never holds a link
         self.assertEqual(self.run_cli("inbox", "stop").returncode, 1)
+
+    def test_serve_takes_signoff_port(self):
+        port = free_port()
+        self.env["SIGNOFF_PORT"] = str(port)
+        self.serve()
+        self.assertEqual(json.loads((self.home / "inbox.json").read_text(encoding="utf-8"))["port"], port)
+        opened = self.run_cli("inbox", "open", "--no-open")
+        self.assertEqual(opened.returncode, 0, opened.stderr)
+        self.assertIn("http://127.0.0.1:%d/b/" % port, opened.stderr)
+        # While the inbox holds the port, --history on it cannot bind: one line, as for any taken port.
+        root = Path(self._tmp.name).resolve() / "history"
+        root.mkdir()
+        taken = self.run_cli("--history", str(root), "--no-open")
+        self.assertEqual((taken.returncode, taken.stdout), (1, ""), taken.stderr)
+        self.assertIn("port %d" % port, taken.stderr)
+        self.assertEqual(len(taken.stderr.strip().splitlines()), 1, taken.stderr)
+
+    def test_serve_on_a_taken_or_bad_port_says_so_in_one_line(self):
+        with socket.socket() as taken:
+            taken.bind(("127.0.0.1", 0))
+            taken.listen()
+            port = taken.getsockname()[1]
+            for value, said in ((str(port), "port %d" % port), ("http", "SIGNOFF_PORT"), ("65536", "SIGNOFF_PORT")):
+                self.env["SIGNOFF_PORT"] = value
+                served = self.run_cli("inbox", "serve")
+                self.assertEqual((served.returncode, served.stdout), (1, ""), served.stderr)
+                self.assertIn(said, served.stderr)
+                self.assertEqual(len(served.stderr.strip().splitlines()), 1, served.stderr)
+        # inbox open checks the value before it starts an inbox; the hooks never look at it (see test_hooks).
+        self.env["SIGNOFF_PORT"] = "http"
+        opened = self.run_cli("inbox", "open", "--no-open")
+        self.assertEqual((opened.returncode, opened.stdout), (1, ""), opened.stderr)
+        self.assertIn("SIGNOFF_PORT", opened.stderr)
+        self.assertFalse((self.home / "logs").exists())  # no inbox was started
+
+    def test_open_on_a_taken_port_says_so_at_once(self):
+        # The inbox it starts ends at once; open sees that, rather than waiting out its 15 s for an answer.
+        with socket.socket() as taken:
+            taken.bind(("127.0.0.1", 0))
+            taken.listen()
+            port = taken.getsockname()[1]
+            self.env["SIGNOFF_PORT"] = str(port)
+            began = time.monotonic()
+            opened = self.run_cli("inbox", "open", "--no-open")
+            self.assertLess(time.monotonic() - began, 10)
+        self.assertEqual((opened.returncode, opened.stdout), (1, ""), opened.stderr)
+        self.assertIn("did not start", opened.stderr)
+        self.assertIn("port %d" % port, (self.home / "logs" / "inbox.log").read_text(encoding="utf-8"))
 
     def test_rows_prints_the_project_rounds_as_json(self):
         root = Path(self._tmp.name).resolve() / "project"

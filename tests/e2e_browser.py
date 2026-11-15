@@ -2921,6 +2921,8 @@ def run():
     # A Signoff home that does not exist: page runs as with no inbox, even when the user's own inbox is open.
     os.environ["SIGNOFF_INBOX_HOME"] = str(work / "no-home")
     os.environ["XDG_CACHE_HOME"], os.environ["XDG_CONFIG_HOME"] = str(work / "no-cache"), str(work / "no-config")
+    for name in ("SIGNOFF_PORT", "SSH_CONNECTION", "SSH_TTY"):  # a random port each run, as without them
+        os.environ.pop(name, None)
     (work / ".git").mkdir()  # the project root, so the header can name it
     run_old_rounds(work)
     run_phone(work)

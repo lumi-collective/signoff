@@ -37,8 +37,10 @@ your project, and runs only when you type it.
 ## What it runs
 
 The skill tells the agent to run Signoff's Python program in the background. The program starts a small
-web server on 127.0.0.1 only, on a free port, with a secret token, new for each run, in every link. It opens
-your default browser on a single-use start link. It stops when you press Done, when another program
+web server on 127.0.0.1 only, on a free port, with a secret token, new for each run, in every link. For a
+tunnel over SSH or into a devcontainer, the SIGNOFF_PORT environment variable sets one fixed port instead, which
+you choose. It opens your default browser on a single-use start link; in an SSH session it only prints that link,
+for you to open on your own computer. It stops when you press Done, when another program
 finishes its answers files with Done, when it sits idle too long, or when you stop it. While the Signoff
 inbox is open, it starts no server and opens no page: it waits, with no time limit, for the answers the inbox
 writes. The plugin also adds a signoff command that runs the same program. While a run waits, the agent can

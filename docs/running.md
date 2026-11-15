@@ -1,8 +1,8 @@
 # Running it yourself
 
 ```
-python3 -I plugin/signoff/signoff.py <decisions.json | folder> [--no-open] [--timeout <minutes>] [--notes <folder>]
-python3 -I plugin/signoff/signoff.py --history <project root> [--folder <path>] [--since YYYY-MM-DD] [--no-open] [--timeout <minutes>]
+python3 -I plugin/signoff/signoff.py <decisions.json | folder> [--no-open] [--timeout <minutes>] [--notes <folder>] [--port <n>]
+python3 -I plugin/signoff/signoff.py --history <project root> [--folder <path>] [--since YYYY-MM-DD] [--no-open] [--timeout <minutes>] [--port <n>]
 ```
 
 A folder serves every `round-NN.json` in it as rounds, in number order; a single file is one round. On Windows
@@ -10,7 +10,8 @@ write `py -3` for `python3`.
 
 | Option | Does |
 |---|---|
-| `--no-open` | print the start link on stderr but do not open a browser. Over SSH, forward the same port number (`ssh -L <port>:127.0.0.1:<port> host`) and open the link locally; another local port gets 403. The link works once: if it was spent, stop Signoff and run it again. |
+| `--no-open` | print the start link on stderr but do not open a browser. In an SSH session (`SSH_CONNECTION` or `SSH_TTY` set) Signoff does this by itself; see [Over SSH or in a devcontainer](#over-ssh-or-in-a-devcontainer). The link works once: if it was spent, stop Signoff and run it again. |
+| `--port <n>` | listen on this port of `127.0.0.1`, 1 to 65535, instead of a random one; the default is `SIGNOFF_PORT`, else `0`, a random port. A port in use exits 1. See [Over SSH or in a devcontainer](#over-ssh-or-in-a-devcontainer). |
 | `--timeout <minutes>` | stop after this many minutes without a request from the page. Default 120; `0` means never. |
 | `--notes <folder>` | at Done, also put each round's Markdown copy in this folder of yours; empty means off. See [Notes folder](#notes-folder). |
 | `--history <root>`, `--folder <path>`, `--since <date>` | the [past-decisions page](history.md#past-decisions) instead of a round. `--folder` is the decisions folder, relative to the root or absolute; default `.signoff`. |
@@ -18,12 +19,55 @@ write `py -3` for `python3`.
 | Exit code | Meaning | stdout |
 |---|---|---|
 | 0 | Done: `done` is `true` in every round that was open, from the page or from another program | each open round's answers file, one absolute path per line, in tab order |
-| 1 | invalid input (stderr names the file, the item and the field), every round already done, a round open in another Signoff run (once the inbox has run), the start link used twice, a running inbox that did not take the round in (see below), or a Python older than 3.9 | nothing |
+| 1 | invalid input (stderr names the file, the item and the field), a bad `--port` or `SIGNOFF_PORT`, a port in use (stderr names it), every round already done, a round open in another Signoff run (once the inbox has run), the start link used twice, a running inbox that did not take the round in (see below), or a Python older than 3.9 | nothing |
 | 2 | the idle timeout passed; the answers so far are kept with `done: false` | the answers files written so far, one per line, or nothing |
 | 130 | stopped with Ctrl+C, or with SIGTERM or SIGHUP on macOS and Linux (a signal ignored at the start, as under `nohup`, stays ignored); the answers so far are kept | nothing |
 
-With `--history`, stdout stays empty: 2 after the idle timeout, 130 after Ctrl+C, 1 for a bad root or a start
-link used twice.
+With `--history`, stdout stays empty: 2 after the idle timeout, 130 after Ctrl+C, 1 for a bad root, a bad or
+taken port, or a start link used twice.
+
+## Over SSH or in a devcontainer
+
+Signoff listens on `127.0.0.1` of the machine it runs on, never on another address. To open its page from your
+own computer, forward that port. Each run picks a random port, so set one port once instead, in the shell
+profile of the remote machine or the container:
+
+```bash
+export SIGNOFF_PORT=8765
+```
+
+Then every run, `--history`, and the inbox (`signoff inbox serve`, and the one `signoff inbox open` starts) listen
+on that port; `--port <n>` on a run wins over it. `0` or empty is a random port again. One server holds a port
+at a time: a second run on it, or `--history` while the inbox holds it, exits 1 with one line that names the
+port. While the inbox runs, a run opens no page and binds nothing, so a run then never takes the port.
+
+- **SSH:** forward the same port number, either for one session with
+  `ssh -L 8765:127.0.0.1:8765 <host>`, or for good in `~/.ssh/config`:
+
+  ```
+  Host <host>
+      LocalForward 8765 127.0.0.1:8765
+  ```
+
+  Another local port number gets 403. In an SSH session (`SSH_CONNECTION` or `SSH_TTY` set and not empty) a run
+  and `signoff inbox open` open no browser on the remote machine: they print the start link on stderr, as with
+  `--no-open`, and you open it on your computer (they also say `no browser opened`, the agent's cue to give you
+  the link).
+- **VS Code devcontainer or Remote - SSH:** add the port in the Ports tab once (VS Code may also forward it by
+  itself), and open the start link with that port on your computer. The local port number must be the same as
+  the remote one: when VS Code picks another, because the first is taken, the page gets 403.
+
+Open the link as Signoff prints it, with `127.0.0.1`. The page also answers to `localhost:<port>`, for a forward
+that opens it that way, but a browser may try `localhost` as `::1` (IPv6) first, where neither Signoff nor
+`ssh -L` listens, and another program on your computer could: it would get the link and its token.
+- **Not covered:** a Docker `-p` mapping without host networking (Signoff listens on the container's own
+  loopback, which `-p` does not reach), and GitHub Codespaces' `https://…github.dev` addresses (another host name,
+  which gets 403).
+
+Known limit: over SSH the panel of the Claude Code mod runs `signoff inbox open` and never reads its stderr, so
+a row there opens nothing you can see, as on any machine without a browser; ask the agent for the link instead.
+A fixed port is a name any process of the machine can take first: see
+[the security model](security.md#security-model).
 
 ## An item settled in chat
 
