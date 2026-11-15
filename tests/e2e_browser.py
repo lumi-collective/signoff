@@ -313,6 +313,21 @@ ROUND_AGE = """(function () {
   return {time: t.checkVisibility() && t.textContent, datetime: t.dateTime, title: t.title,
     pill: p.checkVisibility() && p.textContent, note: !!n && n.checkVisibility() && n.textContent};
 })()"""
+# A wide header: the header's buttons and the progress pill whose text takes more than one line, and whether every
+# shown part of the header sits in one row.
+HEADER_ONE_ROW = """(function () {
+  var h = document.querySelector('body > header'), broken = [];
+  Array.prototype.forEach.call(h.querySelectorAll('button, .progress'), function (e) {
+    if (!e.checkVisibility()) return;
+    var r = document.createRange(); r.selectNodeContents(e);
+    var rects = Array.prototype.filter.call(r.getClientRects(), function (x) { return x.width > 0; });
+    if (rects.some(function (x) { return x.top >= rects[0].bottom - 1; })) broken.push(e.id || e.className || e.textContent);
+  });
+  var parts = Array.prototype.filter.call(h.children, function (e) { return e.checkVisibility(); })
+    .map(function (e) { return e.getBoundingClientRect(); });
+  var row = parts.every(function (a) { return parts.every(function (b) { return a.top < b.bottom && b.top < a.bottom; }); });
+  return {broken: broken, row: row};
+})()"""
 # The item in Focus as it shows before any scrolling: main's box from the header's foot to the key bar's top, and
 # where the item's parts sit in it (null when the item has none).
 FIRST_SCREEN = """(function () {
@@ -2710,6 +2725,14 @@ def run():
                             "m.getBoundingClientRect().left >= q.getBoundingClientRect().right, "
                             "m.querySelector('.m-head').textContent]; })()")
         check(margin == [True, True, "Agent recommends"], "the margin recommendation at 1280 px: %r" % margin)
+        # A wide header stays one row with every button on one line, the opening time and the project's name with it.
+        for width in (1280, 1000):
+            browser.call("Emulation.setDeviceMetricsOverride", width=width, height=1000, deviceScaleFactor=1, mobile=False)
+            time.sleep(0.3)
+            head = browser.js(HEADER_ONE_ROW)
+            check(head == {"broken": [], "row": True}, "the header at %d px: %r" % (width, head))
+        browser.call("Emulation.setDeviceMetricsOverride", width=1280, height=900, deviceScaleFactor=1, mobile=False)
+        time.sleep(0.3)
         browser.click("#tab-1")
         check(browser.js("!document.getElementById('panel-1').hidden && document.getElementById('panel-0').hidden && "
                          "document.getElementById('title').textContent") == rounds[1]["title"]
@@ -2851,7 +2874,8 @@ def main():
              "a round asked 3 days ago: the 2-day pill on its row (from the file's time, the clock on the run's "
              "start) and the note in its open row, its page's opening time, pill and note, in Focus too; its context "
              "on the row's second line, in its open row, found by the search and at the top of its page; ") +
-          "2 rounds in the sidebar with their items, the margin recommendation, Focus with f, j and Esc, "
+          "2 rounds in the sidebar with their items, the margin recommendation, the header one row with every button "
+          "on one line at 1280 and 1000 px, Focus with f, j and Esc, "
           "a non-recommended pick, both accepted, Summary filter, the sign-off sheet, Done, exit 0, "
           "2 answers paths on stdout")
     return 0
