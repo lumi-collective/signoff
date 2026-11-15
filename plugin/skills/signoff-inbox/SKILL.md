@@ -54,8 +54,9 @@ A vulnerability finding the user hands over from the inbox's Vulnerabilities sec
 vulnerability finding `"<package>@<version>"`, with a line the inbox wrote from the finding (level, advisory ids,
 fixed version). Find the package in the project's lockfiles, check the advisories, and propose or make the fix
 as you would for the same request typed here; mark it done the same way. Hand all fixable over comes on the
-vulnerability findings `"vulns"`, naming each `<package>@<version> → <fixed version>` (with "and N more" when
-they do not all fit: find the rest in the lockfiles); treat it as one request and mark it done once.
+vulnerability findings `"vulns"`, naming each `<package>@<version> → <fixed version>`: fix the named ones, as
+one request, and mark it done once. When it ends "and N more", tell the user that N were left out; they stay
+listed in the inbox, to hand over again after the next scan.
 
 A round the user answered in the inbox after its Signoff run had ended (Ctrl+C, the idle timeout, or a session
 that ended) comes the same way, on the Signoff rounds `"<topic folder> / round-01, round-02"`, with a fixed text

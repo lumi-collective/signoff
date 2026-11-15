@@ -414,11 +414,13 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   items with the same first line share their requests. The same route takes exactly `{kind: "vuln", project,
   ref}` for a finding: `ref` (`<name>@<version>`) must be a finding the list shows now (409 otherwise), and the
   text is the server's own, built from the finding's level, advisory ids and fixed version, each checked against a
-  plain pattern; no free text from Uptick's file goes into it. It takes exactly `{kind: "vulns", project}` for
-  all of a project's fixable findings (a finding the list shows now with a `ref` and a `fixed` matching the version
-  pattern; the first listing of a `ref` counts; 409 with none): `ref` the fixed `vulns`, the text the server's own,
-  each such finding as `<ref> → <fixed>` in the list's order, as many as fit in `MAX_REQUEST_TEXT` with the frame,
-  then how many more; and `refs`, every such finding's `ref` (at most `MAX_FINDINGS`). It takes exactly `{kind: "later", project, ref}`
+  plain pattern; no free text from Uptick's file goes into it. It takes exactly `{kind: "vulns", project,
+  count}` for all of a project's fixable findings (a finding the list shows now with a `ref` and a `fixed` matching
+  the version pattern; the first listing of a `ref` counts; 409 with none), `count` a whole number, the number of
+  them the page showed (409, writing nothing, when the number now differs: a tab left open across a rescan): `ref`
+  the fixed `vulns`, the text the server's own, each such finding as `<ref> → <fixed>` in the list's order, as many
+  as fit in `MAX_REQUEST_TEXT` with the frame, then how many more; and `refs`, the `ref` of each finding the text
+  names, never one counted in "more" (those stay listed, to hand over again). It takes exactly `{kind: "later", project, ref}`
   for Later on a waiting row: `ref` must be an open item marked waiting now (409 otherwise), and the text is the
   server's own `LATER_TEXT` (park the item: take its marker off, keep it open). The route takes no `kind:
   "answer"` (400): the inbox alone writes one, once every round of an orphan group is done (by Done, `accept`, or
@@ -445,7 +447,8 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   todo item, an `answer` as one on the Signoff rounds, a `vulns` as one on the vulnerability findings), atomically,
   0600 in 0700 folders. A reader takes `refs` only as a list of at most `MAX_FINDINGS` refs that match the
   patterns, and skips a file of a kind it does not know (so a session on an older plugin drops a `vulns` or `answer`
-  request, which reaches the project only at a later hand-over or monitor of a plugin that knows it). The list page shows each item's, finding's and project's (`vulns`) recent
+  request, which reaches the project only through the monitor of a session on a plugin that knows it, running
+  when it is written, or at a later SessionStart hand-over on such a plugin). The list page shows each item's, finding's and project's (`vulns`) recent
   requests (text, time, done) and never an id, a path or `refs`. The agent marks one handled with
   `signoff inbox done <id>`, which writes an empty `<id>.done` beside it; nothing else writes there.
 - **The OSV section reads Uptick's files and writes one only on a click.** Uptick's `vulns.json`

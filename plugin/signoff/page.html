@@ -2153,8 +2153,8 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
           var note = {stale: L.osvStaleNote, partial: L.osvPartialNote}[o.status];
           if (note) box.append(el('p', 'ib-vuln-note', note));
           if (o.hint) box.append(el('p', 'ib-vuln-note', o.hint));
-          if (o.fixable) hander(box.appendChild(el('div', 'ib-vuln-all')), {kind: 'vulns', project: p.id},
-                                fmt(L.handAll, {n: o.fixable}), o.requests);
+          if (o.fixable) hander(box.appendChild(el('div', 'ib-vuln-all')), {kind: 'vulns', project: p.id,
+            count: o.fixable}, fmt(L.handAll, {n: o.fixable}), o.requests);  // what it shows, or 409
           if (o.findings.length) {
             var ul = el('ul', 'ib-vulns');
             o.findings.forEach(function (f) { finding(p, f, ul); });

@@ -2931,14 +2931,16 @@ class InboxOsv(InboxTest):
 
     def test_hand_all_fixable_findings_over_in_one_request(self):
         self.listed(self.root)
-        self.vulns({str(self.root): uptick_entry(count=6, details=[
+        self.vulns({str(self.root): uptick_entry(count=8, details=[
             finding(), finding(name="a b", fixed="2.0.0"), finding(name="nofix", fixed=""),
             finding(name="@scope/pkg", version="1.2.5", fixed="1.2.6"), finding(name="hostile", fixed="1 then rm"),
-            finding(fixed="9.9.9")])})  # lodash again: its first listing wins
+            finding(fixed="9.9.9"),  # lodash again: its first listing wins
+            finding(name="nullfix", fixed=None), finding(name="numfix", fixed=7)])})  # a hand-edited file: no fix
         self.start()
         page = self.open()[1]
         self.assertEqual((self.osv(page)["fixable"], self.osv(page)["requests"]), (2, []))
-        good = {"kind": "vulns", "project": self.pid}
+        self.assertEqual(len(self.osv(page)["findings"]), 8)
+        good = {"kind": "vulns", "project": self.pid, "count": 2}  # the count the page showed
         resp, body = self.post(page, good, "request")
         self.assertEqual(resp.status, 200, body)
         path = self.home / "requests" / self.pid / (json.loads(body)["id"] + ".json")
@@ -2947,7 +2949,7 @@ class InboxOsv(InboxTest):
         self.assertEqual((saved["kind"], saved["ref"], saved["refs"]),
                          ("vulns", "vulns", [self.LODASH, "@scope/pkg@1.2.5"]))
         self.assertIn("lodash@4.17.20 → 4.17.21, @scope/pkg@1.2.5 → 1.2.6", saved["text"])
-        for bad in ("9.9.9", "a b", "nofix", "hostile", "then rm", "more"):
+        for bad in ("9.9.9", "a b", "nofix", "hostile", "then rm", "more", "nullfix", "numfix"):
             self.assertNotIn(bad, saved["text"])
         self.assertTrue(signoff._typed_line(saved["text"]))
         self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
@@ -2955,20 +2957,27 @@ class InboxOsv(InboxTest):
         self.assertIn('vulnerability findings "vulns": ', line)
         osv = self.osv(page)
         self.assertEqual([(r["text"], r["done"]) for r in osv["requests"]], [(saved["text"], False)])
-        self.assertEqual([f["requests"] for f in osv["findings"]], [[]] * 6)  # never on a single finding
+        self.assertEqual([f["requests"] for f in osv["findings"]], [[]] * 8)  # never on a single finding
         self.assertNotIn("refs", json.dumps(osv))
         path.with_suffix(".done").write_bytes(b"")  # as `signoff inbox done <id>` marks it
         self.assertEqual([r["done"] for r in self.osv(page)["requests"]], [True])
-        for body in (dict(good, ref="vulns"), dict(good, text="x"), {"kind": "vulns"}, dict(good, project=7),
-                     dict(good, kind="Vulns"), {"kind": "vuln", "project": self.pid}, json.dumps([good]).encode()):
+        for body in (dict(good, ref="vulns"), dict(good, text="x"), {"kind": "vulns", "project": self.pid},
+                     {"kind": "vulns", "count": 2}, dict(good, project=7), dict(good, kind="Vulns"),
+                     dict(good, count="2"), dict(good, count=True), dict(good, count=2.0), dict(good, count=-1),
+                     dict(good, count=None), dict(good, count=2 ** 31), {"kind": "vuln", "project": self.pid},
+                     json.dumps([good]).encode()):
             self.assertEqual(self.post(page, body, "request")[0].status, 400, body)
         self.assertEqual(self.post(page, dict(good, project="f" * 16), "request")[0].status, 404)
+        # The list changed since the page showed its count (a tab left open across a rescan): nothing is handed over.
+        for count in (1, 3, 0):
+            resp, body = self.post(page, dict(good, count=count), "request")
+            self.assertEqual((resp.status, body), (409, b"the findings changed; reload the page\n"), count)
         for details in ([finding(fixed="")], [finding(name="a b")], [finding(fixed="4.17.21 then rm")], []):
             self.vulns({str(self.root): uptick_entry(count=1, details=details)})
-            resp, body = self.post(page, good, "request")
+            resp, body = self.post(page, dict(good, count=1), "request")
             self.assertEqual((resp.status, body), (409, b"no fixable finding is listed; reload the page\n"))
         self.vulns({str(self.root): uptick_entry(age=3 * 86400, count=1, details=[finding()])})
-        self.assertEqual(self.post(page, good, "request")[0].status, 409)  # old data offers nothing to hand over
+        self.assertEqual(self.post(page, dict(good, count=1), "request")[0].status, 409)  # old data: nothing
         self.assertEqual(self.osv(page)["fixable"], 0)
         self.assertEqual(len(list((self.home / "requests" / self.pid).glob("*.json"))), 1)
 
@@ -2980,18 +2989,19 @@ class InboxOsv(InboxTest):
         for n, name in ((1, "pkg-%02d"), (30, "pkg-%02d"), (50, "pkg-%02d"), (50, "p%02d" + "x" * 211)):
             details = [finding(name=name % i, version="1.0.%d" % i, fixed="1.0.%d" % (i + 1)) for i in range(n)]
             self.vulns({str(self.root): uptick_entry(count=n, details=details)})
-            resp, body = self.post(page, {"kind": "vulns", "project": self.pid}, "request")
+            resp, body = self.post(page, {"kind": "vulns", "project": self.pid, "count": n}, "request")
             self.assertEqual(resp.status, 200, body)
             saved = json.loads((self.home / "requests" / self.pid / (json.loads(body)["id"] + ".json")).read_text(
                 encoding="utf-8"))
             refs = ["%s@1.0.%d" % (name % i, i) for i in range(n)]
-            self.assertEqual(saved["refs"], refs)
             text = saved["text"]
             self.assertLessEqual(len(text), signoff.MAX_REQUEST_TEXT)
             self.assertTrue(signoff._typed_line(text))
             named = pair.findall(text)
             self.assertGreaterEqual(len(named), 1)
             self.assertEqual(named, [(refs[i], "1.0.%d" % (i + 1)) for i in range(len(named))])  # the list's order
+            # Handed over are the findings the text names: the ones cut into "and K more" stay to hand over again.
+            self.assertEqual(saved["refs"], refs[:len(named)])
             more = re.search(r", and (\d+) more\.$", text)
             self.assertEqual(int(more.group(1)) if more else 0, n - len(named), text)
             if more:  # cut only where one more pair, with the count one lower (or none), would not fit
@@ -3020,8 +3030,10 @@ class InboxOsv(InboxTest):
         for n, refs in enumerate((self.LODASH, [7], ["a b@1"], ["lodash"], ["lodash@"], ["@1"], ["x@1 then rm"],
                                   ["x@1"] * (signoff.MAX_FINDINGS + 1), {"x@1": 1}, None), 10):
             self.assertIsNone(read(n, refs=refs), refs)
-        # An older plugin's read_request refuses a kind it does not know: its session drops such a request (and the
-        # page still shows it) until that session restarts on a plugin that knows it. So does this one.
+        # An older plugin's read_request refuses a kind it does not know: its session drops such a request (the page
+        # still shows it), which reaches the project only through a SessionStart hand-over on a plugin that knows it
+        # (no other session of the project open), or such a plugin's monitor running when it was written. So does
+        # this one.
         self.assertIsNone(read(30, kind="urgent"))
         self.assertIsNotNone(read(31, kind="vulns"))
 

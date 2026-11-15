@@ -162,7 +162,10 @@ each finding (package, version, level, advisory ids, the fixed version) with **H
 project's agent a request as above, its `ref` the package and version (`lodash@4.17.20`) and its text written by
 the inbox from those fields. Above the list, **Hand all fixable over (N)** sends one request for the N findings
 with a fixed version: its `ref` is `vulns`, its text names each as `lodash@4.17.20 → 4.17.21` in the list's order,
-as many as fit in 1,000 characters, then how many more, and the file keeps every one in `refs`. A session still on
+as many as fit in 1,000 characters, then how many more, and the file lists the named ones in `refs`. Only those
+are handed over: the rest stay listed, to hand over after the next scan. The click sends the count the page showed,
+and when the list has changed since (a tab left open across a rescan) the inbox refuses it and asks for a reload.
+A session still on
 an older plugin skips a request of this kind; the page shows it all the same, and a new session of the project
 gets it at its start when no other session of the project is open, as above. A project not on Uptick's scan list (`${XDG_CONFIG_HOME:-~/.config}/uptick/scan-repos.json`)
 goes into one collapsed row, *Not scanned (N)*, which lists those projects, each with **Scan this project**: a

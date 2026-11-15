@@ -2417,14 +2417,15 @@ def _vuln_text(d):
 
 
 def _vulns_text(fixable):
-    """What a vulns request says: each fixable finding's checked ref and fixed version, in the list's order, as many
-    as fit in MAX_REQUEST_TEXT, then how many more. One pair always fits: it is at most 346 characters."""
+    """What a vulns request says, and how many findings it names: each fixable finding's checked ref and fixed
+    version, in the list's order, as many as fit in MAX_REQUEST_TEXT, then how many more. One pair always fits: it
+    is at most 346 characters."""
     for n in range(len(fixable), 0, -1):
         rest = len(fixable) - n
         text = "Please fix these vulnerabilities in this project, each by updating to its fixed version: %s%s." % (
             ", ".join("%s → %s" % f for f in fixable[:n]), ", and %d more" % rest if rest else "")
         if len(text) <= MAX_REQUEST_TEXT:
-            return text
+            return text, n
 
 
 def _finding_ref(v):
@@ -3464,13 +3465,16 @@ class InboxServer(_Server):
             body = json.loads(raw.decode("utf-8"))
         except (ValueError, RecursionError):
             return 400, b"bad request: not JSON\n"
-        shape = sorted(body) if isinstance(body, dict) and all(isinstance(v, str) for v in body.values()) else None
+        # Every value a string, but count: the number of fixable findings the page showed, a whole number.
+        shape = sorted(body) if isinstance(body, dict) and all(
+            _whole(v) if k == "count" else isinstance(v, str) for k, v in body.items()) else None
         kind = body["kind"] if shape == ["kind", "project", "ref"] and body["kind"] in ("vuln", "later") else "todo"
-        if shape == ["kind", "project"] and body["kind"] == "vulns":
+        if shape == ["count", "kind", "project"] and body["kind"] == "vulns":
             kind = "vulns"
         if kind == "todo" and shape != ["project", "ref", "text"]:
-            return 400, (b'bad request: send {"project", "ref", "text"}, {"kind", "project", "ref"} with kind '
-                         b'"vuln" or "later", or {"kind": "vulns", "project"}, as strings\n')
+            return 400, (b'bad request: send {"project", "ref", "text"}, or {"kind", "project", "ref"} with kind '
+                         b'"vuln" or "later", as strings; or {"kind": "vulns", "project", "count"} with count the '
+                         b'number of fixable findings shown\n')
         text = body["text"].strip() if kind == "todo" else LATER_TEXT
         if kind == "todo" and (not text or len(text) > MAX_REQUEST_TEXT or not _typed_line(text)):
             return 400, b"bad request: a message is one line of 1 to 1000 characters\n"
@@ -3487,7 +3491,10 @@ class InboxServer(_Server):
                 fixable = (self._osv(p) or ({}, {}, []))[2]
                 if not fixable:
                     return 409, b"no fixable finding is listed; reload the page\n"
-                text, named = _vulns_text(fixable), [f[0] for f in fixable]
+                if len(fixable) != body["count"]:  # a tab left open across a rescan: not what the user saw
+                    return 409, b"the findings changed; reload the page\n"
+                text, n = _vulns_text(fixable)
+                named = [f[0] for f in fixable[:n]]  # handed over: only what the text names; the rest stay listed
             else:
                 # Any open item of a chain takes a message, its steps too; Later only one marked waiting.
                 path = project_todo(p)[0]

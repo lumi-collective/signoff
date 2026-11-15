@@ -1083,7 +1083,8 @@ class Inbox(unittest.TestCase):
     def test_scan_this_project_and_hand_a_finding_over_keep_todays_rules(self):
         start, page = self.open()
         scan, vuln = {"project": self.pid}, {"kind": "vuln", "project": self.pid, "ref": "lodash@4.17.20"}
-        vulns = {"kind": "vulns", "project": self.pid}  # every fixable finding of the project in one request
+        # Every fixable finding of the project in one request, with the count the page showed.
+        vulns = {"kind": "vulns", "project": self.pid, "count": 1}
         board = re.search(r'"board":\s*"(/[^"]+)"', self.request("GET", page + "run/0/")[1].decode("utf-8")).group(1)
 
         def refused(status, body, path, headers=None):
@@ -1115,7 +1116,9 @@ class Inbox(unittest.TestCase):
             self.assertEqual(self.request("GET", page + path)[0].status, 404)
         refused(409, vuln, "request")  # not on Uptick's list yet: its old data offers nothing to hand over
         refused(409, vulns, "request")
-        for bad in (dict(vulns, ref="vulns"), {"kind": "vuln", "project": self.pid}, dict(vulns, project=7)):
+        for bad in (dict(vulns, ref="vulns"), {"kind": "vuln", "project": self.pid}, dict(vulns, project=7),
+                    {"kind": "vulns", "project": self.pid}, dict(vulns, count="1"), dict(vulns, count=True),
+                    dict(vulns, count=1.5), dict(vulns, count=-1)):
             refused(400, bad, "request")
         resp, data = self.save(page, scan, path="scan")
         self.assertEqual(resp.status, 200, data)
@@ -1127,6 +1130,8 @@ class Inbox(unittest.TestCase):
         with open(os.path.join(self.home, "requests", self.pid, rid + ".json"), encoding="utf-8") as f:
             saved = json.load(f)
         self.assertEqual((saved["kind"], saved["ref"]), ("vuln", "lodash@4.17.20"))
+        for count in (0, 2):  # not the count the page showed: the list changed since
+            refused(409, dict(vulns, count=count), "request")
         resp, data = self.save(page, vulns, path="request")
         self.assertEqual(resp.status, 200, data)
         with open(os.path.join(self.home, "requests", self.pid, json.loads(data)["id"] + ".json"),
