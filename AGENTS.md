@@ -688,8 +688,11 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
     an older Python may refuse a note's character): exit 1, nothing written, the inbox's text and plainer
     characters advised, never a restart.
   - the lock held and no inbox alive (a page run holds it): exit 1, nothing written, as for a second run.
-  A file system that cannot lock (`ENOLCK`, `EOPNOTSUPP`, `ENOSYS`, `EINVAL`: `NO_LOCKS`): one stderr line, then
-  the first case; any other error at the lock (a link at its name, no permission): exit 1, nothing written. A run
+  The lock file is opened non-blocking and never through a link (`_hold_round`). A file system that cannot lock:
+  `flock` refusing with one of `NO_LOCKS` (`ENOLCK`, `EOPNOTSUPP`, `ENOSYS`, `EINVAL`) on a descriptor `fstat`
+  shows is a regular file: one stderr line, then the first case. Anything else at the lock (the open failing with
+  any error, a link, a FIFO, socket, device or folder at its name, another `flock` error): exit 1, nothing
+  written, as such a file fails with the same errors. A run
   or the inbox takes a direct write
   in as any outside write (open tabs get 409 and reload); an op's write bumps the round's `rev` as a save does.
   The item counts as decided (`_decided`): `rows` leaves it out of a round's items, as the page shows it decided,

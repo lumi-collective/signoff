@@ -4244,19 +4244,38 @@ NO_LOCKS = {getattr(errno, n) for n in ("ENOLCK", "EOPNOTSUPP", "ENOTSUP", "ENOS
 def _hold_round(r):
     """The round's lock, for one write: waited for half a second, as another mark or a waiter's look holds it for a
     moment. None when another process holds it, False when this file system cannot lock (said on stderr);
-    DecisionsError for any other failure (a link at the lock's name, no permission)."""
+    DecisionsError for any other failure. The fallback is only for flock's own refusal on a regular file: a FIFO or a
+    socket planted at the lock's name fails with the same errors, and must not turn the lock off."""
     path = r.path.with_name(r.path.name + ".lock")
-    try:
-        for wait in (0.05,) * 10 + (None,):
-            fd = try_lock(path)
-            if fd is not None or wait is None:
-                return fd
-            time.sleep(wait)
+    if sys.platform == "win32":  # no inbox there: try_lock as a run takes its locks
+        return try_lock(path)
+    import fcntl
+    try:  # non-blocking, so a FIFO there cannot stall the open; never through a link
+        fd = os.open(str(path), os.O_RDWR | os.O_CREAT | os.O_NONBLOCK | os.O_NOFOLLOW, 0o600)
     except OSError as e:
-        if e.errno not in NO_LOCKS:
-            raise DecisionsError("cannot lock %s (%s); nothing was written" % (path, e.strerror or e))
-        print("signoff: cannot lock %s (%s); going on without the lock" % (path, e.strerror or e), file=sys.stderr)
-        return False
+        raise DecisionsError("cannot open the lock %s (%s); nothing was written" % (path, e.strerror or e))
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise DecisionsError("the lock %s is not a regular file; nothing was written" % path)
+        for wait in (0.05,) * 10 + (None,):
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return fd
+            except OSError as e:
+                if not (isinstance(e, BlockingIOError) or e.errno == errno.EACCES):
+                    if e.errno not in NO_LOCKS:
+                        raise DecisionsError("cannot lock %s (%s); nothing was written" % (path, e.strerror or e))
+                    print("signoff: cannot lock %s (%s); going on without the lock" % (path, e.strerror or e),
+                          file=sys.stderr)
+                    os.close(fd)
+                    return False
+            if wait is None:
+                os.close(fd)
+                return None
+            time.sleep(wait)
+    except BaseException:
+        os.close(fd)
+        raise
 
 
 def _mark_by_inbox(home, r, item_id, note, say):

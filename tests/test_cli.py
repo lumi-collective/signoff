@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import signal
+import socket
 import stat
 import subprocess
 import sys
@@ -1642,20 +1643,49 @@ class CliElsewhere(unittest.TestCase):
         self.assertEqual((proc.returncode, out), (0, str(self.folder.answers) + "\n"), err)
         self.assertTrue(self.saved()["done"])
 
+    @unittest.skipIf(sys.platform == "win32", "flock: the inbox's lock, on macOS and Linux")
     def test_a_file_system_that_cannot_lock_writes_as_before_locks(self):
+        # flock's own refusal on a regular lock file, as on a network mount: the one case that goes on without it.
+        import fcntl
         (self.home / "inbox.lock").write_bytes(b"")
-        with mock.patch.object(signoff, "try_lock", side_effect=OSError(errno.ENOLCK, "No locks available")):
-            code, out, err = self.mark(self.folder.decisions, "layout", "n")
-        self.assertEqual((code, out, err.count("\n")), (0, "", 1), err)
-        self.assertIn("without the lock", err)
-        self.assertEqual(self.saved()["answers"]["layout"]["source"], "elsewhere")
+        for code_ in (errno.ENOLCK, errno.EOPNOTSUPP):
+            with self.subTest(code_), mock.patch.object(fcntl, "flock", side_effect=OSError(code_, "no locks")):
+                code, out, err = self.mark(self.folder.decisions, "layout", "n%d" % code_)
+            self.assertEqual((code, out, err.count("\n")), (0, "", 1), err)
+            self.assertIn("without the lock", err)
+            self.assertEqual(self.saved()["answers"]["layout"]["comment"], "n%d" % code_)
 
-    def test_a_lock_file_that_cannot_be_opened_is_exit_1_and_writes_nothing(self):
-        # Only a file system that cannot lock goes on without it; a link at the lock's name or no permission does not.
+    @unittest.skipIf(sys.platform == "win32", "flock: the inbox's lock, on macOS and Linux")
+    def test_a_lock_that_is_no_regular_file_or_cannot_be_opened_is_exit_1_and_writes_nothing(self):
+        # Something planted at the lock's name must not turn the lock off: a FIFO makes flock fail with ENOTSUP and
+        # a socket makes open fail with EOPNOTSUPP on macOS, errors a file system without locks gives too.
+        import fcntl
         (self.home / "inbox.lock").write_bytes(b"")
-        for e in (OSError(errno.ELOOP, "Too many levels of symbolic links"), PermissionError(13, "Permission denied")):
-            with self.subTest(e.errno), mock.patch.object(signoff, "try_lock", side_effect=e):
+
+        def fifo():
+            os.mkfifo(str(self.lock))
+
+        def sock():
+            s = socket.socket(socket.AF_UNIX)
+            self.addCleanup(s.close)
+            s.bind(str(self.lock))
+
+        def link():
+            os.symlink(str(self.folder.path / "elsewhere.lock"), str(self.lock))
+
+        def closed():
+            self.lock.write_bytes(b"")
+            os.chmod(str(self.lock), 0o400)  # open for writing is refused
+        for label, plant in (("a FIFO", fifo), ("a socket", sock), ("a link", link), ("no permission", closed)):
+            with self.subTest(label):
+                plant()
                 self.refused([self.folder.decisions, "layout", "n"], words=("lock",))
+                self.assertFalse(self.folder.answers.exists())
+                # Out of the way for the next one, kept in the test's own folder.
+                os.rename(str(self.lock), str(self.folder.path / ("planted-" + label.replace(" ", "-"))))
+        self.lock.write_bytes(b"")  # a regular lock file, as a run leaves one
+        with mock.patch.object(fcntl, "flock", side_effect=OSError(errno.EIO, "Input/output error")):
+            self.refused([self.folder.decisions, "layout", "n"], words=("lock",))  # flock failing otherwise
         self.assertFalse(self.folder.answers.exists())
 
 
