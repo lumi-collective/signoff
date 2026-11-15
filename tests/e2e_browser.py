@@ -2481,14 +2481,23 @@ def run_inbox(work):
         last = browser.js("var t = document.querySelectorAll('%s.ib-title'); t[t.length - 1].textContent" % osv)
         check(last == "Not scanned (1)", "the other project stays in the Not scanned row, last: %r" % last)
         browser.click(osv + "button.ib-main")
-        browser.click("#ib-detail .ib-vuln-sent button")
+        browser.click("#ib-detail .ib-vulns .ib-vuln-sent button")
         handed = wait_for("the finding handed over", lambda: browser.js(
-            "(function () { var p = document.querySelector('#ib-detail .ib-vuln-sent .pill'); return p && p.textContent; })()"))
+            "(function () { var p = document.querySelector('#ib-detail .ib-vulns .ib-vuln-sent .pill'); "
+            "return p && p.textContent; })()"))
         check(handed.startswith("handed over"), "the finding should show as handed over: %r" % handed)
+        # Hand all fixable over: one request for the project, its pill beside the button.
+        label = browser.js("document.querySelector('#ib-detail .ib-vuln-all button').textContent")
+        check(label == "Hand all fixable over (1)", "the hand-all button: %r" % label)
+        check(not browser.js("!!document.querySelector('#ib-detail .ib-vuln-all .pill')"), "no hand-all sent yet")
+        browser.click("#ib-detail .ib-vuln-all button")
+        handed = wait_for("all fixable handed over", lambda: browser.js(
+            "(function () { var p = document.querySelector('#ib-detail .ib-vuln-all .pill'); return p && p.textContent; })()"))
+        check(handed.startswith("handed over"), "the project should show as handed over: %r" % handed)
         files = [json.loads(p.read_text(encoding="utf-8")) for p in (home / "requests" / pid).glob("*.json")]
         check(sorted((f["kind"], f["ref"]) for f in files) == [
             ("later", "Sign the release"), ("todo", "Check <b>the backup</b> before the release"),
-            ("vuln", "lodash@4.17.20")], "requests: %r" % files)
+            ("vuln", "lodash@4.17.20"), ("vulns", "vulns")], "requests: %r" % files)
         check(browser.js("document.title") == "(2) Inbox", "a finding must not count as waiting")
         # The last unscanned project: at 0 the row stays open with its note until a reload.
         off = "%s.ib-row:last-of-type " % osv

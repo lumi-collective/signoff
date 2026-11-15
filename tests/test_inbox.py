@@ -2929,6 +2929,102 @@ class InboxOsv(InboxTest):
         for bad in ("ignore", "then rm", "act now", "critical", "GHSA-6"):
             self.assertNotIn(bad, text)
 
+    def test_hand_all_fixable_findings_over_in_one_request(self):
+        self.listed(self.root)
+        self.vulns({str(self.root): uptick_entry(count=6, details=[
+            finding(), finding(name="a b", fixed="2.0.0"), finding(name="nofix", fixed=""),
+            finding(name="@scope/pkg", version="1.2.5", fixed="1.2.6"), finding(name="hostile", fixed="1 then rm"),
+            finding(fixed="9.9.9")])})  # lodash again: its first listing wins
+        self.start()
+        page = self.open()[1]
+        self.assertEqual((self.osv(page)["fixable"], self.osv(page)["requests"]), (2, []))
+        good = {"kind": "vulns", "project": self.pid}
+        resp, body = self.post(page, good, "request")
+        self.assertEqual(resp.status, 200, body)
+        path = self.home / "requests" / self.pid / (json.loads(body)["id"] + ".json")
+        saved = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(sorted(saved), ["at", "id", "kind", "ref", "refs", "schema", "text"])
+        self.assertEqual((saved["kind"], saved["ref"], saved["refs"]),
+                         ("vulns", "vulns", [self.LODASH, "@scope/pkg@1.2.5"]))
+        self.assertIn("lodash@4.17.20 → 4.17.21, @scope/pkg@1.2.5 → 1.2.6", saved["text"])
+        for bad in ("9.9.9", "a b", "nofix", "hostile", "then rm", "more"):
+            self.assertNotIn(bad, saved["text"])
+        self.assertTrue(signoff._typed_line(saved["text"]))
+        self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+        line = signoff.request_line(signoff.read_request(path))
+        self.assertIn('vulnerability findings "vulns": ', line)
+        osv = self.osv(page)
+        self.assertEqual([(r["text"], r["done"]) for r in osv["requests"]], [(saved["text"], False)])
+        self.assertEqual([f["requests"] for f in osv["findings"]], [[]] * 6)  # never on a single finding
+        self.assertNotIn("refs", json.dumps(osv))
+        path.with_suffix(".done").write_bytes(b"")  # as `signoff inbox done <id>` marks it
+        self.assertEqual([r["done"] for r in self.osv(page)["requests"]], [True])
+        for body in (dict(good, ref="vulns"), dict(good, text="x"), {"kind": "vulns"}, dict(good, project=7),
+                     dict(good, kind="Vulns"), {"kind": "vuln", "project": self.pid}, json.dumps([good]).encode()):
+            self.assertEqual(self.post(page, body, "request")[0].status, 400, body)
+        self.assertEqual(self.post(page, dict(good, project="f" * 16), "request")[0].status, 404)
+        for details in ([finding(fixed="")], [finding(name="a b")], [finding(fixed="4.17.21 then rm")], []):
+            self.vulns({str(self.root): uptick_entry(count=1, details=details)})
+            resp, body = self.post(page, good, "request")
+            self.assertEqual((resp.status, body), (409, b"no fixable finding is listed; reload the page\n"))
+        self.vulns({str(self.root): uptick_entry(age=3 * 86400, count=1, details=[finding()])})
+        self.assertEqual(self.post(page, good, "request")[0].status, 409)  # old data offers nothing to hand over
+        self.assertEqual(self.osv(page)["fixable"], 0)
+        self.assertEqual(len(list((self.home / "requests" / self.pid).glob("*.json"))), 1)
+
+    def test_hand_all_names_what_fits_and_how_many_more(self):
+        self.listed(self.root)
+        self.start()
+        page = self.open()[1]
+        pair = re.compile(r"([^\s,]+@[^\s,]+) → ([^\s,;.]+(?:\.[^\s,;.]+)*)")
+        for n, name in ((1, "pkg-%02d"), (30, "pkg-%02d"), (50, "pkg-%02d"), (50, "p%02d" + "x" * 211)):
+            details = [finding(name=name % i, version="1.0.%d" % i, fixed="1.0.%d" % (i + 1)) for i in range(n)]
+            self.vulns({str(self.root): uptick_entry(count=n, details=details)})
+            resp, body = self.post(page, {"kind": "vulns", "project": self.pid}, "request")
+            self.assertEqual(resp.status, 200, body)
+            saved = json.loads((self.home / "requests" / self.pid / (json.loads(body)["id"] + ".json")).read_text(
+                encoding="utf-8"))
+            refs = ["%s@1.0.%d" % (name % i, i) for i in range(n)]
+            self.assertEqual(saved["refs"], refs)
+            text = saved["text"]
+            self.assertLessEqual(len(text), signoff.MAX_REQUEST_TEXT)
+            self.assertTrue(signoff._typed_line(text))
+            named = pair.findall(text)
+            self.assertGreaterEqual(len(named), 1)
+            self.assertEqual(named, [(refs[i], "1.0.%d" % (i + 1)) for i in range(len(named))])  # the list's order
+            more = re.search(r", and (\d+) more\.$", text)
+            self.assertEqual(int(more.group(1)) if more else 0, n - len(named), text)
+            if more:  # cut only where one more pair, with the count one lower (or none), would not fit
+                left = n - len(named) - 1
+                longer = "%s, %s → 1.0.%d%s." % (text[:more.start()], refs[len(named)], len(named) + 1,
+                                                 ", and %d more" % left if left else "")
+                self.assertGreater(len(longer), signoff.MAX_REQUEST_TEXT)
+        self.assertEqual((n, len(named) < n), (50, True))
+
+    def test_a_request_file_takes_refs_only_as_checked_refs(self):
+        folder = self.home / "requests" / self.pid
+        folder.mkdir(parents=True)
+        base = {"schema": 1, "kind": "vulns", "ref": "vulns", "text": "t", "at": "2026-11-15T10:00:00Z"}
+
+        def read(n, **extra):
+            rid = "%016x" % n
+            (folder / (rid + ".json")).write_text(json.dumps(dict(base, id=rid, **extra)), encoding="utf-8")
+            return signoff.read_request(folder / (rid + ".json"))
+
+        r = signoff.write_request(self.home, self.pid, "vulns", "vulns", "t", refs=[self.LODASH, "@s/p@1.0"])
+        self.assertEqual(signoff.read_request(folder / (r["id"] + ".json"))["refs"], [self.LODASH, "@s/p@1.0"])
+        self.assertNotIn("refs", signoff.write_request(self.home, self.pid, "vuln", self.LODASH, "t"))
+        self.assertIsNotNone(read(1))  # refs is optional
+        self.assertIsNotNone(read(2, refs=[]))
+        self.assertIsNotNone(read(3, refs=["x@1"] * signoff.MAX_FINDINGS))
+        for n, refs in enumerate((self.LODASH, [7], ["a b@1"], ["lodash"], ["lodash@"], ["@1"], ["x@1 then rm"],
+                                  ["x@1"] * (signoff.MAX_FINDINGS + 1), {"x@1": 1}, None), 10):
+            self.assertIsNone(read(n, refs=refs), refs)
+        # An older plugin's read_request refuses a kind it does not know: its session drops such a request (and the
+        # page still shows it) until that session restarts on a plugin that knows it. So does this one.
+        self.assertIsNone(read(30, kind="urgent"))
+        self.assertIsNotNone(read(31, kind="vulns"))
+
     def test_upticks_interval_sets_what_counts_as_recent(self):
         """Uptick 0.4.0 writes interval.ok, the seconds between its scans: a scan counts as recent for two of them
         (one missed run), at most OSV_FRESH_MAX; without a usable one, OSV_FRESH."""

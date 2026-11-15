@@ -1083,6 +1083,7 @@ class Inbox(unittest.TestCase):
     def test_scan_this_project_and_hand_a_finding_over_keep_todays_rules(self):
         start, page = self.open()
         scan, vuln = {"project": self.pid}, {"kind": "vuln", "project": self.pid, "ref": "lodash@4.17.20"}
+        vulns = {"kind": "vulns", "project": self.pid}  # every fixable finding of the project in one request
         board = re.search(r'"board":\s*"(/[^"]+)"', self.request("GET", page + "run/0/")[1].decode("utf-8")).group(1)
 
         def refused(status, body, path, headers=None):
@@ -1091,7 +1092,7 @@ class Inbox(unittest.TestCase):
             self.assertEqual(resp.status, status, (body, headers, path, data))
             self.assertEqual((self.scan_list(), self.requests()), (before, asked))
 
-        for body, path in ((scan, "scan"), (vuln, "request")):
+        for body, path in ((scan, "scan"), (vuln, "request"), (vulns, "request")):
             for host in ("localhost.example:%d" % self.port, "127.0.0.1", "evil.example", "[::1]:%d" % self.port,
                          "", None):
                 refused(403, body, path, {"Host": host})
@@ -1113,6 +1114,9 @@ class Inbox(unittest.TestCase):
             self.assertEqual(resp.status, 404)
             self.assertEqual(self.request("GET", page + path)[0].status, 404)
         refused(409, vuln, "request")  # not on Uptick's list yet: its old data offers nothing to hand over
+        refused(409, vulns, "request")
+        for bad in (dict(vulns, ref="vulns"), {"kind": "vuln", "project": self.pid}, dict(vulns, project=7)):
+            refused(400, bad, "request")
         resp, data = self.save(page, scan, path="scan")
         self.assertEqual(resp.status, 200, data)
         self.assertEqual(json.loads(self.scan_list()), {"repos": ["/elsewhere", self.project], "kept": True})
@@ -1123,6 +1127,13 @@ class Inbox(unittest.TestCase):
         with open(os.path.join(self.home, "requests", self.pid, rid + ".json"), encoding="utf-8") as f:
             saved = json.load(f)
         self.assertEqual((saved["kind"], saved["ref"]), ("vuln", "lodash@4.17.20"))
+        resp, data = self.save(page, vulns, path="request")
+        self.assertEqual(resp.status, 200, data)
+        with open(os.path.join(self.home, "requests", self.pid, json.loads(data)["id"] + ".json"),
+                  encoding="utf-8") as f:
+            saved = json.load(f)
+        self.assertEqual((saved["kind"], saved["ref"], saved["refs"]), ("vulns", "vulns", ["lodash@4.17.20"]))
+        self.assertIn("lodash@4.17.20 → 4.17.21", saved["text"])
         self.assertEqual(self.request("GET", start)[0].status, 410)
         refused(404, scan, "scan")  # a closed pair writes nothing more
 

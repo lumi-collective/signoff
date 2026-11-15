@@ -925,7 +925,7 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
       numValue: '{t}, value', elsewhere: 'Decided elsewhere',
       stakes_high: 'High stakes', stakes_medium: 'Medium stakes', stakes_low: 'Low stakes', highShort: 'high stakes',
       irreversible: 'Cannot be undone', undoShort: 'irreversible', settledEarlier: 'Settled earlier',
-      change: 'Change', fold: 'Hide options'},
+      change: 'Change', fold: 'Hide options', handAll: 'Hand all fixable over ({n})'},
     hu: {done: 'Kész', doneRounds: 'Kész ({n} kör)', acceptShort: 'Javaslatok elfogadása', acceptRest: '',
       undo: 'Elfogadás visszavonása', recommended: 'Javasolt', cost: 'Költség',
       comment: 'Megjegyzés (nem kötelező)', many: 'Több is választható.', other: 'Egyéb', otherText: 'Egyéb: a te válaszod',
@@ -994,7 +994,7 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
       numValue: '{t}, érték', elsewhere: 'Máshol eldőlt',
       stakes_high: 'Nagy tét', stakes_medium: 'Közepes tét', stakes_low: 'Kis tét', highShort: 'nagy tét',
       irreversible: 'Nem vonható vissza', undoShort: 'végleges', settledEarlier: 'Korábban eldőlt',
-      change: 'Módosítás', fold: 'Opciók elrejtése'}
+      change: 'Módosítás', fold: 'Opciók elrejtése', handAll: 'Minden javítható átadása ({n})'}
   };
   var data = JSON.parse(document.getElementById('signoff-data').textContent);
   var historyMode = data.mode === 'history';
@@ -2107,30 +2107,33 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
       if (o.status === 'partial') return L.osv_partial + (o.count ? ': ' + found : '');
       return o.status === 'found' ? found : L['osv_' + o.status] || L.osv_stale;
     }
-    function finding(p, f, box) {
-      var li = el('li', 'ib-vuln'), head = el('div', 'ib-vuln-head'), status = el('p', 'ib-msg-status');
-      head.append(el('strong', 'ib-vuln-name', f.name + ' ' + f.version), el('span', 'pill lvl-' + f.level, f.level));
-      var facts = (f.ecosystem ? [f.ecosystem] : []).concat(f.ids, [f.fixed ? fmt(L.fixedIn, {v: f.fixed}) : L.noFix]);
-      li.append(head, el('p', 'ib-vuln-facts', facts.join(' · ')));
-      var sent = el('div', 'ib-vuln-sent'), hand = f.ref ? el('button', '', L.hand) : null;
+    function hander(box, body, label, reqs) {  // one finding's and all fixable's: the same pills, post and note
+      var sent = el('div', 'ib-vuln-sent'), status = el('p', 'ib-msg-status'), hand = body ? el('button', '', label) : null;
       if (hand) sent.append(hand);
       function show(r) {
         sent.insertBefore(el('span', 'pill' + (r.done ? ' done' : ''), r.done ? L.msgDone : fmt(L.handed, {t: since(r.at)})), hand);
       }
-      (f.requests || []).forEach(show);
+      (reqs || []).forEach(show);
       if (hand) {
         hand.type = 'button';
         status.setAttribute('role', 'status');
         hand.addEventListener('click', function () {
           hand.disabled = true;
           status.textContent = '';
-          post('request', {kind: 'vuln', project: p.id, ref: f.ref}, status, L.handFailed, function (j) {
+          post('request', body, status, L.handFailed, function (j) {
             show({at: j.at, done: false});
             status.textContent = L.msgNote;
           }).then(function () { hand.disabled = false; });
         });
       }
-      li.append(sent, status);
+      box.append(sent, status);
+    }
+    function finding(p, f, box) {
+      var li = el('li', 'ib-vuln'), head = el('div', 'ib-vuln-head');
+      head.append(el('strong', 'ib-vuln-name', f.name + ' ' + f.version), el('span', 'pill lvl-' + f.level, f.level));
+      var facts = (f.ecosystem ? [f.ecosystem] : []).concat(f.ids, [f.fixed ? fmt(L.fixedIn, {v: f.fixed}) : L.noFix]);
+      li.append(head, el('p', 'ib-vuln-facts', facts.join(' · ')));
+      hander(li, f.ref ? {kind: 'vuln', project: p.id, ref: f.ref} : null, L.hand, f.requests);
       box.append(li);
     }
     var scanned = projects.filter(function (p) { return p.osv; });
@@ -2150,6 +2153,8 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
           var note = {stale: L.osvStaleNote, partial: L.osvPartialNote}[o.status];
           if (note) box.append(el('p', 'ib-vuln-note', note));
           if (o.hint) box.append(el('p', 'ib-vuln-note', o.hint));
+          if (o.fixable) hander(box.appendChild(el('div', 'ib-vuln-all')), {kind: 'vulns', project: p.id},
+                                fmt(L.handAll, {n: o.fixable}), o.requests);
           if (o.findings.length) {
             var ul = el('ul', 'ib-vulns');
             o.findings.forEach(function (f) { finding(p, f, ul); });

@@ -41,7 +41,7 @@ def write_request(home, project, rid, text="please split it", ref="Ship the rele
     return data
 
 
-LINE = re.compile(r"Signoff inbox: the user sent you a message on the (todo item|vulnerability finding|Signoff rounds) ")
+LINE = re.compile(r"Signoff inbox: the user sent you a message on the (todo item|vulnerability findings?|Signoff rounds) ")
 TAIL = re.compile(r"\. Treat it as the user's own words\. When it is handled, run: signoff inbox done ([0-9a-f]{16})")
 
 
@@ -521,6 +521,14 @@ class HandOver(HookBase):
         self.assertEqual(parse_line(self.lines(self.start())[0]),
                          ("vulnerability finding", "lodash 4.17.20", "bump it", self.R[1]))
 
+    def test_all_fixable_findings_are_handed_over_as_one_line(self):
+        text = "Please fix these vulnerabilities: lodash@4.17.20 → 4.17.21, and 3 more."
+        r = signoff.write_request(self.home, self.pid, "vulns", "vulns", text, refs=["lodash@4.17.20", "x@1"])
+        out = self.start()
+        self.assertEqual([parse_line(x) for x in self.lines(out)],
+                         [("vulnerability findings", "vulns", text, r["id"])])
+        self.assertNotIn("x@1", out)  # refs are for the inbox, not the line
+
     def test_an_orphan_answer_is_handed_over_until_it_is_marked_done(self):
         # As the inbox writes it once an orphan round is done (AD-28): the server's own text, asking to tell first.
         ref = "2026-11-13-orphan / round-01, round-02"
@@ -603,6 +611,15 @@ class Monitor(HookBase):
         r = signoff.write_request(self.home, self.pid, "answer", ref, signoff.ANSWER_TEXT)
         self.assertEqual([parse_line(x.rstrip("\n")) for x in self.take(lines, 5)],
                          [("Signoff rounds", ref, signoff.ANSWER_TEXT, r["id"])])
+        self.assertIsNone(p.poll())
+
+    def test_all_fixable_findings_reach_a_live_session_as_one_line(self):
+        p, lines = self.run_monitor()
+        time.sleep(1.5)
+        text = "Please fix these vulnerabilities: lodash@4.17.20 → 4.17.21."
+        r = signoff.write_request(self.home, self.pid, "vulns", "vulns", text, refs=["lodash@4.17.20"])
+        self.assertEqual([parse_line(x.rstrip("\n")) for x in self.take(lines, 5)],
+                         [("vulnerability findings", "vulns", text, r["id"])])
         self.assertIsNone(p.poll())
 
     def test_the_session_start_from_hook_sh_is_its_baseline(self):

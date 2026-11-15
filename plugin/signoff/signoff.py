@@ -2309,8 +2309,9 @@ MAX_SHOWN_REQUESTS = 200  # recent request files the list page reads per project
 REQUEST_EVERY = 2.0  # seconds between the monitor's looks
 SINCE_MARGIN = 10  # seconds before its session's start from which the monitor prints requests
 MAX_HANDOVER_TEXT = 8000  # characters of request lines a SessionStart hands over
+# An older plugin's read_request drops a kind it does not know: its sessions never print a new kind's request.
 REQUEST_KINDS = {"todo": "todo item", "vuln": "vulnerability finding", "later": "todo item",
-                 "answer": "Signoff rounds"}
+                 "answer": "Signoff rounds", "vulns": "vulnerability findings"}
 LATER_TEXT = "The owner asks to park this item for later: remove its waiting marker and keep it open."
 # AD-28: the text the inbox hands over once an orphan group's rounds are done, or when it lets go of a group whose
 # newest run stopped before handing them over. It asks the agent to tell the user first, since the monitor's line
@@ -2413,6 +2414,23 @@ def _vuln_text(d):
     return "Please fix this vulnerability in this project%s%s; %s." % (
         ": %s severity" % level if level else "", " (%s)" % ", ".join(ids) if ids else "",
         "fixed in %s" % fixed if fixed else "no fixed version is known yet")
+
+
+def _vulns_text(fixable):
+    """What a vulns request says: each fixable finding's checked ref and fixed version, in the list's order, as many
+    as fit in MAX_REQUEST_TEXT, then how many more. One pair always fits: it is at most 346 characters."""
+    for n in range(len(fixable), 0, -1):
+        rest = len(fixable) - n
+        text = "Please fix these vulnerabilities in this project, each by updating to its fixed version: %s%s." % (
+            ", ".join("%s → %s" % f for f in fixable[:n]), ", and %d more" % rest if rest else "")
+        if len(text) <= MAX_REQUEST_TEXT:
+            return text
+
+
+def _finding_ref(v):
+    """True for a finding's ref as _osv makes it: <name>@<version>, each plain (_PACKAGE, _VERSION)."""
+    name, _, version = v.rpartition("@") if isinstance(v, str) else ("", "", "")
+    return bool(_PACKAGE.fullmatch(name) and _VERSION.fullmatch(version))
 
 
 def _recent(path, max_age):
@@ -2583,14 +2601,19 @@ def read_request(path):
     r = _read_json(path, 32768)
     ok = (r is not None and r.get("schema") == 1 and r.get("id") == path.stem and HEX16.fullmatch(path.stem)
           and r.get("kind") in REQUEST_KINDS and isinstance(r.get("ref"), str) and isinstance(r.get("text"), str)
-          and isinstance(r.get("at"), str) and SAVED_PATTERN.fullmatch(r["at"]))
+          and isinstance(r.get("at"), str) and SAVED_PATTERN.fullmatch(r["at"])
+          and ("refs" not in r or isinstance(r["refs"], list) and len(r["refs"]) <= MAX_FINDINGS
+               and all(_finding_ref(x) for x in r["refs"])))
     return r if ok else None
 
 
-def write_request(home, project, kind, ref, text):
+def write_request(home, project, kind, ref, text, refs=None):
     """requests/<project>/<id>.json in the home, atomically, 0600 in 0700 folders, for the project's sessions (their
-    monitors, or the next SessionStart hook). Returns the request; raises OSError when it cannot be written."""
+    monitors, or the next SessionStart hook). refs (a vulns request's findings) only when given. Returns the
+    request; raises OSError when it cannot be written."""
     r = {"schema": 1, "id": secrets.token_hex(8), "kind": kind, "ref": ref, "text": text, "at": utc_now()}
+    if refs is not None:
+        r["refs"] = refs
     folder = home / "requests" / project
     folder.parent.mkdir(mode=0o700, exist_ok=True)
     folder.mkdir(mode=0o700, exist_ok=True)
@@ -3297,7 +3320,8 @@ class InboxServer(_Server):
 
     def _osv(self, p):
         """The project's vulnerability state from Uptick's files, read only (AD-12), or None when Uptick keeps no
-        vulns.json (its scan is off): (the page's view, ref -> the text a vuln request carries)."""
+        vulns.json (its scan is off): (the page's view, ref -> the text a vuln request carries, the fixable findings'
+        (ref, fixed) pairs a vulns request names, each ref once)."""
         found = uptick_file("XDG_CACHE_HOME", ".cache", "vulns.json")
         data = self._uptick(found, MAX_VULNS, _json_object) if found else None
         repos = data.get("repos") if data else None
@@ -3326,7 +3350,7 @@ class InboxServer(_Server):
                   else "stale" if not fresh
                   else "partial" if e.get("gaps")
                   else "found" if _seconds(e.get("count")) else "clean")
-        findings, texts = [], {}
+        findings, texts, fixable = [], {}, []
         details = e.get("details") if fresh and isinstance(e.get("details"), list) else []
         for d in [d for d in details if isinstance(d, dict)][:MAX_FINDINGS]:
             name, version = d.get("name"), d.get("version")
@@ -3334,6 +3358,8 @@ class InboxServer(_Server):
                    and _PACKAGE.fullmatch(name) and _VERSION.fullmatch(version) else None)
             if ref and ref not in texts:
                 texts[ref] = _vuln_text(d)
+                if isinstance(d.get("fixed"), str) and _VERSION.fullmatch(d["fixed"]):
+                    fixable.append((ref, d["fixed"]))
             findings.append({"ref": ref, "name": shown(name, 200), "version": shown(version, 64),
                              "ecosystem": shown(d.get("ecosystem"), 40),
                              "level": d.get("level") if d.get("level") in VULN_LEVELS else "unknown",
@@ -3344,7 +3370,8 @@ class InboxServer(_Server):
         return {"status": status,
                 "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(at)) if 0 < at <= now else None,
                 "count": int(_seconds(e.get("count"))), "level": level if level in VULN_LEVELS else "",
-                "error": error, "hint": shown(e.get("hint"), 200), "findings": findings}, texts
+                "error": error, "hint": shown(e.get("hint"), 200), "findings": findings,
+                "fixable": len(fixable)}, texts, fixable
 
     def add_scan(self, raw):
         """Scan this project: add its folder to Uptick's scan-repos.json on the user's click (round-08). Every other
@@ -3428,19 +3455,22 @@ class InboxServer(_Server):
         return found
 
     def add_request(self, raw):
-        """A message on an open todo item, Later on one marked waiting, or a finding handed over, from the list page:
-        requests/<project>/<id>.json in the home, for the project's session (its monitor, or the next SessionStart
-        hook). The todo file is never written. The text of a finding and of Later is the server's own, a finding's
-        from its checked fields. Returns (status, body)."""
+        """A message on an open todo item, Later on one marked waiting, a finding handed over, or all of a project's
+        fixable findings, from the list page: requests/<project>/<id>.json in the home, for the project's session
+        (its monitor, or the next SessionStart hook). The todo file is never written. The text of a finding, of the
+        fixable findings and of Later is the server's own, a finding's from its checked fields. Returns (status,
+        body)."""
         try:
             body = json.loads(raw.decode("utf-8"))
         except (ValueError, RecursionError):
             return 400, b"bad request: not JSON\n"
         shape = sorted(body) if isinstance(body, dict) and all(isinstance(v, str) for v in body.values()) else None
         kind = body["kind"] if shape == ["kind", "project", "ref"] and body["kind"] in ("vuln", "later") else "todo"
+        if shape == ["kind", "project"] and body["kind"] == "vulns":
+            kind = "vulns"
         if kind == "todo" and shape != ["project", "ref", "text"]:
-            return 400, (b'bad request: send {"project", "ref", "text"}, or {"kind", "project", "ref"} with kind '
-                         b'"vuln" or "later", as strings\n')
+            return 400, (b'bad request: send {"project", "ref", "text"}, {"kind", "project", "ref"} with kind '
+                         b'"vuln" or "later", or {"kind": "vulns", "project"}, as strings\n')
         text = body["text"].strip() if kind == "todo" else LATER_TEXT
         if kind == "todo" and (not text or len(text) > MAX_REQUEST_TEXT or not _typed_line(text)):
             return 400, b"bad request: a message is one line of 1 to 1000 characters\n"
@@ -3448,10 +3478,16 @@ class InboxServer(_Server):
             p = self._projects().get(body["project"]) if HEX16.fullmatch(body["project"]) else None
             if p is None:
                 return 404, b"no such project\n"
+            ref, named = body.get("ref", "vulns"), None  # a vulns request names its findings in named
             if kind == "vuln":
-                text = (self._osv(p) or ({}, {}))[1].get(body["ref"])
+                text = (self._osv(p) or ({}, {}, []))[1].get(body["ref"])
                 if text is None:
                     return 409, b"that finding is no longer listed; reload the page\n"
+            elif kind == "vulns":
+                fixable = (self._osv(p) or ({}, {}, []))[2]
+                if not fixable:
+                    return 409, b"no fixable finding is listed; reload the page\n"
+                text, named = _vulns_text(fixable), [f[0] for f in fixable]
             else:
                 # Any open item of a chain takes a message, its steps too; Later only one marked waiting.
                 path = project_todo(p)[0]
@@ -3461,7 +3497,7 @@ class InboxServer(_Server):
                     return 409, (b"that todo item no longer waits on you; reload the page\n" if kind == "later"
                                  else b"that todo item is no longer open; reload the page\n")
             try:
-                r = write_request(self.home, p["id"], kind, body["ref"], text)
+                r = write_request(self.home, p["id"], kind, ref, text, named)
             except OSError as e:
                 return 500, ("could not write the request (%s)\n" % (e.strerror or type(e).__name__)).encode("utf-8")
         return 200, json.dumps({"ok": True, "id": r["id"], "at": r["at"]}).encode("utf-8")
@@ -3648,7 +3684,7 @@ class InboxServer(_Server):
                 if osv:
                     for f in osv[0]["findings"]:
                         f["requests"] = asked.get(("vuln", f["ref"]), []) if f["ref"] else []
-                    listed[-1]["osv"] = osv[0]
+                    listed[-1]["osv"] = dict(osv[0], requests=asked.get(("vulns", "vulns"), []))
             asking, idle = self._live(found, projects)
             waiting += asking
             sent = []
