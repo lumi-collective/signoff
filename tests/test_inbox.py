@@ -2200,6 +2200,41 @@ class InboxRows(InboxTest):
         self.assertLess(len(json.dumps(reply)), 65536 - 1024)
 
 
+class InboxPlan(InboxTest):
+    """signoff plan's fixed round, as the inbox shows it: a row in Waiting on you and in the panel's rows, and never
+    an offer, since it has no recommendation (a notification would approve a plan unseen)."""
+
+    ctl = InboxOffer.ctl
+
+    def plan_topic(self, data):
+        topic = self.root / ".signoff" / "2026-11-15-plan-abcd1234"
+        topic.mkdir(parents=True)
+        (topic / "plan-01.md").write_bytes(b"# Plan\n\n1. Do the thing\n")
+        (topic / "round-01.json").write_text(json.dumps(data), encoding="utf-8")
+        e = entry(topic, ["round-01.json"], project=self.pid)
+        self.write(self.home / "runs" / (e["run"] + ".json"), e)
+
+    def test_the_plan_round_waits_on_you_is_listed_and_never_offered(self):
+        self.plan_topic(signoff.plan_round(1))
+        self.start()
+        data, _ = self.view(self.open()[1])
+        self.assertIn(("round", "Plan review"), [(w["kind"], w.get("title")) for w in data["waiting"]])
+        self.assertEqual(self.ctl("offer"), {"offer": None})
+        reply = self.ctl("rows", project=self.pid)
+        self.assertEqual([(r["title"], r["item"], r["items"]) for r in reply["rounds"]],
+                         [("Plan", 0, [{"item": 0, "title": "Approve this plan?"}])])
+
+    def test_the_same_round_with_a_recommendation_would_be_offered(self):
+        # The control for the test above: only the missing recommendation keeps the plan round out of an offer.
+        data = signoff.plan_round(1)
+        data["items"][0]["recommended"] = "approve"
+        self.plan_topic(data)
+        self.start()
+        self.open()
+        offer = self.ctl("offer")["offer"]
+        self.assertEqual((offer["question"], offer["answer"]), ("Approve this plan?", "Approve the plan"))
+
+
 class InboxElsewhere(InboxTest):
     """signoff elsewhere while the inbox holds the round's lock: the command sends the `elsewhere` op, and the inbox
     writes the mark through the run's own writer at the round's rev, as `accept` does. Refusals are one word and

@@ -121,6 +121,32 @@ command again. An inbox on an older Python may refuse a note character its Pytho
 says to use plainer characters. Restart a run an older Signoff started
 before you use it too: that run refuses the new `source`.
 
+## Plan review
+
+```
+signoff plan --topic <YYYY-MM-DD-plan-id> --folder <decisions folder> [--resume] < plan.md
+```
+
+The plugin's mod runs this when Claude Code leaves plan mode, with the plan on stdin; the agent does not. It
+needs a running inbox. It takes the plan as UTF-8, cuts the white space at its end (the same characters
+JavaScript's `trimEnd()` cuts), and needs 1 byte to 256 KiB of it. The folder is absolute, or relative to the
+project the current folder is in.
+
+In `<folder>/<topic>/` it closes every older open round (no outcome file, no answers file that says done) with
+`round-NN.outcome.json` ("replaced by round-MM"), then writes `plan-MM.md` (the plan's bytes) and `round-MM.json`, a
+fixed round titled Plan review: one question, **Approve the plan** or **Ask for changes**, a comment and notes on
+the plan's lines, the plan attached and open, and no recommendation, so a notification never offers it. Each file
+is created new, never over one. It then waits on that round as any run waits beside the inbox, and the run puts the
+`.gitignore` in the topic folder. With `--resume`, the newest round is reused when its `plan-NN.md` holds the same
+bytes: a done one prints its answers path at once, an open one is waited on; anything else gets a new round.
+
+It exits 0 with the answers path on stdout once the round is done, and 130 on Ctrl+C. It exits 1 with one line on
+stderr and nothing written for a usage error, a plan that is not UTF-8, empty or too big, a bad topic, a relative
+folder outside any project, a topic folder that is a link or a file, no running inbox, or an older open round of
+the topic that another live run still waits on. When the running inbox is older than this Signoff and does not
+take the round in, it closes the round ("not shown: the inbox is older than this plugin; restart it") and exits 1
+with a line that says to restart the inbox.
+
 ## Notes folder
 
 The plugin's Notes folder setting (`/config`; empty by default) is passed as `--notes`: the skill has the agent add

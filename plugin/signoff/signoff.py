@@ -133,6 +133,25 @@ STORED_KEYS = ANSWER_KEYS + ("version", "saved", "decisions", "accepted_at", "ch
 
 EXIT_DONE, EXIT_ERROR, EXIT_TIMEOUT = 0, 1, 2
 
+# signoff plan (AD-29): the mod's plan review. Every text of its round is here, in one place; the model gives only
+# the plan.
+PLAN_TOPIC = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}-plan-[A-Za-z0-9-]{1,8}")  # fullmatch: the mod's topic name
+PLAN_FILE = re.compile(r"^plan-([0-9]{1,4})\.md$")
+# The white space JavaScript's trimEnd() cuts (ECMAScript WhiteSpace and LineTerminator), which the mod cuts too, so
+# both hold the same bytes. Python's rstrip() would cut U+001C to U+001F and U+0085 as well, and keep U+FEFF.
+PLAN_TRIM = "".join(map(chr, (0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x20, 0xA0, 0x1680) + tuple(range(0x2000, 0x200B))
+                         + (0x2028, 0x2029, 0x202F, 0x205F, 0x3000, 0xFEFF)))
+PLAN_USAGE = "usage: signoff plan --topic <YYYY-MM-DD-plan-id> --folder <decisions folder> [--resume], plan on stdin"
+PLAN_TITLE, PLAN_TAB, PLAN_CONTEXT, PLAN_QUESTION, PLAN_CAPTION = (
+    "Plan review", "Plan", "Plan mode", "Approve this plan?", "The plan")
+PLAN_DESCRIPTION = ("The agent's plan is attached below. Approve it, or choose \"Ask for changes\" and say what in the "
+                    "comment or in notes on the plan's lines: they go back to the agent. After an approval, Claude "
+                    "Code leaves plan mode in the mode it picks itself, as when you leave plan mode yourself. On some "
+                    "setups Claude Code may ask once more.")
+PLAN_OPTIONS = (("approve", "Approve the plan"), ("revise", "Ask for changes"))
+PLAN_REPLACED = "replaced by round-%02d"
+PLAN_NOT_SHOWN = "not shown: the inbox is older than this plugin; restart it"
+
 
 class DecisionsError(ValueError):
     """The decisions file, or the answers file beside it, cannot be used. The message says where."""
@@ -4592,6 +4611,133 @@ def _elsewhere(path, item_id, note):
     return say(_mark_refusal("changed", r, item_id))
 
 
+def plan_round(n):
+    """signoff plan's round n: fixed texts around plan-NN.md, Approve or Ask for changes, and no recommendation, so a
+    notification never offers it (a tap would approve a plan the user never saw)."""
+    return {"version": 1, "title": PLAN_TITLE, "tab": PLAN_TAB, "context": PLAN_CONTEXT, "lang": "en",
+            "items": [{"id": "plan", "title": PLAN_QUESTION, "description": PLAN_DESCRIPTION, "select": "one",
+                       "options": [{"id": i, "label": label} for i, label in PLAN_OPTIONS],
+                       "blocking": True, "comment": True, "lines": True,
+                       "attachments": [{"src": "plan-%02d.md" % n, "caption": PLAN_CAPTION, "open": True}]}]}
+
+
+def _said_done(path):
+    """Whether a round's answers file says done, as the inbox reads it for an orphan round."""
+    data = _json_object(_read_file(answers_path_for(path), MAX_ROUND_BODY))
+    return bool(data) and data.get("done") is True
+
+
+def _waited_on(home, folder):
+    """The round files in folder that a live run waits on: a recent runs/ entry with no ended and its pid alive."""
+    names, runs = set(), home / "runs"
+    for path in runs.glob("[!.]*.json") if runs.is_dir() else ():
+        e = _read_json(path) if _recent(path, RUNS_MAX_AGE) else None
+        if _entry_ok(e) and "ended" not in e and _alive(e["pid"]) and e["folder"] == str(folder):
+            names.update(e["rounds"])
+    return names
+
+
+def _close_round(path, line):
+    """Close an open round with an outcome file of Signoff's own (AD-24: no longer an orphan). Never over a file:
+    one there already closed it."""
+    try:
+        with open(str(path.with_name(path.stem + ".outcome.json")), "x", encoding="utf-8") as f:
+            f.write(json.dumps({"log": "", "line": line, "date": datetime.date.today().isoformat()}) + "\n")
+    except FileExistsError:
+        pass
+
+
+def _plan(argv):
+    """`signoff plan --topic <t> --folder <f> [--resume]`, the plan on stdin: the mod's plan review (AD-29). Closes
+    the topic's older open rounds, writes plan-NN.md and the fixed round-NN.json in <folder>/<topic>/, and waits on
+    that one round beside the live inbox, as a waiter. Every check comes before the first write; each file is
+    created, never written over."""
+    def say(text):
+        print("signoff: plan: " + text, file=sys.stderr, flush=True)
+        return EXIT_ERROR
+
+    opts, words = {}, list(argv)
+    while words:
+        w = words.pop(0)
+        if w in opts or w not in ("--topic", "--folder", "--resume") or (w != "--resume" and not words):
+            return say(PLAN_USAGE)
+        opts[w] = True if w == "--resume" else words.pop(0)
+    if "--topic" not in opts or not opts.get("--folder"):
+        return say(PLAN_USAGE)
+    if not PLAN_TOPIC.fullmatch(opts["--topic"]):
+        return say("--topic must be a date, -plan- and 1 to 8 letters, digits or hyphens (YYYY-MM-DD-plan-id)")
+    stream = getattr(sys.stdin, "buffer", None)
+    raw = stream.read(MAX_DECISIONS + 1) if stream else b""
+    try:
+        plan = raw.decode("utf-8").rstrip(PLAN_TRIM).encode("utf-8") if len(raw) <= MAX_DECISIONS else None
+    except UnicodeDecodeError:
+        return say("the plan on stdin must be UTF-8 text")
+    if not plan or len(plan) > MAX_ATTACHMENT:
+        return say("the plan on stdin must be 1 byte to %d KiB once the white space at its end is cut"
+                   % (MAX_ATTACHMENT >> 10))
+    home = inbox_home()
+    if not (inbox_on(home) and inbox_alive(home)):
+        return say("no Signoff inbox is running, so the plan has nowhere to show; Claude Code's own dialog asks")
+    folder = Path(opts["--folder"])
+    if not folder.is_absolute():
+        root = project_root(Path.cwd())
+        if root is None:
+            return say("a relative --folder needs a project around the current folder; give an absolute one")
+        folder = root / folder
+    topic = folder / opts["--topic"]
+    if os.path.lexists(str(topic)) and (topic.is_symlink() or not topic.is_dir()):
+        return say("%s must be a folder, not a link or a file" % topic)
+    nums, rounds = [0], []
+    try:
+        for p in topic.iterdir() if topic.is_dir() else ():
+            m = ROUND_FILE.match(p.name) or PLAN_FILE.match(p.name)
+            if m:
+                nums.append(int(m.group(1)))
+                if p.suffix == ".json":
+                    rounds.append((int(m.group(1)), p))
+    except OSError as e:
+        return say("cannot read %s (%s)" % (topic, e.strerror or e))
+    rounds.sort()
+
+    def closed(p):
+        return p.with_name(p.stem + ".outcome.json").exists()
+
+    def refused(p):  # the inbox did not take the round in: nobody will answer it
+        try:
+            _close_round(p, PLAN_NOT_SHOWN)
+        except OSError as e:
+            say("could not close %s (%s)" % (p.name, e.strerror or e))
+
+    if opts.get("--resume") and rounds:
+        n, newest = rounds[-1]
+        if _read_file(topic / ("plan-%02d.md" % n), MAX_ATTACHMENT) == plan:
+            if _said_done(newest):
+                print(answers_path_for(newest), flush=True)
+                return EXIT_DONE
+            if not closed(newest):
+                return _run(argparse.Namespace(decisions=str(newest), notes=""), waiter=True,
+                            on_refused=lambda: refused(newest))
+    n = max(nums) + 1
+    if n > 9999:
+        return say("%s has no round number left" % topic)
+    older = [p for _, p in rounds if not closed(p) and not _said_done(p)]
+    held = _waited_on(home, topic.resolve()) if older else ()
+    if any(p.name in held for p in older):
+        return say("a plan review is still open in another process; answer it there, or stop that process first")
+    path = topic / ("round-%02d.json" % n)
+    try:
+        topic.mkdir(parents=True, exist_ok=True)
+        for p in older:
+            _close_round(p, PLAN_REPLACED % n)
+        with open(str(topic / ("plan-%02d.md" % n)), "xb") as f:
+            f.write(plan)
+        with open(str(path), "x", encoding="utf-8") as f:
+            f.write(json.dumps(plan_round(n), indent=2) + "\n")
+    except OSError as e:
+        return say("cannot write in %s (%s)" % (topic, e.strerror or e))
+    return _run(argparse.Namespace(decisions=str(path), notes=""), waiter=True, on_refused=lambda: refused(path))
+
+
 def _history(args):
     if args.folder and not (Path(args.history) / args.folder).is_dir():
         print("signoff: %s: not a folder" % (Path(args.history) / args.folder), file=sys.stderr)
@@ -4676,6 +4822,9 @@ def main(argv=None):
         return _inbox_done(argv[2])
     if len(argv) == 3 and argv[:2] == ["inbox", "rows"]:
         return _inbox_rows(argv[2])
+    # A run takes no --topic, so a decisions folder named "plan" (with options after it) still runs.
+    if argv[:1] == ["plan"] and "--topic" in argv:
+        return _plan(argv[1:])
     # A run has one positional argument, so a decisions folder named "elsewhere" (with options after it) still runs.
     if len(argv) in (3, 4) and argv[0] == "elsewhere" and not argv[1].startswith("-"):
         return _elsewhere(argv[1], argv[2], argv[3] if len(argv) == 4 else "")
@@ -4712,12 +4861,19 @@ def main(argv=None):
         return EXIT_ERROR
     if args.history:
         return _history(args)
+    return _run(args)
+
+
+def _run(args, waiter=False, on_refused=None):
+    """A run on args.decisions: a page run, or a waiter while the inbox lives. waiter=True (signoff plan, which
+    checked the inbox) is a waiter even if the inbox stops meanwhile, never a page run; on_refused is called when the
+    inbox did not take the rounds in."""
     home = inbox_home()
     inbox = inbox_on(home)
     locks = []
     try:
         # While the inbox lives, it serves the page and is the one writer: this run only waits for the answers.
-        waiter = inbox and inbox_alive(home)
+        waiter = waiter or inbox and inbox_alive(home)
         if waiter:
             rounds = load_rounds(args.decisions)
             # The inbox reads the pictures and boards when it takes the rounds in: a bad one fails here, as on a page.
@@ -4780,6 +4936,8 @@ def main(argv=None):
         print("signoff: stopped; the answers so far are kept", file=sys.stderr)
         return 130
     if result == "refused":
+        if on_refused:
+            on_refused()
         print("signoff: the Signoff inbox that is running did not take this round in, so the user cannot see it; it "
               "is likely older than this Signoff. Restart it (signoff inbox stop, then signoff inbox open) and run "
               "the same command again", file=sys.stderr, flush=True)

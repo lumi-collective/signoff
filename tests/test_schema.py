@@ -1377,6 +1377,45 @@ class SchemaFile(unittest.TestCase):
                                ("round-01.json", "done", True, False), ("round-02.json", "done", True, False),
                                ("round-03.json", "open", False, False)])
 
+    def test_the_plan_round_loads_and_keeps_to_the_schema(self):
+        # signoff plan's fixed round (AD-29): the texts the user saw in the preview, one Approve, no recommendation.
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(os.path.join(tmp, "plan-07.md"), "w", encoding="utf-8") as f:
+                f.write("# The plan\n")
+            data = signoff.plan_round(7)
+            with open(os.path.join(tmp, "round-07.json"), "w", encoding="utf-8") as f:
+                json.dump(data, f)
+            decisions, _ = signoff.load_decisions(os.path.join(tmp, "round-07.json"))
+        self.assertEqual({k: data[k] for k in ("version", "title", "tab", "context", "lang")},
+                         {"version": 1, "title": "Plan review", "tab": "Plan", "context": "Plan mode", "lang": "en"})
+        (item,) = data["items"]
+        self.assertEqual({k: item[k] for k in ("id", "title", "select", "blocking", "comment", "lines")},
+                         {"id": "plan", "title": "Approve this plan?", "select": "one", "blocking": True,
+                          "comment": True, "lines": True})
+        self.assertEqual(item["options"], [{"id": "approve", "label": "Approve the plan"},
+                                           {"id": "revise", "label": "Ask for changes"}])
+        self.assertEqual(item["attachments"], [{"src": "plan-07.md", "caption": "The plan", "open": True}])
+        self.assertNotIn("recommended", item)
+        for words in ("picks itself", "may ask once more", "Ask for changes"):
+            self.assertIn(words, item["description"])
+        self.assertEqual(decisions["items"][0]["attachments"][0]["text"], "# The plan\n")
+        # Every key is one schema.json names, every value of a closed list in it.
+        self.assertLessEqual(set(data), set(self.schema["properties"]))
+        self.assertLessEqual(set(self.schema["required"]), set(data))
+        props = self.defs["item"]["properties"]
+        self.assertLessEqual(set(item), set(props))
+        self.assertLessEqual(set(self.defs["item"]["required"]), set(item))
+        self.assertIn(item["select"], props["select"]["enum"])
+        self.assertRegex(item["id"], signoff.ID_PATTERN.pattern)
+        for key in ("blocking", "comment", "lines"):
+            self.assertEqual(props[key]["type"], "boolean")
+        for opt in item["options"]:
+            self.assertLessEqual(set(opt), set(self.defs["option"]["properties"]))
+        for att in item["attachments"]:
+            self.assertLessEqual(set(att), set(self.defs["attachment"]["properties"]))
+        self.assertEqual(signoff.plan_round(12)["items"][0]["attachments"][0]["src"], "plan-12.md")
+
     def test_demo_rounds_load_as_tabs(self):
         server = signoff.make_server(ROOT / "examples" / "demo")
         try:

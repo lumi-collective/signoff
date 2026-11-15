@@ -2060,5 +2060,76 @@ class Elsewhere(unittest.TestCase):
             self.assertEqual((self.saved(folder)["done"], self.saved(folder)["answers"]), (True, {}))
 
 
+@unittest.skipIf(sys.platform == "win32", "the inbox's control socket is a Unix socket; no inbox on Windows yet")
+class Plan(unittest.TestCase):
+    """<command> plan --topic <t> --folder <f> [--resume], the plan on stdin: one fixed round beside the plan, a
+    waiter on it beside <command> inbox serve, and the one answers path on stdout once the user's Done is saved
+    through the inbox's page. Without a live inbox it exits 1 and writes nothing."""
+
+    ask, inbox, held, rev = Elsewhere.ask, Elsewhere.inbox, Elsewhere.held, Elsewhere.rev
+    TOPIC = "2026-11-15-plan-abcd1234"
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.base = os.path.realpath(tmp.name)
+        self.home = os.path.join(self.base, "home")
+        os.makedirs(self.home, mode=0o700)
+        self.env = dict(os.environ, SIGNOFF_INBOX_HOME=self.home)
+        self.folder = os.path.join(self.base, "decisions")
+        self.topic = os.path.join(self.folder, self.TOPIC)
+
+    def child(self, *args):  # Elsewhere's, with a pipe on stdin
+        proc = subprocess.Popen(COMMAND + list(args), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, universal_newlines=True, encoding="utf-8", errors="replace",
+                                env=self.env)
+
+        def stop():
+            if proc.poll() is None:
+                proc.kill()
+            proc.communicate()
+        self.addCleanup(stop)
+        return proc
+
+    def plan(self, text):
+        proc = self.child("plan", "--topic", self.TOPIC, "--folder", self.folder)
+        proc.stdin.write(text)
+        proc.stdin.close()
+        proc.stdin = None  # Python 3.9's communicate() would flush the closed pipe
+        return proc
+
+    def test_without_a_live_inbox_it_exits_1_and_writes_nothing(self):
+        with open(os.path.join(self.home, "inbox.lock"), "w"):
+            pass  # an inbox has run here, none runs now
+        proc = self.plan("# Plan\n")
+        out, err = proc.communicate(timeout=30)
+        self.assertEqual((proc.returncode, out, err.count("\n")), (1, "", 1), err)
+        self.assertFalse(os.path.exists(self.folder))
+        self.assertEqual(sorted(os.listdir(self.home)), ["inbox.lock"])
+
+    def test_approve_through_the_inbox_page_exits_0_with_the_one_answers_path(self):
+        self.inbox()
+        proc = self.plan("# Plan\n\n1. One step\n\n")
+        round_file = os.path.join(self.topic, "round-01.json")
+        deadline = time.monotonic() + 30
+        while not (os.path.exists(round_file) and self.held(self.topic)):
+            self.assertIsNone(proc.poll(), proc.poll() is not None and proc.communicate())
+            self.assertLess(time.monotonic(), deadline, "the inbox did not take the plan round in")
+            time.sleep(0.1)
+        with open(os.path.join(self.topic, "plan-01.md"), "rb") as f:
+            self.assertEqual(f.read(), b"# Plan\n\n1. One step")
+        resp, data = self.web.request("POST", "%srun/0/save/0" % self.page, {
+            "answers": {"plan": {"choice": "approve", "comment": "", "source": "user"}}, "free_text": "",
+            "done": True, "rev": self.rev(0)}, {"Content-Type": "application/json", "Origin": self.origin,
+                                                "Sec-Fetch-Site": "same-origin"})
+        self.assertEqual(resp.status, 200, data)
+        out, err = proc.communicate(timeout=30)
+        self.assertEqual((proc.returncode, out), (0, os.path.join(self.topic, "round-01.answers.json") + "\n"), err)
+        self.assertNotIn("http://", err)
+        with open(os.path.join(self.topic, "round-01.answers.json"), encoding="utf-8") as f:
+            saved = json.load(f)
+        self.assertEqual((saved["done"], saved["answers"]["plan"]["choice"]), (True, "approve"))
+
+
 if __name__ == "__main__":
     unittest.main()

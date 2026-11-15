@@ -59,7 +59,8 @@ Instructions for coding agents working on Signoff. The README says what it does 
 - `plugin/signoff/signoff.py`: the server and command line. Python 3.9+, standard library only. Importable:
   `load_decisions`, `check_answers`, `make_server`, `main`. Also the inbox (`signoff inbox serve|open|stop`,
   `InboxServer`), its `todo.md` reader (`parse_todos`, `markdown_blocks`), its control socket client
-  (`inbox_request`, which also takes an op's other fields; `signoff inbox rows`), and the request files (`read_request`, `request_line`; `signoff inbox monitor|done`). The
+  (`inbox_request`, which also takes an op's other fields; `signoff inbox rows`), and the request files (`read_request`, `request_line`; `signoff inbox monitor|done`). Also
+  `signoff plan` (the plan-review rule) and its fixed round, `plan_round`. The
   inbox needs Unix sockets, so it does not run on Windows yet.
 - `plugin/signoff/page.html`: the page. One static file, no build step, no external requests. The server fills in
   `__NONCE__` and `__DATA__` on each request. Its colours sit between the `<!-- theme: -->` and `<!-- /theme -->`
@@ -79,8 +80,8 @@ Instructions for coding agents working on Signoff. The README says what it does 
   line note counts an attachment's lines (`attachment_lines`), read by the server's tests; the page's count must match it. `test_contract_http.py` checks
   the security and run contract against the command line as a separate process, over HTTP, its exit code and
   stdout only; `SIGNOFF_CONTRACT_CMD` (POSIX shell words: forward slashes in a Windows path) swaps in another
-  implementation. It must take the same arguments (`--no-open`, `--timeout`, `--history`, `--port`, and
-  `elsewhere <round file> <item id> [<note>]`), print its
+  implementation. It must take the same arguments (`--no-open`, `--timeout`, `--history`, `--port`,
+  `elsewhere <round file> <item id> [<note>]`, and `plan --topic <t> --folder <f>` with the plan on stdin), print its
   `http://` start link on stderr, and honour `SIGNOFF_INBOX_HOME` and `SIGNOFF_PORT` (and `XDG_CACHE_HOME`,
   `XDG_CONFIG_HOME` for Uptick's files). `support.py` also drops `SIGNOFF_PORT`, `SSH_CONNECTION` and `SSH_TTY`
   from the environment, so every run gets a random port and may open a browser unless a test says otherwise. Its inbox must touch `inbox.lock` at each look, as the mod reads that time. It must be the
@@ -101,7 +102,11 @@ Instructions for coding agents working on Signoff. The README says what it does 
   elsewhere` beside `<command> inbox serve` and a waiter (the `elsewhere` op and its refusals, on the socket and
   through the command) and races a page Done against a mark, through the inbox and beside a page run that holds
   the round lock: a run never exits 0 over an answers file that says `done: false`, and the loser is refused;
-  `Exits` marks an item beside a plain run. `test_cli.py` runs a waiter, and a mark, against the real
+  `Exits` marks an item beside a plain run; its `Plan` class runs `<command> plan` with no live inbox (exit 1,
+  nothing written) and beside `<command> inbox serve`, where an Approve saved with Done through the inbox's page
+  ends it with exit 0 and the one answers path. `test_cli.py`'s `CliPlan` class covers `signoff plan`'s refusals,
+  its files and their bytes, the rounds it closes, `--resume`, Ctrl+C and an older inbox (a stand-in and the real
+  0.4.0 one). `test_cli.py` runs a waiter, and a mark, against the real
   0.4.0 inbox from `git show v0.4.0:` (skipped without the tag, as in a shallow clone), and its `WaiterVerdict`
   class steps the check poll by poll (rounds answered in the poll of the verdict, an inbox gone or started again
   between the looks); its `CliElsewhere` class covers `signoff elsewhere` in each of its writer's cases, the user's
@@ -619,7 +624,10 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   key built at run time, such as `L['st_' + s]`, it does not see).
 - **Nothing is deleted.** Signoff writes the answers file and its Markdown copy (both atomically) and, only
   when absent, a `.gitignore`; so does `signoff elsewhere` (see the elsewhere rule), whose temporary file goes
-  again when the hash before its rename changed. Once an inbox has run, it also writes an empty `<round file>.lock` (such as
+  again when the hash before its rename changed. `signoff plan` writes `plan-NN.md`, `round-NN.json` and, for a
+  round it replaces or the inbox did not take in, `round-NN.outcome.json` in its topic folder
+  (`<YYYY-MM-DD>-plan-<session>`), each created exclusively, never over a file, and its run writes the
+  `.gitignore` there as a run does. Once an inbox has run, it also writes an empty `<round file>.lock` (such as
   `round-01.json.lock`) beside each open round and `runs/<run>.json` in the Signoff home (see the next rule),
   and its hooks write `projects/<id>.json`, `sessions/<session>.json` and `waiting.flag` there (see the hooks
   rule). With the macOS app installed, a new session's SessionStart keeps `launcher` in the home, a link it replaces by a rename
@@ -737,6 +745,26 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   (`textContent`) above the item's options, sends the saved choice and note back with every save, Accept all
   neither sets nor undoes it, and the user's own pick, typed text, number or rectangle on it makes it `user` (the
   note goes).
+- **`signoff plan` puts a plan on one fixed round and waits on it beside the inbox.** The mod runs it (AD-29),
+  never the agent: `signoff plan --topic <t> --folder <f> [--resume]`, each flag once in any order (taken as this
+  command only when the words hold `--topic`, so a decisions folder named `plan` still runs), the plan on stdin.
+  `--topic` matches `[0-9]{4}-[0-9]{2}-[0-9]{2}-plan-[A-Za-z0-9-]{1,8}` in full; `--folder` is absolute or relative
+  to `project_root()` of the current folder (none: exit 1). The plan: at most `MAX_DECISIONS` read, strict UTF-8,
+  the white space at its end cut by `PLAN_TRIM` (what JavaScript's `trimEnd()` cuts, so the mod holds the same
+  bytes; not Python's `rstrip()`), then 1 byte to `MAX_ATTACHMENT`. All of that, a live inbox (`inbox_on` and
+  `inbox_alive`), a topic folder that is no link or file, and no older open round of the topic a live run waits on
+  (a recent `runs/` entry with no `ended` and its pid alive: "a plan review is still open in another process") come
+  before the first write; any refusal is exit 1, one stderr line, nothing written. Then it makes the topic folder as
+  `mkdir -p` does, closes every older open round (no outcome file, no answers file that says done) with
+  `round-NN.outcome.json` `{log: "", line: "replaced by round-MM", date}`, and writes `plan-MM.md` (the cut bytes)
+  and `round-MM.json` (`plan_round`: every text a `PLAN_*` constant; one item `plan`, Approve and Ask for changes,
+  `blocking`, `comment`, `lines`, the plan attached with `open`, and no `recommended`, so `offer` never names it),
+  MM the next number after every `round-*.json` and `plan-*.md` there. Without `--resume` it always writes a new
+  round, so no approval is ever reused. With it, the newest round whose `plan-NN.md` equals the cut bytes is reused:
+  done, its answers path at once (exit 0); open, waited on; closed, or other bytes or none: a new round. It waits
+  as a waiter on that one round (`_run` with `waiter=True`: never a page run, even when the inbox stops meanwhile).
+  When the inbox does not take the round in, it closes it (`not shown: the inbox is older than this plugin;
+  restart it`) and exits 1.
 - **The hooks cost a session nothing.** They run in every Claude Code session of everyone who installs the
   plugin, so `inbox hook` always exits 0 (exit 2 would block a prompt or a stop), prints nothing (SessionStart and
   UserPromptSubmit stdout goes into the model's context) but the hand-over below, and writes nothing while
@@ -853,7 +881,8 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   the two equal), then hands out its link file, as with `open_browser: false`. Nothing else changes there; the mod's panel rows never read `inbox open`'s stderr, so over SSH a row opens
   nothing visible (a known limit, as on any machine without a browser). A browser a run or `open` starts gets `/dev/null` for each of
   stdout and stderr that is not a terminal (`_open_browser`), so it writes nothing there and holds no caller's
-  pipe open (on Linux the stdlib starts `xdg-open` or `gio` with them).
+  pipe open (on Linux the stdlib starts `xdg-open` or `gio` with them). `signoff plan` is no exception: its one
+  answers path, or nothing.
 - **Exit codes are a contract:** 0 Done, 1 invalid input (a usage error, a bad `--port` or `SIGNOFF_PORT` (one
   line, checked after argparse, without the usage), a port in use (one line that names the port, before any
   `runs/` entry or round lock: something answered a connection to `127.0.0.1:<port>`, or the bind failed; best
@@ -881,7 +910,12 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   inbox refusal or no answer, an inbox from before the op, a request shape the inbox refused, a lock file that
   cannot be opened (not a file system without locks), a line too long for the control socket, a file that
   kept changing through three tries, or a write that failed (a file system that cannot lock adds a line to an
-  exit 0).
+  exit 0). `signoff plan` exits as a waiter does (0 Done, 130 Ctrl+C, SIGTERM or SIGHUP; also 0 at once for a
+  `--resume` whose round is done), and 1 for bad input (a usage error, stdin not UTF-8, empty or over
+  `MAX_ATTACHMENT` once cut, a `--topic` off its pattern, a relative `--folder` outside any project, a topic folder
+  that is a link or a file), when no inbox is live, or when a live run waits on an older open round of the topic,
+  each with one stderr line and nothing written; 1 when a file it creates is already there; and 1 when the inbox
+  does not take its round in, which it then closes with an outcome file.
 - **Done waits for acceptance.** With several rounds open, a Done save is refused (409) until every other open
   round is accepted; Done accepts its own round, so a single round stays one click.
 - **No stale writes.** Every save from the page carries `rev`, the round's save count it last saw; an older one

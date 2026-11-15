@@ -1106,6 +1106,293 @@ class CliInbox(unittest.TestCase):
         self.assertEqual(codes, [signoff.EXIT_TIMEOUT])
 
 
+PLAN_TOPIC = "2026-11-15-plan-abcd1234"
+# JavaScript's trimEnd() takes the white space at the end (U+3000, U+FEFF, U+2028 too) but not U+001C, which
+# Python's rstrip() would take: the mod and the command must cut the same bytes.
+PLAN_KEPT = ("# Plan\n\n1. " + chr(0xC4) + "ndern  \r\n2. Ship\x1c").encode("utf-8")
+PLAN_TEXT = PLAN_KEPT + (" \t\n" + chr(0x2028) + chr(0x3000) + chr(0xFEFF) + "\r\n").encode("utf-8")
+
+
+class CliPlan(unittest.TestCase):
+    """`signoff plan --topic <t> --folder <f> [--resume]`, the plan on stdin: the mod's one fixed round, written
+    beside the plan and waited on beside a live inbox. The tests hold the inbox's lock themselves."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.base = Path(self._tmp.name).resolve()
+        self.home = self.base / "home"
+        self.home.mkdir(mode=0o700)
+        (self.home / "inbox.lock").write_bytes(b"")
+        self.project = self.base / "project"
+        (self.project / ".git").mkdir(parents=True)
+        self.topic = self.project / ".signoff" / PLAN_TOPIC
+        self.env = dict(os.environ, SIGNOFF_INBOX_HOME=str(self.home))
+        self.held = []
+
+    def tearDown(self):
+        stop_all()
+        while self.held:
+            signoff.unlock(self.held.pop())
+        self._tmp.cleanup()
+
+    def live(self):
+        fd = signoff.try_lock(self.home / "inbox.lock")
+        self.assertIsNotNone(fd)
+        self.held.append(fd)
+
+    def argv(self, *more, topic=PLAN_TOPIC, folder=".signoff"):
+        return ["plan", "--topic", topic, "--folder", folder] + list(more)
+
+    def start(self, argv, stdin=PLAN_TEXT, cwd=None):
+        proc = track(subprocess.Popen([sys.executable, "-I", "-B", SCRIPT] + argv, stdin=subprocess.PIPE,
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=self.env,
+                                      cwd=str(cwd or self.project)))
+        proc.stdin.write(stdin)  # small: fits the pipe whether or not the command reads it
+        proc.stdin.close()
+        proc.stdin = None  # Python 3.9's communicate() would flush the closed pipe
+        return proc
+
+    def run_plan(self, argv, stdin=PLAN_TEXT, cwd=None):
+        proc = subprocess.run([sys.executable, "-I", "-B", SCRIPT] + argv, input=stdin, capture_output=True,
+                              env=self.env, cwd=str(cwd or self.project), timeout=30)
+        return proc.returncode, proc.stdout.decode("utf-8"), proc.stderr.decode("utf-8")
+
+    def files(self, folder=None):
+        found = {}
+        for base, dirs, names in os.walk(str(folder or self.base)):
+            for n in dirs + names:
+                p = os.path.join(base, n)
+                found[p] = None if os.path.isdir(p) or os.path.islink(p) else Path(p).read_bytes()
+        return found
+
+    def refused(self, argv, stdin=PLAN_TEXT, cwd=None, words=()):
+        before = self.files()
+        code, out, err = self.run_plan(argv, stdin, cwd)
+        self.assertEqual((code, out, err.count("\n")), (1, "", 1), (argv, err))
+        self.assertTrue(err.startswith("signoff: "), err)
+        for w in words:
+            self.assertIn(w, err, argv)
+        self.assertEqual(self.files(), before, argv)
+
+    def seed(self, n, text=PLAN_KEPT, done=False, outcome=False, topic=None):
+        """A round of an earlier `signoff plan`: its plan, its round file, and what came of it."""
+        topic = topic or self.topic
+        topic.mkdir(parents=True, exist_ok=True)
+        if not (topic / ".gitignore").exists():
+            signoff.ensure_gitignore(topic)
+        (topic / ("plan-%02d.md" % n)).write_bytes(text)
+        (topic / ("round-%02d.json" % n)).write_text(json.dumps(signoff.plan_round(n)), encoding="utf-8")
+        if done:
+            self.answer(n, topic)
+        if outcome:
+            (topic / ("round-%02d.outcome.json" % n)).write_text('{"log": "", "line": "x", "date": "2026-01-01"}',
+                                                                 encoding="utf-8")
+
+    def answer(self, n, topic=None, choice="approve"):
+        write_outside((topic or self.topic) / ("round-%02d.answers.json" % n),
+                      done_record({"plan": {"choice": choice, "comment": "", "source": "user"}}))
+
+    def entries(self):
+        return [json.loads(p.read_text(encoding="utf-8")) for p in sorted((self.home / "runs").glob("[!.]*.json"))]
+
+    def waiting(self, proc, n, topic=None):
+        """Once the command waits on round n: its runs/ entry lists that round, as a waiter."""
+        topic = topic or self.topic
+        deadline = time.monotonic() + 20
+        while True:
+            mine = [e for e in self.entries() if e["pid"] == proc.pid] if (self.home / "runs").is_dir() else []
+            if mine:
+                break
+            self.assertIsNone(proc.poll(), proc.poll() is not None and proc.communicate())
+            self.assertLess(time.monotonic(), deadline, "the command did not start waiting")
+            time.sleep(0.05)
+        self.assertEqual((mine[0]["mode"], mine[0]["folder"], mine[0]["rounds"]),
+                         ("waiter", str(topic), ["round-%02d.json" % n]))
+
+    def handed_over(self, proc, n, topic=None):
+        out, err = proc.communicate(timeout=20)
+        err = err.decode("utf-8")
+        self.assertEqual((proc.returncode, out.decode("utf-8")),
+                         (0, "%s\n" % ((topic or self.topic) / ("round-%02d.answers.json" % n))), err)
+        self.assertNotIn("http://", err)
+
+    def outcome(self, n, topic=None):
+        return signoff.load_outcome((topic or self.topic) / ("round-%02d.outcome.json" % n))
+
+    def test_without_a_live_inbox_it_exits_1_and_writes_nothing(self):
+        self.refused(self.argv(), words=("inbox",))  # inbox.lock there but held by nobody
+        (self.home / "inbox.lock").unlink()
+        self.refused(self.argv(), words=("inbox",))  # no inbox has ever run
+
+    def test_bad_input_exits_1_in_one_line_and_writes_nothing(self):
+        self.live()
+        for topic in ("2026-11-15-plan-", "2026-11-15-plan-abcdefghi", "2026-11-15-plan-ab_c", "x2026-11-15-plan-a",
+                      "2026-11-15-plan-a\n", chr(0x662) + "026-11-15-plan-a", "../2026-11-15-plan-a", "2026-11-15-Plan-a"):
+            self.refused(self.argv(topic=topic), words=("--topic",))
+        good = self.argv()
+        for argv in (good + ["--bogus"], good + ["--resume", "--resume"], good + ["--topic", PLAN_TOPIC],
+                     good[:3], good + ["--folder"], good + ["extra"], self.argv(folder=""),
+                     ["plan", "--topic=" + PLAN_TOPIC, "--topic", PLAN_TOPIC, "--folder", ".signoff"]):
+            self.refused(argv)
+        # The flags in any order, --resume anywhere, are the same command: here refused only for its stdin.
+        for argv in (["plan", "--folder", ".signoff", "--resume", "--topic", PLAN_TOPIC], good + ["--resume"]):
+            self.refused(argv, stdin=b"\xff\xfe# Plan", words=("UTF-8",))
+        for stdin in (b"# Plan \xc3", b"\xed\xa0\x80", b"", (" \t\r\n" + chr(0x3000) + chr(0xFEFF) + chr(0x2028)).encode("utf-8"),
+                      b"x" * (signoff.MAX_ATTACHMENT + 1), b"x" * (2 * signoff.MAX_DECISIONS)):
+            self.refused(good, stdin=stdin)
+        loose = self.base / "loose"
+        loose.mkdir()
+        self.refused(good, cwd=loose, words=("project",))  # a relative folder needs a project root
+
+    @unittest.skipIf(sys.platform == "win32", "links need extra rights on Windows")
+    def test_a_topic_folder_that_is_a_link_or_a_file_is_refused(self):
+        self.live()
+        (self.base / "elsewhere").mkdir()
+        self.topic.parent.mkdir()
+        self.topic.symlink_to(self.base / "elsewhere", target_is_directory=True)
+        self.refused(self.argv())
+        self.topic.unlink()
+        self.topic.write_bytes(b"")
+        self.refused(self.argv())
+
+    def test_the_first_round_its_files_and_one_answers_path_on_stdout(self):
+        self.live()
+        proc = self.start(self.argv())
+        self.waiting(proc, 1)
+        self.assertEqual((self.topic / "plan-01.md").read_bytes(), PLAN_KEPT)
+        self.assertEqual(json.loads((self.topic / "round-01.json").read_text(encoding="utf-8")),
+                         signoff.plan_round(1))
+        self.assertEqual(sorted(p.name for p in self.topic.iterdir()), [".gitignore", "plan-01.md", "round-01.json"])
+        os.mkdir(str(self.base / "made"))  # as an agent's mkdir makes a topic folder
+        self.assertEqual(stat.S_IMODE(self.topic.stat().st_mode), stat.S_IMODE((self.base / "made").stat().st_mode))
+        time.sleep(2.5)
+        self.assertIsNone(proc.poll(), "a waiter has no idle timeout")
+        self.answer(1)
+        self.handed_over(proc, 1)
+        self.assertEqual([e["exit"] for e in self.entries()], [0])
+
+    def test_an_absolute_folder_needs_no_project(self):
+        self.live()
+        folder = self.base / "decisions"
+        proc = self.start(self.argv(folder=str(folder)), cwd=self.base)
+        self.waiting(proc, 1, folder / PLAN_TOPIC)
+        self.answer(1, folder / PLAN_TOPIC)
+        self.handed_over(proc, 1, folder / PLAN_TOPIC)
+
+    def test_a_new_call_closes_the_open_older_rounds_and_takes_the_next_number(self):
+        self.seed(1)
+        self.seed(2, done=True)
+        self.seed(3, outcome=True)
+        self.seed(4)
+        (self.topic / "plan-05.md").write_bytes(b"left by a run that stopped before its round")
+        # A run that waited on round 4 and ended: it holds nothing now.
+        ended = {"schema": 1, "run": "ab" * 8, "project": None, "folder": str(self.topic),
+                 "rounds": ["round-04.json"], "mode": "waiter", "pid": os.getpid(), "started": signoff.utc_now(),
+                 "ended": signoff.utc_now()}
+        (self.home / "runs").mkdir(mode=0o700)
+        (self.home / "runs" / "ended.json").write_text(json.dumps(ended), encoding="utf-8")
+        outcome3 = (self.topic / "round-03.outcome.json").read_bytes()
+        self.live()
+        proc = self.start(self.argv())
+        self.waiting(proc, 6)
+        today = datetime_today()
+        for n in (1, 4):
+            self.assertEqual(self.outcome(n), {"log": "", "line": "replaced by round-06", "date": today})
+        self.assertFalse((self.topic / "round-02.outcome.json").exists())  # done: nothing to close
+        self.assertEqual((self.topic / "round-03.outcome.json").read_bytes(), outcome3)
+        self.assertEqual((self.topic / "plan-06.md").read_bytes(), PLAN_KEPT)
+        self.answer(6, choice="revise")
+        self.handed_over(proc, 6)
+
+    def test_an_older_round_a_live_run_waits_on_is_left_alone(self):
+        self.seed(1)
+        self.seed(2)
+        (self.home / "runs").mkdir(mode=0o700)
+        live = {"schema": 1, "run": "cd" * 8, "project": None, "folder": str(self.topic),
+                "rounds": ["round-01.json"], "mode": "waiter", "pid": os.getpid(), "started": signoff.utc_now()}
+        (self.home / "runs" / "live.json").write_text(json.dumps(live), encoding="utf-8")
+        self.live()
+        self.refused(self.argv(), words=("a plan review is still open in another process",))
+
+    def test_resume_waits_on_the_same_open_round_and_writes_nothing(self):
+        self.seed(1, outcome=True)
+        self.seed(2)
+        self.live()
+        before = self.files(self.topic)
+        proc = self.start(self.argv("--resume"))
+        self.waiting(proc, 2)
+        self.assertEqual(self.files(self.topic), before)
+        self.answer(2)
+        self.handed_over(proc, 2)
+
+    def test_resume_on_the_same_done_round_prints_its_path_at_once(self):
+        self.seed(1, done=True)
+        self.live()
+        before = self.files()
+        code, out, err = self.run_plan(self.argv("--resume"))
+        self.assertEqual((code, out), (0, "%s\n" % (self.topic / "round-01.answers.json")), err)
+        self.assertEqual(self.files(), before)
+
+    def test_resume_writes_a_new_round_for_other_bytes_none_or_a_closed_one(self):
+        self.live()
+        cases = {"a": lambda t: self.seed(1, text=PLAN_KEPT + b"\nmore", topic=t),  # other bytes, open
+                 "b": lambda t: self.seed(1, text=PLAN_KEPT + b"\nmore", done=True, topic=t),  # other bytes, done
+                 "c": lambda t: self.seed(1, outcome=True, topic=t),  # the same bytes, closed without answers
+                 "d": lambda t: None}  # no round yet
+        for name, make in cases.items():
+            topic = self.project / ".signoff" / ("2026-11-15-plan-" + name)
+            make(topic)
+            proc = self.start(self.argv("--resume", topic="2026-11-15-plan-" + name))
+            n = 1 if name == "d" else 2
+            self.waiting(proc, n, topic)
+            self.assertEqual((topic / ("plan-%02d.md" % n)).read_bytes(), PLAN_KEPT)
+            if name == "a":
+                self.assertEqual(self.outcome(1, topic)["line"], "replaced by round-02")
+            if name == "b":
+                self.assertFalse((topic / "round-01.outcome.json").exists())
+            if name == "c":
+                self.assertEqual(self.outcome(1, topic)["line"], "x")
+            self.answer(n, topic)
+            self.handed_over(proc, n, topic)
+
+    def test_ctrl_c_exits_130_with_nothing_on_stdout(self):
+        self.live()
+        proc = self.start(self.argv())
+        self.waiting(proc, 1)
+        proc.send_signal(signal.SIGINT)
+        out, err = proc.communicate(timeout=20)
+        self.assertEqual((proc.returncode, out), (130, b""), err)
+
+    def older_inbox_refused(self, proc):
+        out, err = proc.communicate(timeout=30)
+        err = err.decode("utf-8")
+        self.assertEqual((proc.returncode, out), (1, b""), err)
+        self.assertIn("signoff inbox stop", err)
+        self.assertNotIn("Traceback", err)
+        self.assertEqual(self.outcome(1), {"log": "", "line": "not shown: the inbox is older than this plugin; "
+                                           "restart it", "date": datetime_today()})
+        self.assertEqual((self.topic / "plan-01.md").read_bytes(), PLAN_KEPT)
+        self.assertFalse((self.topic / "round-01.answers.json").exists())
+
+    @unittest.skipIf(sys.platform == "win32", "the inbox does not run on Windows")
+    def test_an_inbox_that_never_takes_the_round_in_gets_it_closed(self):
+        self.live()
+        CliInbox.looking(self)  # touches inbox.lock as an inbox's looks do, and locks no round
+        self.older_inbox_refused(self.start(self.argv()))
+
+    @unittest.skipIf(sys.platform == "win32", "the inbox does not run on Windows")
+    def test_a_real_0_4_0_inbox_refuses_the_round_and_it_is_closed(self):
+        inbox = CliInbox.real_0_4_0_inbox(self)
+        self.older_inbox_refused(self.start(self.argv()))
+        signoff.inbox_request(self.home, "stop")
+        self.assertIn("unknown key", inbox.communicate(timeout=20)[1])
+
+
+def datetime_today():
+    import datetime
+    return datetime.date.today().isoformat()
+
+
 class CliRounds(unittest.TestCase):
     def setUp(self):
         self.rounds = Rounds(3)
