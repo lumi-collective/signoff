@@ -548,7 +548,8 @@ def run_header(work):
     """A round's header from 761 to 1440 px, the sidebar a drawer up to 1000 px and beside it above, on the demo's
     round 2 with a long title, opened three days ago in a project, in English and Hungarian: the title keeps its
     room, each control and the progress pill one line inside the header, nothing covers anything, no line starts with
-    a separator, and at 1280 px it is one row. Returns {lang: {width: header}} for a report."""
+    a separator, and at 1440 px it is one row (at 1280 px too with macOS's font; with a wider one such as Verdana,
+    two). Returns {lang: {width: header}} for a report."""
     seen = {}
     for lang in ("en", "hu"):
         topic = work / "notebook-app" / ".signoff" / ("2026-01-06-header-" + lang)
@@ -581,7 +582,7 @@ def run_header(work):
                 time.sleep(0.3)
                 head = seen[lang][width] = browser.js(HEADER)
                 check((head["fits"] or head["title"] >= 200) and head["broken"] == [] and head["overlaps"] == []
-                      and head["dots"] == [] and (width != 1280 or head["rows"] == 1),
+                      and head["dots"] == [] and (width != 1440 or head["rows"] == 1),
                       "%s: the header at %d px: %r" % (lang, width, head))
         except E2EError:
             sys.stderr.write("--- Signoff stderr ---\n" + "".join(err))
@@ -2902,7 +2903,7 @@ def main():
           "Esc, Hungarian labels, an old round's time, pill and note in Hungarian, its context with the first item "
           "only; "
           "a round's header from 761 to 1440 px, in English and Hungarian: the title keeps 200 px, each control on one "
-          "line inside it, nothing covering anything, no line starting with a separator, one row at 1280 px; "
+          "line inside it, nothing covering anything, no line starting with a separator, one row at 1440 px; "
           "on a phone in Focus each item of round 2 shows its question, recommendation and first option before any "
           "scrolling, in English and Hungarian, its pictures as thumbnails and the one that takes marks small with "
           "Larger and Smaller; "

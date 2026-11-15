@@ -618,9 +618,12 @@ body.run .head-text{display:flex;flex-direction:column;min-width:0}
 body.run h1{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 body.run .project{order:2;padding:0;margin:2px 0 0;font-size:12px;font-weight:500;color:var(--quiet)}
 body.run #project{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}  /* the time under it */
-#opened{white-space:nowrap;margin-right:6px}  /* not the pill's left margin: a pill on a line of its own lines up */
+#opened{white-space:nowrap}
+.project .pill{margin-left:6px}
 body.run>header button,body.run>header .progress{white-space:nowrap}
 @media (min-width:761px){
+  #opened{margin-right:6px}  /* not the pill's left margin: a pill on a line of its own lines up */
+  .project .pill{margin-left:0;display:inline-block;line-height:1.2;vertical-align:top}  /* its box in its own line */
   /* The title's block keeps 260 px, room for the longest time line; with less, the controls take a second row. No
      window width says when: the sidebar, a drawer up to 1000 px, makes the header narrower at 1001 than at 800. */
   body.run:not(.hist)>header{flex-wrap:wrap}
