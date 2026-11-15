@@ -203,6 +203,18 @@ def palettes():
         box=DR["orange"], boxtext=DR["orange"], boxsoft=mix(DR["orange"], DR["bg"], .12), ok=DR["green"],
         oksoft=mix(DR["green"], DR["bg"], .10), mark=DR["cyan"],
         hues=[DR["orange"], DR["cyan"], DR["green"], DR["pink"], DR["purple"], DR["yellow"]])
+    # A diff's added and removed rows: the palette's green and red over the attachment box (field). Rose Pine's
+    # own git colours are foam and love; Signoff's red is its own. The line numbers stay on field.
+    diff = {"catppuccin": ((L["green"], L["red"]), (M["green"], M["red"])),
+            "signoff": (("#15703A", "#C92A3A"), ("#4ADE80", "#F87171")),
+            "rose-pine": ((D["foam"], D["love"]), (R["foam"], R["love"])),
+            "gruvbox": ((GL["green"], GL["red"]), (GD["green"], GD["red"])),
+            "tokyo-night": ((TL["green"], TL["red"]), (TN["green"], TN["red"])),
+            "dracula": ((AL["green"], AL["red"]), (DR["green"], DR["red"]))}
+    for pid, modes in diff.items():
+        for mode, (add, del_), t in zip(("light", "dark"), modes, (.14, .2)):
+            p = P[pid, mode]
+            p["add"], p["del"] = mix(add, p["field"], t), mix(del_, p["field"], t)
     return P
 
 
@@ -212,14 +224,14 @@ HIGH_CONTRAST = {
         bg="#FFFFFF", chrome="#FFFFFF", panel="#FFFFFF", field="#FFFFFF", sel="#ECE6FF", hover="#EDEDED", line="#6B6B6B",
         line2="#000000", text="#000000", soft="#1A1A1A", quiet="#2E2E2E", accent="#3F1DB0", btn="#3F1DB0",
         btntext="#FFFFFF", btnoff="#ECE6FF", btnofftext="#2E1585", focus="#000000", box="#B33A00", boxtext="#8A2C00",
-        boxsoft="#FFF0E6", ok="#0A5A26", oksoft="#E6F4EA", mark="#004E89",
+        boxsoft="#FFF0E6", ok="#0A5A26", oksoft="#E6F4EA", mark="#004E89", **{"add": "#DFF3E6", "del": "#FBE3E6"},
         mono_bg=["#FFE7D6", "#E1ECFB", "#DFF3E6", "#F7E1F1", "#ECE6FF", "#FBF1CF"],
         mono_fg=["#6B2400", "#0B3570", "#0A4A22", "#6A1556", "#2E1585", "#4F3A00"]),
     "dark": dict(
         bg="#000000", chrome="#000000", panel="#000000", field="#000000", sel="#2B2147", hover="#1C1C1C", line="#9E9E9E",
         line2="#FFFFFF", text="#FFFFFF", soft="#F2F2F2", quiet="#DEDEDE", accent="#D2C6FF", btn="#D2C6FF",
         btntext="#000000", btnoff="#2B2147", btnofftext="#E2DAFF", focus="#FFFFFF", box="#FF9F6B", boxtext="#FFC2A3",
-        boxsoft="#2B1408", ok="#7BEFA4", oksoft="#0B2414", mark="#7DD3FF",
+        boxsoft="#2B1408", ok="#7BEFA4", oksoft="#0B2414", mark="#7DD3FF", **{"add": "#0C2918", "del": "#3A0E14"},
         mono_bg=["#3A1E0B", "#0F2340", "#0C2918", "#35102C", "#2B2147", "#332A08"],
         mono_fg=["#FFD0B0", "#BCD8FF", "#B1F0C6", "#FFC8EE", "#E2DAFF", "#F7E3A0"]),
 }
@@ -235,7 +247,8 @@ PAIRS = ([(t, s, 4.5) for t in ("text", "soft", "quiet") for s in ("bg", "chrome
          + [(t, "panel", 3.0) for t in ("box", "focus", "mark")]
          + [("box", "bg", 3.0), ("focus", "bg", 3.0), ("focus", "chrome", 3.0), ("box", "chrome", 3.0),
             ("accent", "chrome", 4.5)]
-         + [("m%dfg" % i, "m%dbg" % i, 4.5) for i in range(6)])
+         + [("m%dfg" % i, "m%dbg" % i, 4.5) for i in range(6)]
+         + [("text", "add", 4.5), ("text", "del", 4.5)])  # a diff's added and removed rows
 HC_TEXT = 7.0  # the high-contrast set meets AAA for text, and 3:1 for its plain lines too
 
 
@@ -288,7 +301,7 @@ def finish(m, mode, hc=False):
 
 
 ORDER = ("bg chrome panel field sel hover line line2 text soft quiet accent btn btntext btnoff btnofftext "
-         "focus box boxtext boxsoft ok oksoft mark markfill "
+         "focus box boxtext boxsoft ok oksoft add del mark markfill "
          + " ".join("m%dbg m%dfg" % (i, i) for i in range(6))
          + " bgglass glassline dim shadow shadow2").split()
 

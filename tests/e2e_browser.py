@@ -1026,7 +1026,9 @@ def run_history(work):
     first, second = data["items"][0], data["items"][1]
     picture = [{"src": "mockups/list-filters.png"}]
     first.update(select="many", recommended=[first["recommended"]], marks=True, images=picture)  # a pick with Other
-    second.update(other=True, marks=True, images=picture)
+    second.update(other=True, marks=True, images=picture, attachments=[{"src": "notes/later.patch", "open": True}])
+    (old / "notes").mkdir()
+    (old / "notes" / "later.patch").write_text(PLAIN_PATCH, encoding="utf-8")
     for target in (old / "round-01.json", root / ".signoff" / "2026-01-09-quiet" / "round-01.json"):
         target.write_text(json.dumps(dict(data, title="Wording for %s" % target.parent.name)), encoding="utf-8")
     shutil.copytree(str(DEMO / "mockups"), str(old / "mockups"))
@@ -1125,6 +1127,12 @@ def run_history(work):
         browser.js("Array.prototype.filter.call(document.querySelectorAll('#h-list li'), function (li) { return "
                    "li.textContent.indexOf('search') >= 0; })[0].querySelector('button, a').click()")  # its pictures
         wait_for("a picture of the round", lambda: browser.js("!!document.querySelector('.frame img')"))
+        shown = browser.js(ATTACH_BOXES % json.dumps("details.attach"))
+        # Each round holds it; the quiet round's file is not there, so it says so, open all the same.
+        drawn = [b for b in shown if b["rows"]]
+        check(len(shown) == 2 and all(b["open"] for b in shown) and len(drawn) == 1
+              and len(drawn[0]["rows"]) == len(PLAIN_PATCH.splitlines()),
+              "an open attachment should start open on the past-decisions page too: %r" % shown)
         # While Signoff runs, a picture it cannot serve (404) is not taken for a stop.
         check(browser.js("(function () { var p = document.querySelector('.frame img'), was = p.src; "
                          "p.src = was.replace(/img\\/[0-9]+$/, 'img/999'); return p.src !== was; })()"),
@@ -1257,13 +1265,58 @@ def run_table(work):
         raise
 
 
+# A synthetic unified diff and the rows the page must draw from it: class, old number, new number, sign (with its
+# word for screen readers), text. A header or hunk line is one row with its whole line as its text.
+DIFF_ROWS = [("file", "", "", "", "diff --git a/export.py b/export.py"), ("file", "", "", "", "index 1111111..2222222 100644"),
+             ("file", "", "", "", "--- a/export.py"), ("file", "", "", "", "+++ b/export.py"),
+             ("hunk", "", "", "", "@@ -1,3 +1,5 @@ def export(rows):"), ("ctx", "1", "1", " ", "def export(rows):"),
+             ("del", "2", "", "-removed", "    return to_csv(rows)"), ("add", "", "2", "+added", "    if not rows:"),
+             ("add", "", "3", "+added", '        return ""'), ("add", "", "4", "+added", "    return to_csv(rows)  # <b>kept</b>"),
+             ("ctx", "3", "5", " ", ""), ("hunk", "", "", "", "@@ -10,2 +12,2 @@"), ("del", "10", "", "-removed", '    sep = ";"'),
+             ("add", "", "12", "+added", '    sep = ","'), ("ctx", "11", "13", " ", "    return sep.join(rows)"),
+             ("hunk", "", "", "", "\\ No newline at end of file")]
+DIFF_TEXT = "".join(r[3][:1] + r[4] + "\n" if r[0] in ("add", "del", "ctx") else r[4] + "\n" for r in DIFF_ROWS)
+# Not a diff: a hunk header without its numbers, a valid hunk with no +++ line before it, and after one a header of
+# long digit runs that never closes (a pattern that backtracks would hang on it). It shows as numbered plain text.
+PLAIN_PATCH = ("Not a diff, only notes.\n- a dash line\n+ a plus line\n@@ looks like a hunk @@\n@@ -1 +1 @@\n-a\n+b\n"
+               "+++ b/notes\n@@ -%s +%s x\n" % ("1" * 10000, "2" * 10000))
+BIG_ROWS = (256 * 1024 - 64) // 2  # one-character lines: the worst case within the 256 KiB limit
+BIG_DIFF = "--- a/big\n+++ b/big\n@@ -0,0 +1,%d @@\n" % BIG_ROWS + "+\n" * BIG_ROWS
+# Each attachment box of an item: open or not, the summary, the headers, and each row as class and cell texts.
+ATTACH_BOXES = """(function () {
+  return Array.prototype.map.call(document.querySelectorAll(%s), function (d) {
+    var t = d.querySelector('[role=table]'), pre = d.querySelector('pre');
+    var rows = t && t.querySelectorAll('[role=rowgroup] > [role=row]');
+    return {open: d.open, label: d.querySelector('summary').textContent, pre: pre && pre.textContent, high: t && t.scrollHeight,
+      heads: t && Array.prototype.map.call(t.querySelectorAll('[role=columnheader]'), function (c) { return c.textContent; }),
+      words: t && t.querySelectorAll('[role=cell] > .visually-hidden').length,
+      rows: t && rows.length <= 100 ? Array.prototype.map.call(rows, function (r) {
+        return [r.className].concat(Array.prototype.map.call(r.querySelectorAll('[role=cell]'), function (c) { return c.textContent; }));
+      }) : null};
+  });
+})()"""
+
+
 def run_attachment(work):
-    """An attachment shows closed, opens on a click, and holds the file's text exactly, nothing rendered."""
+    """An attachment shows closed, opens on a click, and holds the file's text exactly, nothing rendered. A diff
+    draws as numbered, marked rows at its first opening, one that does not parse as numbered text, an open box starts
+    open, an item with lines numbers a text file by the server's line rule, and the largest one draws its first
+    screen at once and the rest while the page still answers."""
     topic = work / "2026-01-09-export"
     topic.mkdir()
     shutil.copytree(str(DEMO / "notes"), str(topic / "notes"))
+    rule = json.loads((ROOT / "tests" / "line_rule.json").read_text(encoding="ascii"))
+    for name, body in (("change.diff", DIFF_TEXT), ("plain.patch", PLAIN_PATCH), ("rule.txt", rule["text"]),
+                       ("big.diff", BIG_DIFF)):
+        (topic / "notes" / name).write_bytes(body.encode("utf-8"))
+    check((topic / "notes" / "big.diff").stat().st_size <= 256 * 1024, "the big diff must stay within the limit")
     data = json.loads((DEMO / "round-03.json").read_text(encoding="utf-8"))
     data["items"] = [it for it in data["items"] if it.get("attachments")]
+    data["items"].append({"id": "change", "title": "Ship the export change?", "select": "one", "recommended": "ok",
+                          "options": [{"id": "ok", "label": "Ship it"}, {"id": "no", "label": "Not yet"}], "lines": True,
+                          "attachments": [{"src": "notes/change.diff", "caption": "The change"},
+                                          {"src": "notes/plain.patch", "open": True}, {"src": "notes/rule.txt"},
+                                          {"src": "notes/big.diff", "caption": "Everything"}]})
     target = topic / "decisions.json"
     target.write_text(json.dumps(data), encoding="utf-8")
     item = data["items"][0]
@@ -1289,6 +1342,75 @@ def run_attachment(work):
         check(opened["text"] == text, "the attachment should be the file's text exactly")
         check(opened["children"] == 0 and browser.js("document.querySelectorAll('.attach b, .attach h1').length") == 0,
               "nothing in the attachment may render")
+        boxes = '[data-item="change"] details.attach'
+        diff, plain, ruled, big = browser.js(ATTACH_BOXES % json.dumps(boxes))
+        check(not diff["open"] and diff["rows"] is None and not ruled["open"] and ruled["rows"] is None
+              and big["rows"] is None, "a closed box should have no rows until it opens: %r" % [diff, ruled, big])
+        check(plain["open"] and plain["rows"] == [["", str(n), line] for n, line in enumerate(PLAIN_PATCH.splitlines(), 1)]
+              and plain["heads"] == ["Line", "Text"], "an open box should start open, a non-diff as numbered text: %r" % plain)
+        # Drawn where it is, on the screen or not: a box below the fold takes its rows' height, not a stand-in's.
+        check(browser.js("document.querySelectorAll(%s)[1].getBoundingClientRect().top > innerHeight" % json.dumps(boxes))
+              and plain["high"] < 20000, "an open box below the fold should take its rows' height: %r" % plain["high"])
+        browser.click(boxes + ":nth-of-type(1) > summary")
+        diff = browser.js(ATTACH_BOXES % json.dumps(boxes))[0]
+        check(diff["open"] and diff["rows"] == [list(r) for r in DIFF_ROWS], "the diff's rows: %r" % diff["rows"])
+        check(diff["heads"] == ["Old line", "New line", "Change", "Text"]
+              and diff["words"] == sum(r[0] in ("add", "del") for r in DIFF_ROWS),
+              "the diff's headers and its words for screen readers: %r" % diff)
+        check("16 lines" in diff["label"] and browser.js("document.querySelectorAll('.attach b').length") == 0,
+              "the diff's count, and nothing in it rendered: %r" % diff["label"])
+        browser.click(boxes + ":nth-of-type(3) > summary")
+        ruled = browser.js(ATTACH_BOXES % json.dumps(boxes))[2]
+        check(ruled["rows"] == [["", str(n), line] for n, line in enumerate(rule["lines"], 1)]
+              and "%d lines" % len(rule["lines"]) in ruled["label"], "the server's line rule on the page: %r" % ruled)
+
+        # The worst case: the first screen at once, a key and a click answered while the rest draws.
+        browser.js("""(function () {
+          var b = document.querySelectorAll(%s)[3], s = window.bigBox = {};
+          function rows() {
+            return Array.prototype.reduce.call(b.querySelectorAll('[role=rowgroup]'), function (n, g) { return n + g.childElementCount; }, 0);
+          }
+          b.querySelector('summary').addEventListener('click', function () {
+            s.t0 = performance.now();
+            var last = s.t0; s.gap = 0;
+            requestAnimationFrame(function frame() {
+              var now = performance.now(), n = rows();
+              s.gap = Math.max(s.gap, now - last); last = now;
+              if (n && s.first === undefined) { s.first = now - s.t0; s.firstRows = n; }
+              if (n === %d) { s.all = now - s.t0; return; }
+              requestAnimationFrame(frame);
+            });
+          });
+          window.bigRows = rows;
+          document.addEventListener('keydown', function () { s.keyRows = rows(); }, true);
+          document.addEventListener('mousedown', function (e) { if (!b.contains(e.target)) s.clickRows = rows(); }, true);
+        })()""" % (json.dumps(boxes), BIG_ROWS + 3))
+        x, y = browser.center(boxes + ":nth-of-type(4) > summary")
+        # A click on the line-rule box's last row, above it on the screen: it does nothing but be answered.
+        cx, cy = browser.js("(function () { var r = document.querySelectorAll(%s)[2].querySelector('[role=row]:last-child > :last-child')"
+                            ".getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()" % json.dumps(boxes))
+        check(0 < cy < y, "the line-rule box should be on the screen above the big one: %r" % [cy, y])
+        for kind in ("mousePressed", "mouseReleased"):
+            browser.call("Input.dispatchMouseEvent", type=kind, x=x, y=y, button="left", buttons=1 if kind == "mousePressed" else 0,
+                         clickCount=1)
+        wait_for("the big diff's first rows", lambda: browser.js("window.bigRows()") > 0)
+        t = time.monotonic()
+        press(browser, "Shift", "ShiftLeft", 16)
+        key_ms = (time.monotonic() - t) * 1000
+        t = time.monotonic()
+        for kind in ("mousePressed", "mouseReleased"):
+            browser.call("Input.dispatchMouseEvent", type=kind, x=cx, y=cy, button="left", buttons=1 if kind == "mousePressed" else 0,
+                         clickCount=1)
+        click_ms = (time.monotonic() - t) * 1000
+        s = wait_for("every row of the big diff", lambda: browser.js("window.bigBox.all !== undefined && window.bigBox"))
+        check(0 < s["firstRows"] < BIG_ROWS + 3, "the first screen should come before the rest: %r" % s)
+        check(0 < s.get("keyRows", 0) < BIG_ROWS + 3 and 0 < s.get("clickRows", 0) < BIG_ROWS + 3,
+              "a key and a click should be answered while the rows draw: %r" % s)
+        big = browser.js(ATTACH_BOXES % json.dumps(boxes))[3]
+        check(big["open"] and big["words"] == BIG_ROWS, "every added row should carry its word: %r" % big["words"])
+        print("attachment of %d rows: first screen %.0f ms (%d rows), all rows %.0f ms, longest frame %.0f ms; "
+              "a key answered in %.0f ms, a click in %.0f ms, both while it drew" % (BIG_ROWS + 3, s["first"], s["firstRows"],
+                                                                                  s["all"], s["gap"], key_ms, click_ms), flush=True)
         browser.click("#done")
         finished(server, out, err, [topic / "decisions.answers.json"])
     except E2EError:
@@ -3260,7 +3382,9 @@ def main():
           "project name in the header and the tab title; --history search finds answers and comments, never a private one, "
           "and its picker previews in the tab only, and once it stops a picture that fails says so; "
           "table view: chips, toggle, a pick in the table saved and shown on the cards, exit 0; "
-          "an attachment starts closed, opens, shows the file's text unrendered, exit 0; "
+          "an attachment starts closed, opens, shows the file's text unrendered, a diff as numbered marked rows at its "
+          "first opening, a non-diff and noted lines numbered by the server's line rule, an open one open (on the "
+          "past-decisions page too), 131k rows drawn while the page answers, exit 0; "
           "an item's commands sit between its text and pictures as code blocks, unrendered, wrapped, Copy exact, a "
           "relative rm warns whatever the lang, Hungarian labels, exit 0, escaped in the Markdown copy, and on a done "
           "round and --history Copy is exact too; "

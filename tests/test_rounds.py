@@ -845,6 +845,19 @@ class Page(unittest.TestCase):
         self.assertIn("fromHint: 'YYYY-MM-DD'", self.page)
         self.assertIn("fromHint: 'ÉÉÉÉ-HH-NN'", self.page)
 
+    def test_an_attachment_counts_and_names_its_lines_as_the_server_does(self):
+        # The line rule of attachment_lines(): LF only (a regex . or \R would also end a line at a lone CR or U+2028),
+        # one CR cut, no line after a final LF. The diff view's words for screen readers end each LABELS block.
+        self.assertIn("var a = t.split('\\n');\n    if (a[a.length - 1] === '') a.pop();\n"
+                      "    return a.map(function (s) { return s.slice(-1) === '\\r' ? s.slice(0, -1) : s; });", self.page)
+        labels = self.page[self.page.index("var LABELS = {"):self.page.index("var data = JSON.parse")]
+        en, hu = labels[:labels.index("hu: {")], labels[labels.index("hu: {"):]
+        self.assertTrue(en.rstrip().endswith("lnAdd: 'added', lnDel: 'removed', lnOld: 'Old line', lnNew: 'New line', "
+                                             "lnNum: 'Line', lnSign: 'Change', lnText: 'Text'},"), en[-300:])
+        self.assertIn("lnAdd: 'hozzáadva', lnDel: 'törölve', lnOld: 'Régi sor', lnNew: 'Új sor', lnNum: 'Sor', "
+                      "lnSign: 'Változás', lnText: 'Szöveg'}", hu)
+        self.assertTrue(hu.rstrip().endswith("lnText: 'Szöveg'}\n  };"), hu[-100:])
+
 
 if __name__ == "__main__":
     unittest.main()
