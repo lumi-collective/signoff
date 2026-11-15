@@ -70,7 +70,7 @@ later writes covers them; where the topic folder already had its own (one an old
 in git as untracked files until you add `*.json.lock` to it. While the
 inbox is open, a run opens no page and starts no server: it
 waits, with no idle timeout, until the answers the inbox writes are done, then exits with the same codes and
-stdout. It reads its pictures and boards at start, as the inbox does, so a bad one fails there with its own error.
+stdout. It reads its pictures and boards at start, as a page run does, so a bad one fails there with its own error.
 Once the same inbox has looked at the runs twice since the run started (it does every two seconds), the run
 checks that some process holds its rounds' locks: the inbox locks each round it takes in, unless another run holds
 it already (the inbox then shows it read only) or the file system cannot lock. When no one holds any, the inbox did

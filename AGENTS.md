@@ -602,8 +602,9 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   it ends, and exits 1 when another process holds one, unless a second look finds the inbox alive: it is then a
   waiter (a file system that cannot lock: a stderr line, no lock).
   While the inbox holds `inbox.lock`, a run is a waiter: no port, no browser, no idle timeout, no lock; it looks
-  at its answers files once a second and exits as a run does. It reads its pictures and boards at start, as the
-  inbox does when it takes the rounds in, so a bad one is a load error (exit 1), as for a page run. It also checks
+  at its answers files once a second and exits as a run does. It reads its pictures and boards at start, as a
+  page run does (the pictures of rounds already done too; the inbox reads only the open rounds its run entry names),
+  so a bad one is a load error (exit 1). It also checks
   once that the inbox took its rounds in: once its entry is written (a failed write: no check), and once
   `inbox.lock`'s time has changed twice while `inbox.json`'s `server_id` stayed the same (the inbox touches it at
   each look, before it reads `runs/`, so a whole look of one inbox saw the entry; another `server_id` counts
