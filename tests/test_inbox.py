@@ -2057,7 +2057,7 @@ class InboxRows(InboxTest):
     def test_a_bad_project_is_refused(self):
         self.case([one_round(question("q"))])
         self.start()
-        for bad in(None, 12, "", "0" * 15, "0" * 17, "A" * 16, ["0" * 16]):
+        for bad in (None, 12, "", "0" * 15, "0" * 17, "A" * 16, ["0" * 16]):
             self.assertEqual(sorted(self.ctl("rows", project=bad)), ["error"], bad)
         self.assertEqual(sorted(self.ctl("rows")), ["error"])
 

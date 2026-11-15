@@ -17,7 +17,8 @@
   round, that its questions may be out of date, so ask the agent if in doubt. A tab left open keeps its age text and
   warning as they were until it is reloaded.
 - **The round's context**, when the agent wrote one (`context`: which session asks and what it was working on),
-  is the first line of the round, in quieter text. On a phone in Focus it shows with the first item only.
+  is the first line of the round, in quieter text (after the outcome on the past-decisions page). On a phone in
+  Focus it shows with the first item only.
 - **Rounds are in the sidebar**, each with its state in a word: open, accepted, changed, done. A round answered
   with Done in an earlier run is read only. A round that depends on earlier answers comes as a new run on the same
   folder, so the earlier ones stay in view. Under the rounds, the open round's items are listed; a click goes to

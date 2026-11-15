@@ -557,7 +557,7 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   (`opened` in each round of the page data: its round file's time, read with its hash at load, `null` when not
   `0 < mtime <= now`) as a `<time>` with the full time as its title; an open round (not read only) that old by
   `OLD_ROUND` or more adds the pill there and a `readonly-note warn` at the top of its panel. A round's `context`
-  is its panel's first line (`p.context`, as text); at 760 px or less in Focus it shows with the first item only
+  is its panel's first line (`p.context`, as text; after the outcome on the past-decisions page); at 760 px or less in Focus it shows with the first item only
   (`at-start` on the panel, beside `at-end`). The Summary and the
   past-decisions page show no time. The past-decisions page puts its list in the sidebar and has no Focus. The page
   data gets `mono` (`mono`, `color`: the inbox's monogram for the project's name) on a run and the past-decisions

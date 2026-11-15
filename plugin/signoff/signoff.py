@@ -521,13 +521,13 @@ def load_decisions(path, lenient=False):
         _text(data, key, "decisions file")
     if "context" in data:
         line = data["context"]
-        # One line the inbox row shows whole: no control, format (bidi, zero-width), line-separator or lone
-        # surrogate character, and never cut, so the agent learns at once that it is too long.
+        # One line the inbox row shows whole: no line break or tab, none of the characters a command refuses as
+        # invisible, and never cut, so the agent learns at once that it is too long.
         if not (isinstance(line, str) and line.strip() and len(line) <= MAX_CONTEXT
-                and not any(unicodedata.category(c) in ("Cc", "Cf", "Cs", "Zl", "Zp") for c in line)):
+                and "\t" not in line and "\n" not in line and _hidden(line) is None):
             raise DecisionsError("decisions file: 'context' must be one line of 1 to %d characters, with no control "
                                  "or invisible character" % MAX_CONTEXT)
-    free =data.setdefault("free_text", {})
+    free = data.setdefault("free_text", {})
     _keys(free, FREE_TEXT_KEYS, (), "free_text")
     for key in FREE_TEXT_KEYS:
         _text(free, key, "free_text")

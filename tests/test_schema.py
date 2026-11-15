@@ -231,6 +231,11 @@ class DecisionsFile(unittest.TestCase):
                       "line sep"):
             msg = self.broken(lambda d: d.update(context=value))
             self.assertIn("'context'", msg, repr(value))
+        # What a command refuses as drawn as nothing: the Braille blank, a Hangul filler, private use, a variation
+        # selector, an unassigned code point.
+        for n in (0x2800, 0x3164, 0xE000, 0xFE0F, 0x0378):
+            msg = self.broken(lambda d, n=n: d.update(context="feat/x " + chr(n) + " session"))
+            self.assertIn("'context'", msg, "U+%04X" % n)
 
     def test_blocking_defaults_to_false_and_must_be_a_bool(self):
         data = sample_decisions()

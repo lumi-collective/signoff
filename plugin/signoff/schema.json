@@ -13,7 +13,7 @@
     "intro": { "type": "string", "description": "One or two sentences under the heading." },
     "notice": { "type": "string", "description": "A short notice shown as a banner under the header, e.g. \"Synthetic data only\"." },
     "lang": { "type": "string", "description": "BCP 47 language tag of the content, e.g. \"en\" or \"de\". Default \"en\"." },
-    "context": { "type": "string", "minLength": 1, "maxLength": 120, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029]*$", "description": "One line on which session asks and what it was working on, e.g. \"feat/parser session: splitting the tokenizer\". Shown on the round's page and its inbox row. Never a prompt, a transcript, a secret or a path. Not blank; no control, format (bidi, zero-width) or line-separator character. Needs Signoff 0.5.0." },
+    "context": { "type": "string", "minLength": 1, "maxLength": 120, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029]*$", "description": "One line on which session asks and what it was working on, e.g. \"feat/parser session: splitting the tokenizer\". Shown on the round's page and its inbox row. Never a prompt, a transcript, a secret or a path. The pattern refuses control and line-separator characters; Signoff also refuses a blank value and the invisible characters a command's text refuses. Needs Signoff 0.5.0." },
     "items": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/item" } },
     "free_text": {
       "type": "object",
