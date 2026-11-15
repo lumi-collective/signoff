@@ -58,8 +58,9 @@ port. While the inbox runs, a run opens no page and binds nothing, so a run then
   the remote one: when VS Code picks another, because the first is taken, the page gets 403.
 
 Open the link as Signoff prints it, with `127.0.0.1`. The page also answers to `localhost:<port>`, for a forward
-that opens it that way, but a browser may try `localhost` as `::1` (IPv6) first, where neither Signoff nor
-`ssh -L` listens, and another program on your computer could: it would get the link and its token.
+that opens it that way, but a browser may try `localhost` as `::1` (IPv6) first. Signoff never listens there,
+and a forward may not either; another program on your computer listening there would get the link and its
+token.
 - **Not covered:** a Docker `-p` mapping without host networking (Signoff listens on the container's own
   loopback, which `-p` does not reach), and GitHub Codespaces' `https://…github.dev` addresses (another host name,
   which gets 403).

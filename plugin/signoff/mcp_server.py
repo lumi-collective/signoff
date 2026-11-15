@@ -9,7 +9,7 @@ Two tools, neither of which blocks:
   signoff_status({run_id})                 returns {state: waiting|done|timeout|error, answers_paths: [...]}
 
 A run outlives the call and this server. Tool results never carry the page's token or the start link: they would
-end up in a transcript. The browser opens itself; with open_browser=false the result names a file that
+end up in a transcript. The browser opens itself; with open_browser=false (or over SSH) the result names a file that
 carries the single-use start link, for the user to open; with the Signoff inbox open there is no link, and the
 result says the questions are in the inbox. Run ids live as long as this server process; the answers files
 on disk are the lasting record. Python 3.9+, standard library only.

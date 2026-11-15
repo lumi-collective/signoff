@@ -91,8 +91,8 @@ send requests to `127.0.0.1`. The rules, in short:
   read what you type there. It never gets Signoff's tokens or answers files. That is why the port is random unless
   you set one: set it only on a machine whose other users you trust, and open only a start link Signoff printed
   for that run. It still binds `127.0.0.1` only, never another address. Open that link with `127.0.0.1`, as
-  printed: a browser may try `localhost` as `::1` first, where Signoff and an `ssh -L` forward do not listen, so
-  another program on that address would get the link, its token included.
+  printed: a browser may try `localhost` as `::1` first, where Signoff never listens and a forward may not
+  either, so another program listening there would get the link, its token included.
 - **A single-use start link:** the browser is opened with a second token, `/b/<start token>/`, which redirects
   once and is dead from then on; that link is what other programs can see in the browser's command line. A
   second visit gets 410 and stops the run with exit code 1. A Done in the first 5 seconds after the link's
