@@ -122,6 +122,9 @@ Instructions for coding agents working on Signoff. The README says what it does 
 - `examples/demo/`: synthetic decisions with mockups: `decisions.json` as one round, and the same questions as
   `round-01.json` to `round-04.json`, the source of the screenshots in the README and `docs/`; `boards/` holds a board.
 - `examples/history/`: a synthetic project for `--history`, its answers and outcome files committed.
+- `scripts/release.py`: the release step, run on the pushed release branch. It pushes main and the signed tag
+  `v<version>` together only when the newest `test` run of that branch on that commit succeeded (read with `gh`),
+  then makes the GitHub Release; `tests/test_release.py` covers it with a local origin and a stand-in `gh`.
 - `app/`: Signoff, an optional macOS app (Go, Wails v3.1.0 pinned in `go.mod`, cgo) around the inbox. Not
   part of the plugin; the plugin never needs it. `build.sh` builds `app/bin/Signoff.app` (git-ignored),
   ad-hoc signed, without npm: the window loads the inbox's page. The Homebrew cask (its own repo,
