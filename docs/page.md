@@ -63,9 +63,11 @@
   line's, the sign and the text; added and removed lines on backgrounds of their own (the palette's green and red,
   Rose Pine's foam and love), the `+` and `-` always
   shown (and read out as "added" and "removed"), file and hunk headers set apart. One that is not a unified diff shows
-  as numbered lines, and so does a `.md` or `.txt` on an item whose lines take notes (`lines`). A line is what the
-  answers file counts as one: the text split at each line feed. The rows are drawn when the box first opens, the
-  first screen at once and the rest after it, so even a 256 KiB file leaves the page answering.
+  as numbered lines, and so does a `.md` or `.txt` on an item whose lines take notes (`lines`). A hunk's lines must
+  add up to the counts in its `@@` line, and it counts only after a `+++` line. A line is what the answers file
+  counts as one: the text split at each line feed. The rows are drawn when the box first opens (an open box: when its
+  round is first shown), the first screen at once and the rest after it, so even a 256 KiB file leaves the page
+  answering.
 - **Commands.** A command the agent asks you to run before you decide shows under the item's text as a code
   block, as in the inbox: its language, a **Copy** button that copies it exactly, and a hint under one that
   deletes with a relative path, whatever its language. A long line wraps, a command is at most 4000 characters

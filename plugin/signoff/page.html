@@ -192,8 +192,8 @@ button.icon svg{width:18px;height:18px}
 .attach pre,.att-lines{margin:0;padding:10px 12px;border-top:1px solid var(--line);max-height:340px;overflow:auto;white-space:pre-wrap;
   overflow-wrap:anywhere;font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--text)}
 .attach-missing{margin:0;padding:10px 12px;border-top:1px solid var(--line);color:var(--quiet)}
-.att-lines{position:relative}.att-lines [role=rowgroup]+*{content-visibility:auto;contain-intrinsic-size:auto 4e4px}
-.att-lines [role=row]{display:grid;grid-template-columns:8ch 1fr}.diff [role=row]{grid-template-columns:8ch 8ch 2ch 1fr}
+.att-lines{position:relative}.att-lines [role=rowgroup]+*{content-visibility:auto}
+.att-lines [role=row]{display:grid;grid-template-columns:8ch 1fr}.att-lines [role=cell]{min-height:1.5em}.diff [role=row]{grid-template-columns:8ch 8ch 2ch 1fr}
 .att-lines .n{padding-right:8px;text-align:right;color:var(--quiet);background:var(--field);user-select:none}
 .diff .add{background:var(--add)}.diff .del{background:var(--del)}.diff .file,.diff .hunk{color:var(--soft);background:var(--hover)}
 .board-bar{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;margin:0 0 8px}
@@ -2955,15 +2955,18 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
   }
   // A unified diff's rows [class, old, new, sign, text], or null; hunks after +++ only. Linear on any line.
   function diffRows(lines) {
-    var out = [], head = 0, hunks = 0, o = 0, n = 0, lo = 0, ln = 0;
+    var out = [], head = 0, w = 0, hunks = 0, o = 0, n = 0, lo = 0, ln = 0;
     for (var i = 0; i < lines.length; i++) {
       var s = lines[i], c = s[0], t = s.slice(1), h = head && !lo && !ln && /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(s);
       if ((lo || ln) && c !== '\\') {
+        w = 1;
         if (c === '-' && lo) out.push(['del', o++, '', c, t]), lo--;
         else if (c === '+' && ln) out.push(['add', '', n++, c, t]), ln--;
         else if ((c === ' ' || !s) && lo && ln) out.push(['ctx', o++, n++, ' ', t]), lo--, ln--;
         else return null;
       } else {
+        if (w && /^[-+ ]/.test(s) && !/^(\+\+\+|---?) /.test(s)) return null;  // a hunk that counts short
+        w = w && c === '\\';
         if (h) o = +h[1], lo = h[2] ? +h[2] : 1, n = +h[3], ln = h[4] ? +h[4] : 1, hunks++;
         else head |= s.startsWith('+++ ');
         out.push([h || c === '\\' ? 'hunk' : 'file', '', '', '', s]);
@@ -2991,6 +2994,7 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
         }
         g.append(tr);
       }
+      g.style.containIntrinsicSize = 'auto ' + 1.5 * g.children.length + 'em';  // undrawn, as tall as its rows
       box.append(g);
       if (i < rows.length) setTimeout(chunk);
     })();
@@ -3142,9 +3146,10 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
       if (att.text === undefined) {
         box.append(el('p', 'attach-missing', fmt(L.attachMissing, {r: att.missing})));
       } else if (diff || item.lines) {
-        var build = function () { if (box.open && !box.children[1]) view(lineBox(lines, diff && diffRows(lines))); };
-        box.addEventListener('toggle', build);
-        build();
+        // Setting open fires one toggle after render; a box in a hidden round waits for showRound's.
+        box.addEventListener('toggle', function () {
+          if (box.open && !box.children[1] && !box.closest('[hidden]')) view(lineBox(lines, diff && diffRows(lines)));
+        });
       } else {
         view(el('pre', '', att.text));
       }
@@ -3700,6 +3705,7 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
       t.tabIndex = i === ri ? 0 : -1;
     });
     if (!tabButtons.length) byId('panel-0').hidden = false;
+    byId('panel-' + ri).querySelectorAll('.attach[open]').forEach(function (b) { b.dispatchEvent(new Event('toggle')); });
     place();
     drawOutline();
     acceptShown();

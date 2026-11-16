@@ -1127,7 +1127,9 @@ def run_history(work):
         browser.js("Array.prototype.filter.call(document.querySelectorAll('#h-list li'), function (li) { return "
                    "li.textContent.indexOf('search') >= 0; })[0].querySelector('button, a').click()")  # its pictures
         wait_for("a picture of the round", lambda: browser.js("!!document.querySelector('.frame img')"))
-        shown = browser.js(ATTACH_BOXES % json.dumps("details.attach"))
+        # Its rows come with the toggle event its open attribute fires, a task after the round is shown.
+        shown = wait_for("the open box's rows", lambda: (lambda b: any(x["rows"] for x in b) and b)(
+            browser.js(ATTACH_BOXES % json.dumps("details.attach"))))
         # Each round holds it; the quiet round's file is not there, so it says so, open all the same.
         drawn = [b for b in shown if b["rows"]]
         check(len(shown) == 2 and all(b["open"] for b in shown) and len(drawn) == 1
@@ -1280,6 +1282,18 @@ DIFF_TEXT = "".join(r[3][:1] + r[4] + "\n" if r[0] in ("add", "del", "ctx") else
 # long digit runs that never closes (a pattern that backtracks would hang on it). It shows as numbered plain text.
 PLAIN_PATCH = ("Not a diff, only notes.\n- a dash line\n+ a plus line\n@@ looks like a hunk @@\n@@ -1 +1 @@\n-a\n+b\n"
                "+++ b/notes\n@@ -%s +%s x\n" % ("1" * 10000, "2" * 10000))
+# Each fails only the count rule and shows as numbered plain text: a hunk that claims more lines than it has, one
+# with a stray line inside, and one that claims fewer (its extra line comes straight after it).
+NOT_DIFFS = ["--- a/x\n+++ b/x\n@@ -1,3 +1,3 @@\n a\n-b\n+c\n", "--- a/x\n+++ b/x\n@@ -1,2 +1,2 @@\n a\nx stray\n-b\n+c\n",
+             "--- a\n+++ b\n@@ -1 +1 @@\n-a\n+b\n+c\n"]
+# git format-patch output: a mail head, a diffstat, two files and the "-- " trailer. It is a diff, and its blank lines
+# outside a hunk keep their height.
+MAIL_PATCH = ("From 0000000 Mon Sep 17 00:00:00 2001\nSubject: [PATCH] Skip empty exports\n\n---\n export.py | 2 +-\n"
+              " 1 file changed, 1 insertion(+), 1 deletion(-)\n\ndiff --git a/export.py b/export.py\n--- a/export.py\n"
+              "+++ b/export.py\n@@ -1,2 +1,2 @@\n def export(rows):\n-    pass\n+    return rows\n"
+              "diff --git a/notes.md b/notes.md\n--- a/notes.md\n+++ b/notes.md\n@@ -1 +1 @@\n-old\n+new\n-- \n2.39.0\n")
+MAIL_CLASSES = ["file"] * 10 + ["hunk", "ctx", "del", "add"] + ["file"] * 3 + ["hunk", "del", "add", "file", "file"]
+LONG_TEXT = "".join("line %d\n" % n for n in range(1, 302))  # 301 rows: a second row group, drawn later
 BIG_ROWS = (256 * 1024 - 64) // 2  # one-character lines: the worst case within the 256 KiB limit
 BIG_DIFF = "--- a/big\n+++ b/big\n@@ -0,0 +1,%d @@\n" % BIG_ROWS + "+\n" * BIG_ROWS
 # Each attachment box of an item: open or not, the summary, the headers, and each row as class and cell texts.
@@ -1307,7 +1321,8 @@ def run_attachment(work):
     shutil.copytree(str(DEMO / "notes"), str(topic / "notes"))
     rule = json.loads((ROOT / "tests" / "line_rule.json").read_text(encoding="ascii"))
     for name, body in (("change.diff", DIFF_TEXT), ("plain.patch", PLAIN_PATCH), ("rule.txt", rule["text"]),
-                       ("big.diff", BIG_DIFF)):
+                       ("big.diff", BIG_DIFF), ("over.diff", NOT_DIFFS[0]), ("stray.diff", NOT_DIFFS[1]),
+                       ("under.diff", NOT_DIFFS[2]), ("mail.patch", MAIL_PATCH), ("long.txt", LONG_TEXT)):
         (topic / "notes" / name).write_bytes(body.encode("utf-8"))
     check((topic / "notes" / "big.diff").stat().st_size <= 256 * 1024, "the big diff must stay within the limit")
     data = json.loads((DEMO / "round-03.json").read_text(encoding="utf-8"))
@@ -1316,7 +1331,9 @@ def run_attachment(work):
                           "options": [{"id": "ok", "label": "Ship it"}, {"id": "no", "label": "Not yet"}], "lines": True,
                           "attachments": [{"src": "notes/change.diff", "caption": "The change"},
                                           {"src": "notes/plain.patch", "open": True}, {"src": "notes/rule.txt"},
-                                          {"src": "notes/big.diff", "caption": "Everything"}]})
+                                          {"src": "notes/big.diff", "caption": "Everything"}]
+                          + [{"src": "notes/" + name, "open": True}
+                             for name in ("over.diff", "stray.diff", "under.diff", "mail.patch", "long.txt")]})
     target = topic / "decisions.json"
     target.write_text(json.dumps(data), encoding="utf-8")
     item = data["items"][0]
@@ -1343,14 +1360,31 @@ def run_attachment(work):
         check(opened["children"] == 0 and browser.js("document.querySelectorAll('.attach b, .attach h1').length") == 0,
               "nothing in the attachment may render")
         boxes = '[data-item="change"] details.attach'
-        diff, plain, ruled, big = browser.js(ATTACH_BOXES % json.dumps(boxes))
+        shown = wait_for("the open boxes' rows", lambda: (lambda b: b[-1]["high"] is not None and b)(
+            browser.js(ATTACH_BOXES % json.dumps(boxes))))
+        diff, plain, ruled, big, over, stray, under, mail, long_ = shown
         check(not diff["open"] and diff["rows"] is None and not ruled["open"] and ruled["rows"] is None
               and big["rows"] is None, "a closed box should have no rows until it opens: %r" % [diff, ruled, big])
-        check(plain["open"] and plain["rows"] == [["", str(n), line] for n, line in enumerate(PLAIN_PATCH.splitlines(), 1)]
-              and plain["heads"] == ["Line", "Text"], "an open box should start open, a non-diff as numbered text: %r" % plain)
-        # Drawn where it is, on the screen or not: a box below the fold takes its rows' height, not a stand-in's.
+        for got, want in ((plain, PLAIN_PATCH), (over, NOT_DIFFS[0]), (stray, NOT_DIFFS[1]), (under, NOT_DIFFS[2])):
+            check(got["open"] and got["rows"] == [["", str(n), line] for n, line in enumerate(want.splitlines(), 1)]
+                  and got["heads"] == ["Line", "Text"], "an open box should start open, a non-diff as numbered text: %r" % got)
+        check([r[0] for r in mail["rows"]] == MAIL_CLASSES, "git format-patch output is a diff: %r" % mail["rows"])
+        # Drawn where they are, on the screen or not: a box below the fold takes its rows' height, not a stand-in's,
+        # its later row groups too.
         check(browser.js("document.querySelectorAll(%s)[1].getBoundingClientRect().top > innerHeight" % json.dumps(boxes))
               and plain["high"] < 20000, "an open box below the fold should take its rows' height: %r" % plain["high"])
+        check(long_["high"] < 20000, "a box of 301 rows below the fold should take about their height: %r" % long_["high"])
+        # A blank line outside a hunk keeps a line's height, on a desktop and on a phone.
+        blank = ("Array.prototype.filter.call(document.querySelectorAll(%s)[7].querySelectorAll('[role=row].file'), "
+                 "function (r) { return !r.textContent; }).map(function (r) { return r.offsetHeight; })" % json.dumps(boxes))
+        for width in (400, 1280):
+            browser.call("Emulation.setDeviceMetricsOverride", width=width, height=900, deviceScaleFactor=1, mobile=False)
+            time.sleep(0.3)
+            high = browser.js(blank)
+            check(len(high) == 2 and min(high) >= 15, "at %d px a blank line should keep its height: %r" % (width, high))
+            head = browser.js("document.querySelectorAll(%s)[7].querySelector('[role=table] > [role=row]').offsetHeight"
+                              % json.dumps(boxes))
+            check(head == 0, "at %d px the hidden column names should take no height: %r" % (width, head))
         browser.click(boxes + ":nth-of-type(1) > summary")
         diff = browser.js(ATTACH_BOXES % json.dumps(boxes))[0]
         check(diff["open"] and diff["rows"] == [list(r) for r in DIFF_ROWS], "the diff's rows: %r" % diff["rows"])
@@ -1413,6 +1447,60 @@ def run_attachment(work):
                                                                                   s["all"], s["gap"], key_ms, click_ms), flush=True)
         browser.click("#done")
         finished(server, out, err, [topic / "decisions.answers.json"])
+    except E2EError:
+        sys.stderr.write("--- Signoff stderr ---\n" + "".join(err))
+        raise
+    finally:
+        kill(server)
+        kill(browser.proc)
+
+
+def run_open_rounds(work):
+    """Two open boxes of line feeds only, the most rows a file can make, in the second round: the page answers at load
+    without drawing them, and they draw when their round is shown, the page answering while they do."""
+    topic = work / "2026-01-10-feeds"
+    (topic / "notes").mkdir(parents=True)
+    feeds = 256 * 1024  # one row per byte
+    for name in ("a.txt", "b.txt"):
+        (topic / "notes" / name).write_bytes(b"\n" * feeds)
+    item = {"id": "pick", "title": "Pick one", "select": "one", "options": [{"id": "a", "label": "A"}, {"id": "b", "label": "B"}]}
+    (topic / "round-01.json").write_text(json.dumps({"version": 1, "title": "First", "items": [item]}), encoding="utf-8")
+    (topic / "round-02.json").write_text(json.dumps({"version": 1, "title": "Feeds", "items": [dict(item, lines=True, attachments=[
+        {"src": "notes/a.txt", "open": True}, {"src": "notes/b.txt", "open": True}])]}), encoding="utf-8")
+    rows = ("Array.prototype.reduce.call(document.querySelectorAll('#panel-1 [role=rowgroup]'), "
+            "function (n, g) { return n + g.childElementCount; }, 0)")
+    server, out, err, browser = serve(topic, str(work / "profile-feeds"))
+    try:
+        wait_for("the first round", lambda: browser.js("!!document.querySelector('#panel-0:not([hidden]) .item')"))
+        time.sleep(1)  # time enough to draw rows it should not draw
+        t = time.monotonic()
+        press(browser, "Shift", "ShiftLeft", 16)
+        load_ms = (time.monotonic() - t) * 1000
+        check(browser.js(rows) == 0 and browser.js("document.querySelectorAll('#panel-1 details[open]').length") == 2,
+              "the hidden round's open boxes should wait for their round: %r rows" % browser.js(rows))
+        browser.js("""(function () {
+          var s = window.feeds = {t0: performance.now(), gap: 0}, last = s.t0;
+          function count() { return %s; }
+          document.addEventListener('keydown', function () { s.keyRows = count(); }, true);
+          requestAnimationFrame(function frame() {
+            var now = performance.now(), n = count();
+            s.gap = Math.max(s.gap, now - last); last = now;
+            if (n && s.first === undefined) { s.first = now - s.t0; s.firstRows = n; }
+            if (n === %d) { s.all = now - s.t0; return; }
+            requestAnimationFrame(frame);
+          });
+          document.querySelectorAll('[role=tab]')[1].click();
+        })()""" % (rows, 2 * feeds))
+        wait_for("the second round's first rows", lambda: browser.js(rows) > 0)
+        t = time.monotonic()
+        press(browser, "Shift", "ShiftLeft", 16)
+        key_ms = (time.monotonic() - t) * 1000
+        s = wait_for("every row of both boxes", lambda: browser.js("window.feeds.all !== undefined && window.feeds"),
+                     timeout=180)
+        check(0 < s.get("keyRows", 0) < 2 * feeds, "a key should be answered while the rows draw: %r" % s)
+        print("two open boxes of %d rows in a hidden round: a key at load answered in %.0f ms with none drawn; shown, "
+              "first rows %.0f ms (%d rows), all rows %.0f ms, longest frame %.0f ms, a key answered in %.0f ms while they "
+              "drew" % (feeds, load_ms, s["first"], s["firstRows"], s["all"], s["gap"], key_ms), flush=True)
     except E2EError:
         sys.stderr.write("--- Signoff stderr ---\n" + "".join(err))
         raise
@@ -3232,6 +3320,7 @@ def run():
     run_readonly(work)
     run_table(work)
     run_attachment(work)
+    run_open_rounds(work)
     run_commands(work)
     run_commands_elsewhere(work)
     run_blocking(work)
@@ -3384,7 +3473,9 @@ def main():
           "table view: chips, toggle, a pick in the table saved and shown on the cards, exit 0; "
           "an attachment starts closed, opens, shows the file's text unrendered, a diff as numbered marked rows at its "
           "first opening, a non-diff and noted lines numbered by the server's line rule, an open one open (on the "
-          "past-decisions page too), 131k rows drawn while the page answers, exit 0; "
+          "past-decisions page too), 131k rows drawn while the page answers, a hunk that does not add up as plain "
+          "text, git format-patch output as a diff, blank rows a line high, no box a stand-in's height, exit 0; "
+          "two open boxes of 262k rows in a hidden round drawn only when it is shown, the page answering; "
           "an item's commands sit between its text and pictures as code blocks, unrendered, wrapped, Copy exact, a "
           "relative rm warns whatever the lang, Hungarian labels, exit 0, escaped in the Markdown copy, and on a done "
           "round and --history Copy is exact too; "
