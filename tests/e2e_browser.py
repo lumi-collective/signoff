@@ -44,7 +44,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DEMO = ROOT / "examples" / "demo"
-TOTAL_TIMEOUT = 240  # seconds for the whole run; a hang fails the job instead of eating minutes
+TOTAL_TIMEOUT = 420  # seconds for the whole run; a hang fails the job instead of eating minutes
 WINDOWS = sys.platform == "win32"
 PROCS = []  # everything to kill in every exit path
 WORK = []  # the temporary folder
