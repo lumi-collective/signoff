@@ -17,21 +17,24 @@ Instructions for coding agents working on Signoff. The README says what it does 
   PostToolUseFailure, Stop, StopFailure, SessionEnd). The command exits 0 when
   `hook.sh` is not there (a plugin folder swapped out under a running session), else execs it; `hook.sh` runs
   `signoff.py inbox hook` with `python3` and always exits 0. They need `sh` (Git Bash on Windows). On Windows
-  without Git Bash, Claude Code runs a hook's command in PowerShell: each command (and the monitor's) opens with
+  without Git Bash, Claude Code runs a hook's command in PowerShell: each command opens with
   ``echo `# >$null <#` >/dev/null;`` and closes the sh part with `#>`, so PowerShell echoes into `$null` and skips
-  the rest as a block comment (the monitor then sleeps); `test_hooks.py` checks the commands token by token (no
-  PowerShell runs in CI). On Windows `hook.sh` exits before Python (the monitor sleeps): the inbox does not run
+  the rest as a block comment; `test_hooks.py` checks the commands token by token (no
+  PowerShell runs in CI). On Windows `hook.sh` exits before Python: the inbox does not run
   there. On macOS and Linux, without `SIGNOFF_INBOX_HOME`, `hook.sh` exits before Python when the default home
   has no live inbox (see the hooks rule), SessionStart only when it has no `inbox.lock`; it mirrors only those
   defaults of `inbox_home()`, and a test keeps the two in step.
   PostToolUse and PostToolUseFailure run `hook.sh clear`: there it also exits before Python when that home's
   `waiting.flag` is empty or absent, tested first. SessionStart has two groups: `startup` runs `hook.sh start` (on macOS with
   `/Applications/Signoff.app` or `~/Applications/Signoff.app` there, it first keeps the home's `launcher` link, see
-  the hooks rule, in `sh`); `resume|clear|compact` runs `hook.sh session`.
+  the hooks rule, in `sh`); `resume|clear|compact` runs `hook.sh session`. The plugin declares no monitor (Claude
+  Code's `/restart` refuses while one runs): `hook.sh monitor` only sleeps while its parent lives, without Python,
+  for a monitor a 0.4.0 plugin started (one that ends costs its session a model turn).
 - `plugin/hooks/register.tsx`: the plugin's mod, the hooks module `hooks.json` names under `modules` (Claude Code's
   docs give 2.1.286 as the first to run mods; its test runs on 2.1.309 in CI and 2.1.322; 2.1.200 skips the key
   and runs the hooks, checked). The band (`Signoff: N waiting`, Open, Hide),
-  the toast, the status line entry, the panel (the `signoff` pane) and the answer to `/signoff:open`
+  the toast, the status line entry, the hand-over of the inbox's requests (`$.prompt.submit`), the panel (the
+  `signoff` pane) and the answer to `/signoff:open`
   (`plugin/commands/open.md`: a mod cannot
   register a name with a colon, so the file declares it and the mod's `command.run` hook answers it; its body is
   the prompt the model gets when no mod runs). Its session values are declared in `plugin/types/index.d.ts`
@@ -41,10 +44,6 @@ Instructions for coding agents working on Signoff. The README says what it does 
 - `plugin/commands/demo.md`: `/signoff:demo`, typed only (`disable-model-invocation: true`); its body asks the model
   to write one synthetic round in a `mktemp -d` folder, run Signoff on it, and give the user the `rm -r` command
   without running it.
-- `plugin/monitors/monitors.json`: the plugin's monitor for the inbox. Claude Code starts it in every interactive
-  session (not with `-p`) and hands each line it prints to the model. It runs `hook.sh monitor`, which runs
-  `signoff.py inbox monitor`. A monitor that ends costs the session a model turn, so it never ends while its
-  session lives (see the monitor rule).
 - `plugin/skills/signoff/SKILL.md`: the skill that tells an agent when to use Signoff, where to put the decisions
   folder, how to run it in the background and what to do with the answers. Its description is in every
   session's skill list, so it stays short, and the inbox's text is in `plugin/skills/signoff-inbox/SKILL.md`,
@@ -59,7 +58,7 @@ Instructions for coding agents working on Signoff. The README says what it does 
 - `plugin/signoff/signoff.py`: the server and command line. Python 3.9+, standard library only. Importable:
   `load_decisions`, `check_answers`, `make_server`, `main`. Also the inbox (`signoff inbox serve|open|stop`,
   `InboxServer`), its `todo.md` reader (`parse_todos`, `markdown_blocks`), its control socket client
-  (`inbox_request`, which also takes an op's other fields; `signoff inbox rows`), and the request files (`read_request`, `request_line`; `signoff inbox monitor|done`). Also
+  (`inbox_request`, which also takes an op's other fields; `signoff inbox rows`), and the request files (`read_request`, `request_line`; `signoff inbox requests|done`). Also
   `signoff plan` (the plan-review rule) and its fixed round, `plan_round`. The
   inbox needs Unix sockets, so it does not run on Windows yet.
 - `plugin/signoff/page.html`: the page. One static file, no build step, no external requests. The server fills in
@@ -95,7 +94,9 @@ Instructions for coding agents working on Signoff. The README says what it does 
   `app_target` and `app_open` on the socket only (`--app` runs `open -a`, and an app started that way gets none
   of the suite's environment); its `InboxTodoPath` class starts a fourth for projects whose `todo` key names a
   file inside the root, or one out of it (`..`, an absolute path, a link), too big or not a file, and checks the
-  list page and messages; its `InboxWaiter` class runs `<command> <folder>` as a waiter, once beside a stand-in
+  list page and messages; its `InboxRequests` class writes request files into the home by hand and runs `<command>
+  inbox requests <folder> <project> <id>…` with no inbox (its JSON line, the ids gone, its refusals, a folder in
+  another project, a nested one too); its `InboxWaiter` class runs `<command> <folder>` as a waiter, once beside a stand-in
   inbox that holds `inbox.lock`, touches it and locks no round (exit 1, nothing on stdout, no lock file made), once
   beside one whose look locks the round 1.5 s after its touch (still waiting), and once beside `<command> inbox
   serve` (still waiting after several looks, the round's lock held); its `Elsewhere` class runs `<command>
@@ -118,7 +119,8 @@ Instructions for coding agents working on Signoff. The README says what it does 
   `elsewhere` op (its refusals, an old inbox, offer and rows with a mark, a round lock the command held), and
   `inbox open --app` with its app opener (`APP_OPEN`) swapped for a stand-in and its app folders (`APP_DIRS`)
   for temporary ones: no test runs the real `open` or finds an installed app.
-  `test_hooks.py` covers the hooks, the SessionStart hand-over, the monitor, `inbox done` and `hook.sh`.
+  `test_hooks.py` covers the hooks, the SessionStart hand-over, `inbox requests`, the monitor's sleeping stand-in,
+  `inbox done` and `hook.sh`.
 - `examples/demo/`: synthetic decisions with mockups: `decisions.json` as one round, and the same questions as
   `round-01.json` to `round-04.json`, the source of the screenshots in the README and `docs/`; `boards/` holds a board.
 - `examples/history/`: a synthetic project for `--history`, its answers and outcome files committed.
@@ -196,7 +198,7 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   on a run or `--history`, else `SIGNOFF_PORT` (also for `inbox serve`), N plain ASCII digits from 1024 to 65535
   (below, a browser leaves `:80` out of Host and Origin); `0`, or an empty `SIGNOFF_PORT`, a random port
   (`--port ""` is a bad value); it is read only by what binds (a run, `--history`, `inbox serve`, and `inbox open`
-  before it starts one), never by the hooks or the monitor. Never a fixed port by default, never another address.
+  before it starts one), never by the hooks or `inbox requests`. Never a fixed port by default, never another address.
   Before a fixed port's bind, `port_in_use()` tries a connection to `127.0.0.1:<port>` (it catches a same-user
   `0.0.0.0` listener that macOS's `SO_REUSEADDR` would bind beside); best effort, a listener that starts between
   the look and the bind is not seen. `inbox serve` looks before it makes `inbox.lock`. On Windows without
@@ -319,23 +321,27 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   while `inbox.lock`'s time is within `LIVE_WITHIN` (15 s) of now: the inbox touches it at each look, every
   `STATE_EVERY` seconds, and a stopped, killed or stuck inbox does not.
 - **The mod costs a session nothing and shows no link.** It runs in every interactive session of everyone who
-  installs the plugin, so it starts no process to look: every `EVERY` (5) seconds it checks `inbox.lock` in the
+  installs the plugin, so it starts no process to look (the one it starts for a request it found new is the
+  mod's hand-over rule's): every `EVERY` (5) seconds it checks `inbox.lock` in the
   homes `hook.sh` mirrors (or `SIGNOFF_INBOX_HOME`; no test keeps this copy in step, and a wrong one only keeps
   the band empty) through `$.fs`, and only once one is there it runs
   `${$.plugin.root}/bin/signoff inbox home`, once per load of the mod (its module state: a reload asks again).
   Then it reads, through `$.fs` only, `inbox.lock`'s
-  time, `projects/*.json` (again only when the folder's time changed; the session's project is the longest
-  `root` holding its folder) and `state.json` (again only when its time or size changed; `schema` 1, a whole
+  time, `projects/*.json` (again only when the folder's time or `$.session.root()` changed; the session's project
+  is the longest `root` holding the session's root: where it started, or where `/cd` or a worktree move took it,
+  never a Bash `cd`, as the monitor kept its project) and `state.json` (again only when its time or size changed; `schema` 1, a whole
   `waiting` for its project id, files over 64 KiB skipped). Any failure shows nothing. It shows that number,
-  fixed text and the panel's titles, nothing else; it writes no file. It starts looking once per load, from `session.start` or the band's
+  fixed text and the panel's titles, nothing else; it writes no file; to the model it sends only the request lines
+  (the mod's hand-over rule). It starts looking once per load, from `session.start` or the band's
   first drawing (a reload after an options change may fire no `session.start`; the desktop app and the VS Code
-  extension send it with `isInteractive` false, tried on 2026-11-15, so there the band starts it). With `hint` `off`, with
-  `claude -p` and on Windows (`OS` is `Windows_NT`) it looks at nothing. Only a live count (an inbox that lives,
+  extension send it with `isInteractive` false, tried on 2026-11-15, so there the band starts it). With `claude -p`
+  and on Windows (`OS` is `Windows_NT`) it looks at nothing; with `hint` `off` it shows nothing and looks only for
+  requests (the mod's hand-over rule). Only a live count (an inbox that lives,
   a project found) moves Hide (cleared by any other live count) and the toast (once a session, after a live 0 and
   two live counts above it in a row). Open and `/signoff:open` (typed at the prompt, also with `hint` `off`) open
   the panel: `$.ui.open` of the `signoff` pane before anything else is awaited (so it is the person's own press
   or command, placed at any width), with `focus` only on a press of Open (after the command the person may type
-  on, and a digit would press a row), then one run of `signoff inbox rows <session folder>`, once per opening and
+  on, and a digit would press a row), then one run of `signoff inbox rows <session root>`, once per opening and
   never on a look; only its stdout is read, as JSON of that shape (anything else, a non-zero exit or a cut
   stdout: the panel says no inbox answered, and its last row is "Open the inbox", which starts one). The panel's
   heading counts the rounds listed and `more`; with none listed while the band's count is above 0 it says those
@@ -458,8 +464,8 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   todo item, an `answer` as one on the Signoff rounds, a `vulns` as one on the vulnerability findings), atomically,
   0600 in 0700 folders. A reader takes `refs` only as a list of at most `MAX_FINDINGS` refs that match the
   patterns, and skips a file of a kind it does not know (so a session on an older plugin drops a `vulns` or `answer`
-  request, which reaches the project only through the monitor of a session on a plugin that knows it, running
-  when it is written, or at a later SessionStart hand-over on such a plugin). The list page shows each item's, finding's and project's (`vulns`) recent
+  request, which reaches the project only through a session on a plugin that knows it (its mod, or before 0.5.0 its
+  monitor), running when it is written, or at a later SessionStart hand-over on such a plugin). The list page shows each item's, finding's and project's (`vulns`) recent
   requests (text, time, done) and never an id, a path or `refs`. The agent marks one handled with
   `signoff inbox done <id>`, which writes an empty `<id>.done` beside it; nothing else writes there.
 - **The OSV section reads Uptick's files and writes one only on a click.** Uptick's `vulns.json`
@@ -478,24 +484,46 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   and makes `uptick/` (0700) when absent; the file it writes is 0600, its JSON ASCII-escaped. It leaves the file
   alone (409) when it is a link, not JSON with a `repos` list, or over `MAX_SCAN_LIST` bytes; it reads the file again just before the atomic replace and starts over when it changed
   (409 after three tries). A project already listed is a 200 with no write.
-- **A request reaches the model as one line.** The monitor and the SessionStart hook print it with
-  `request_line()`: a fixed frame, the ref and the text as JSON strings (cut to `MAX_REF` and `MAX_REQUEST_TEXT`,
+- **A request reaches the model as one line.** `signoff inbox requests` and the SessionStart hook build it with
+  `request_line()`, and the mod sends it as the command printed it: a fixed frame, the ref and the text as JSON strings (cut to `MAX_REF` and `MAX_REQUEST_TEXT`,
   every control, format and line-separator character a space), and the id. Neither string can end its quotes,
   start a line or change the id. Never a path, a token or another project's request.
-- **The monitor never ends by itself and prints only requests.** It runs in every interactive session of
-  everyone who installs the plugin (the status line shows it), and Claude Code turns both its lines and its ending
-  into model turns, so `inbox monitor` never ends while its session lives and prints only request lines. While
-  `inbox_on()` is false it sleeps (in `hook.sh`, without Python, for the default homes and on Windows), prints nothing, writes
-  nothing. For the default homes `hook.sh` also sleeps while the inbox is not live (the hooks' rule), looking every
-  30 seconds, and then execs Python, which stays for the session even after the inbox stops. With the inbox on, it reads `requests/<project>/` of its folder's project every `REQUEST_EVERY` seconds
-  and prints one line for each request written since `SINCE_MARGIN` seconds before its session started
-  (`SIGNOFF_SINCE` from `hook.sh`; a request near the start may also come in the hand-over: twice beats never; the
-  margin is a guess, the gap between the hook and the monitor's start is not measured), not
-  marked done and not printed before; what it printed it keeps in memory only. It writes nothing. Every live
-  session of the project gets each request. It ends when its parent (Claude Code) is gone or stdout breaks; on an
-  error it says one stderr line (which reaches neither the user nor the model) and sleeps. Known limit: a live
-  session without a working monitor (`claude -p`, a monitor stopped by an error) still counts as live, so new
-  sessions of the project get no hand-over while it runs.
+- **The mod hands each request to its session once.** It runs in every interactive session (see the mod
+  rule), so a request costs no process until there is one to hand over. At each look while the inbox lives and
+  the session's project is found, also with `hint` `off`, it reads the time of `requests/<project>/` in the home
+  through `$.fs` (no folder: no request). Only when it changed since its last listing, when that listing was
+  less than 2 seconds after that time (a coarse clock gives a write right after it the same time), while a batch
+  it cut waits, or at a retry, it lists the folder through `$.fs`. A request is new when its `<id>.json` (16 hex
+  digits, a regular file, not a link) has a time at or after the session's mark, has no `<id>.done` beside it,
+  and is not among the ids it handed over (an id leaves them only when a listing shows its `<id>.done`: one not in
+  the folder may be another project's, handed over before a `/cd`; past 1000 the oldest is dropped, which can
+  bring a duplicate, never a loss). The mark, the project it is for, and those ids are in `$.state` (`requests`:
+  `since`, `project`, `sent`): the mark is set at its first live look without one, `SINCE_MARGIN` (10 s) before it
+  (a request near the start may also come in the hand-over: twice beats never; the margin is a guess), so a reload
+  hands nothing over again, and a `/clear`, which empties `$.state`, sets a new mark (a later session start with no
+  other live session of the project hands over what waits). When the session root's project is not the one held
+  beside the mark (a `/cd`, also across a reload), it sets a new mark the same way and keeps the ids; a held mark
+  with no project (a build before it) takes the current one and keeps its time. Only with a new
+  request it runs `signoff inbox requests <folder> <project> <id>…` (the session root the project was found for:
+  the command checks it is in that project) with at most `MAX_HANDOVER` ids, oldest first, one at
+  a time, and reads only its stdout, as one JSON line `{requests: [{id, line}], gone: [id]}`. A non-zero exit, a
+  cut stdout, another shape, an id it did not ask for, or a line that does not start `Signoff inbox: ` or does not
+  end with its id: nothing is sent, and it tries again after 60 seconds, three times in a row per load, then at
+  the folder's next change or the next load. A line in that frame with its own id that holds a control, format or
+  line or paragraph separator character or a lone surrogate by the engine's Unicode table, or is over 4096
+  characters, is marked and not sent (an
+  older Python's table misses a few format characters), so it holds up no other line; a later session start with
+  no other live session of the project hands it over, as it is not done. It marks the reply's ids handed over first, then sends the lines, one per line, as one
+  `$.prompt.submit` (framed as the plugin's, never `asUser`), which Claude Code runs as a turn of its own once
+  the session is idle; a `drop` unmarks them, as a failure. `gone` ids (done, unreadable, or of a kind this
+  plugin does not know) are marked and never sent; what the command cut at `MAX_HANDOVER_TEXT` goes at the next
+  look. Every live session of the project gets each request. Nothing else goes into the prompt: no path, token,
+  link or other project's request; it writes no file. Known limits: a session without the mod (a Claude Code
+  before 2.1.286, `claude -p`, the SDK, `allowManagedModsOnly`) gets requests only at a later session start and
+  still counts as live, so new sessions of the project get no hand-over while it runs; a project the
+  session's root moves into gets its older requests at a later session start with no other live session of the
+  project; and the hooks note a session by each event's `cwd`, so after a shell `cd` into another project the inbox
+  may count it there while its mod hands over the root's project's requests.
 - **Only listed files are served.** Pictures and boards by number, each resolved inside the decisions file's
   folder; read into memory at start for a decisions run, read on request (with the same link check) for the
   past-decisions page. No SVG, no directory listing, no path from the request ever touches the disk.
@@ -881,8 +909,9 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
 - **stdout is answers paths and nothing else**, one per line, in tab order. Agents parse it. Messages go to
   stderr (`--notes` too: its notes print nothing on stdout, and each refusal or failure is one stderr line starting
   `signoff: notes:` that changes neither stdout nor the exit code). The exceptions: `signoff inbox home` prints the Signoff home (`inbox_home()`, never creating it),
-  `signoff inbox hook` prints nothing but the SessionStart hand-over, `signoff inbox monitor` prints request
-  lines only, and `signoff inbox rows <folder>` prints one JSON line, the `rows` reply (for a folder outside any
+  `signoff inbox hook` prints nothing but the SessionStart hand-over, `signoff inbox monitor` (kept for a monitor
+  an older plugin started) prints nothing, `signoff inbox requests <folder> <project> <id>…` prints one JSON line, its
+  reply, for the mod, and `signoff inbox rows <folder>` prints one JSON line, the `rows` reply (for a folder outside any
   project `{"rounds": [], "more": 0}`), for the mod. `signoff elsewhere` and `signoff inbox serve|open|stop|done`
   print nothing on stdout
   (`open --app` no link on stderr either); `open --no-open` prints its start
@@ -917,7 +946,10 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   1 when there is no such request. `signoff inbox rows <folder>` exits 0 with its line (outside any project
   without asking an inbox, which need not run), or 1 with nothing on
   stdout for a relative folder or home, when no inbox answers, or when the inbox answers without `rounds` (one
-  from before the op). `signoff inbox monitor` ends (0) only once its session is gone. `signoff elsewhere` exits 0
+  from before the op). `signoff inbox monitor` ends (0) only once its session is gone. `signoff inbox requests
+  <folder> <project> <id>…` exits 0 with its line (no requests folder: every id gone), or 1 with nothing on stdout
+  for a relative folder or home, a folder whose project (`project_id(project_root(folder))`) is not that one, a
+  project or id that is not 16 hex digits, no id, more than `MAX_HANDOVER`, or one given twice. `signoff elsewhere` exits 0
   when written or already marked with the same note, else 1 with one stderr line: a bad note, round or answers
   file, an unknown item, a done round, the user's own answer on the item, the round's lock held by a page run, an
   inbox refusal or no answer, an inbox from before the op, a request shape the inbox refused, a lock file that

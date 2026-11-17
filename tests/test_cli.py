@@ -2249,6 +2249,16 @@ class OldPython(unittest.TestCase):
             self.assertEqual(signoff.main(["inbox", "monitor"]), 0)
         sleep.assert_called_once_with(60)
 
+    def test_on_a_new_python_the_monitor_only_sleeps_too(self):
+        # The plugin has no monitor now; one a 0.4.0 plugin started may run this file after an update in place.
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(sys, "stdout", out), mock.patch.object(sys, "stderr", err), \
+                mock.patch.object(signoff, "_lives", side_effect=[True, True, False]), \
+                mock.patch.object(signoff.time, "sleep") as sleep, \
+                mock.patch.object(signoff, "inbox_home", side_effect=AssertionError("looked at the home")):
+            self.assertEqual(signoff.main(["inbox", "monitor"]), 0)
+        self.assertEqual((sleep.call_count, out.getvalue(), err.getvalue()), (2, "", ""))
+
     def test_the_file_parses_as_python_3_7(self):
         # The guard speaks only if the old Python compiles the file first; 3.8 was also run by hand (NOTES).
         import ast

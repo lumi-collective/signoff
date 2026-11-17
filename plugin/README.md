@@ -28,8 +28,7 @@ older one, use two steps: `/plugin marketplace add lumi-collective/signoff`, the
 Auto-update is off by default for a third-party marketplace; turn it on in `/plugin` → Marketplaces → Enable
 auto-update.
 
-Then the status line shows one monitor: a small process that only sleeps until you use the Signoff inbox. The
-rest of this page says in detail what the plugin runs, reads and writes.
+The rest of this page says in detail what the plugin runs, reads and writes.
 
 To try it, type `/signoff:demo` in a session: it writes a small synthetic round in a temporary folder, outside
 your project, and runs only when you type it.
@@ -67,12 +66,6 @@ nothing. On Windows it runs in Git Bash; without Git Bash, Claude Code runs it i
 nothing (Claude Code then says once per session that a hook ran in PowerShell; you can ignore it). One
 exception: when a session starts and no other session of that project is open, the hook hands the new session the messages you sent the project from the inbox, and the inbox's notes on rounds you finished after their run had ended, that are not handled yet.
 
-The plugin also has a monitor: in every interactive Claude Code session, Claude Code keeps one small background
-process running, shown as one monitor in the status line. Until the inbox runs, it is a shell loop that only
-sleeps and checks the inbox's lock file twice a minute; on Windows a loop that only sleeps. Once
-the inbox runs, it is the Python program for the rest of the session, which looks every two seconds for new messages you sent this
-project from the inbox, and such notes, and prints each one for the agent. Claude Code ends it with the session (checked on macOS).
-
 The plugin also has a mod, where Claude Code runs plugin mods. It is code that runs inside Claude Code in
 interactive sessions, not on Windows. Every five seconds it checks whether the inbox's lock file is there, and
 starts no process for that. Once the inbox has run, the mod runs the signoff command once each time Claude Code
@@ -84,6 +77,14 @@ waiting on a permission or an answer, this one included.
 While the inbox runs and something waits on you in the session's project, a line above the prompt says how many,
 with Open and Hide (hidden until the number changes). A notice comes once a session when the number rises from
 none, and stays up for a second look.
+
+The messages you send this project from the inbox, and the inbox's notes on rounds you finished after their run had
+ended, reach the session through the mod. At each look it also checks the time of the project's request folder in
+the inbox's folder, and lists that folder only when the time changed. Only for a message it has not handed over yet
+does it run the signoff command's inbox requests, which prints each message as one line for the agent (at most ten
+at once); the mod hands those lines to the session as one message from the plugin, which Claude Code runs as a turn
+of its own once the session is idle. It never reads what the command prints on its error stream. It keeps which
+messages it handed over in Claude Code's session state, so a reload of the mod sends none twice.
 
 Open and the /signoff:open command open a panel beside the chat. They run the signoff command's inbox rows once,
 which asks the running inbox for this project's open rounds and their open questions (numbers and one-line titles;
@@ -98,9 +99,9 @@ which leaves that question with the running inbox, in memory only, and runs open
 it checked in those folders. The app, as it comes up, asks the inbox for the question and opens it in its window.
 The row for all projects has an App button too, which leaves no question and brings the app up as it is.
 
-The Waiting hint setting in /config moves the number to the status line, or turns the mod off. Then the mod reads
-nothing but what the command reads when you still open the panel (the rows, the app's Info.plist). It writes
-nothing.
+The Waiting hint setting in /config moves the number to the status line, or hides it (off). Off, the mod reads no
+count; it still hands over your messages from the inbox, and reads what the panel needs when you open it (the
+rows, the app's Info.plist). It writes nothing.
 
 The Signoff inbox runs only when you start it: ask your agent to open the Signoff inbox (or use the optional macOS
 app, built from the repository and not part of the plugin), and until you stop it: one
@@ -145,7 +146,7 @@ Later (the item's first line and the inbox's fixed line), and so is the note the
 run that had ended, or that stopped before it handed the answers over, is finished (the topic folder, the round names and the inbox's fixed text, none of your answers). The inbox
 reads Uptick's scan file (vulns.json in Uptick's cache folder) and Uptick's scan list (scan-repos.json in
 Uptick's config folder). Only when you click Scan this project does it write that list: it adds the project's
-folder path and keeps everything else in it. The monitor writes nothing.
+folder path and keeps everything else in it. The mod writes nothing.
 Signoff deletes nothing, except a socket file a stopped inbox left in that folder.
 
 ## What leaves your machine

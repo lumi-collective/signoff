@@ -29,6 +29,13 @@ declare module 'claude-code' {
       hasApp: boolean
       /** Where the panel is drawn: its pane, the band (an open that was not placed), or nowhere. */
       where: 'pane' | 'band' | null
+      /**
+       * The inbox's requests to this session: the time (ms) from which a request file counts as new, set at the
+       * first live look that finds the session root's project and again when the root moves into another one; that
+       * project's id (absent in a state from before it); and the ids handed over not yet seen done (at most 1000, the
+       * oldest dropped). Null until then.
+       */
+      requests: { since: number; sent: string[]; project?: string } | null
     }
   }
 }

@@ -1,29 +1,21 @@
 #!/bin/sh
-# Runs Signoff's hook for the inbox (hooks.json), or with "monitor" its monitor (monitors/monitors.json). Claude Code
-# runs both in every session, through sh on macOS and Linux and Git Bash on Windows (without Git Bash, their
-# commands do nothing in PowerShell). The hook always exits 0: exit 2 would block the prompt or the stop. The monitor
-# never ends while its session lives: Claude Code tells the model about a monitor that ended, which costs every
-# session a turn (verified 2026-11-07, CLI 2.1.319). hooks.json and monitors.json exec this script, so $PPID is
-# Claude Code.
+# Runs Signoff's hook for the inbox (hooks.json). Claude Code runs it in every session, through sh on macOS and Linux
+# and Git Bash on Windows (without Git Bash, its commands do nothing in PowerShell). The hook always exits 0: exit 2
+# would block the prompt or the stop. hooks.json execs this script, so $PPID is Claude Code.
 
-# The monitor's way to do nothing: sleep until the command in $1 succeeds (no $1: until the session ends). It looks
-# for Claude Code by $PPID, which Git Bash does not have: there it sleeps on.
-wait_for() {
+# shortcut: "monitor" is for a monitor a 0.4.0 plugin started (it declared one; the plugin has none since, as
+# Claude Code's /restart refuses while one runs), which may run this file after an update in place. One that ends
+# costs its session a model turn, so it sleeps, without Python, until Claude Code ($PPID) is gone; Git Bash has no
+# $PPID to look for, so on Windows until Claude Code stops it. Drop it in 0.6.
+if [ "$1" = monitor ]; then
   while :; do
     sleep 30
     [ "$OS" = Windows_NT ] || kill -0 "$PPID" 2>/dev/null || exit 0
-    [ -n "$1" ] && "$1" && return 0
   done
-}
-monitor=
-if [ "$1" = monitor ]; then
-  monitor=1
-  SIGNOFF_SINCE=$(date +%s); export SIGNOFF_SINCE  # requests from before the session are SessionStart's
 fi
 # shortcut: the inbox needs Unix sockets, so it never runs on Windows and there is nothing to note: no Python starts
-# there (the monitor sleeps). Drop these lines once the inbox runs on Windows.
+# there. Drop these lines once the inbox runs on Windows.
 if [ "$OS" = Windows_NT ]; then
-  [ -n "$monitor" ] && wait_for
   exit 0
 fi
 
@@ -94,7 +86,6 @@ if [ -z "$SIGNOFF_INBOX_HOME" ]; then
         # The hooks keep waiting.flag non-empty while a session may wait: with it empty or absent, there is no wait
         # to end. Tested first, so a tool call starts no process.
         clear) [ -s "$home/waiting.flag" ] && live || exit 0 ;;
-        monitor) live || wait_for live ;;
         *) live || exit 0 ;;
       esac
     fi ;;
@@ -102,9 +93,5 @@ if [ -z "$SIGNOFF_INBOX_HOME" ]; then
 fi
 
 script="${0%/*}/../signoff/signoff.py"
-if [ -n "$monitor" ]; then
-  command -v python3 >/dev/null 2>&1 && exec python3 -I "$script" inbox monitor
-  wait_for  # no Python
-fi
 command -v python3 >/dev/null 2>&1 && SIGNOFF_CLAUDE_PID="$PPID" python3 -I "$script" inbox hook
 exit 0

@@ -1729,6 +1729,87 @@ class InboxRows(unittest.TestCase):
         self.assertIsNone(self.proc.poll())
 
 
+class InboxRequests(unittest.TestCase):
+    """`<command> inbox requests <folder> <project> <id>…`, whose stdout the mod hands to its session: one JSON line
+    of the pending requests' lines and the ids gone, for request files the suite writes by hand, when the session
+    folder is in that project (its id: the first 16 hex digits of the SHA-256 of its root's real path). No inbox
+    runs."""
+
+    R = ["%016x" % n for n in range(1, 13)]
+    FRAME = re.compile(r"Signoff inbox: [^\x00-\x1f\x7f  ]* run: signoff inbox done ([0-9a-f]{16})")
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.base = os.path.realpath(tmp.name)
+        self.home = os.path.join(self.base, "home")
+        self.root = os.path.join(self.base, "proj")
+        os.makedirs(os.path.join(self.root, ".git"))
+        os.makedirs(os.path.join(self.root, "src"))
+        self.project = hashlib.sha256(self.root.encode("utf-8")).hexdigest()[:16]
+        self.folder = os.path.join(self.home, "requests", self.project)
+        self.env = dict(os.environ, SIGNOFF_INBOX_HOME=self.home)
+
+    def write(self, rid, at, text="please split it", kind="todo"):
+        os.makedirs(self.folder, exist_ok=True)
+        with open(os.path.join(self.folder, rid + ".json"), "w", encoding="utf-8") as f:
+            json.dump({"schema": 1, "id": rid, "kind": kind, "ref": "Ship it", "text": text, "at": at}, f)
+
+    def cli(self, *args, folder=None, env=None):
+        """The session folder goes first: the project's src/ unless given; folder="" leaves it out."""
+        folder = [os.path.join(self.root, "src") if folder is None else folder] if folder != "" else []
+        return subprocess.run(COMMAND + ["inbox", "requests"] + folder + list(args), stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE, env=env or self.env, timeout=30)
+
+    def test_one_line_of_the_pending_lines_oldest_first_and_the_ids_gone(self):
+        R = self.R
+        self.write(R[0], "2026-11-07T10:00:02Z", text='a "quote"\nnext line\x1b[31m')
+        self.write(R[1], "2026-11-07T10:00:01Z")
+        self.write(R[2], "2026-11-07T10:00:00Z")
+        open(os.path.join(self.folder, R[2] + ".done"), "wb").close()
+        self.write(R[3], "2026-11-07T10:00:00Z", kind="no-such-kind")
+        got = self.cli(self.project, R[0], R[2], R[1], R[3], R[4])
+        self.assertEqual(got.returncode, 0, got.stderr)
+        self.assertEqual((got.stdout.count(b"\n"), got.stdout[-1:]), (1, b"\n"))
+        reply = json.loads(got.stdout.decode("ascii"))
+        self.assertEqual(sorted(reply), ["gone", "requests"])
+        self.assertEqual([r["id"] for r in reply["requests"]], [R[1], R[0]])
+        self.assertEqual(reply["gone"], [R[2], R[3], R[4]])
+        for r in reply["requests"]:
+            m = self.FRAME.fullmatch(r["line"])
+            self.assertTrue(m and m.group(1) == r["id"], r["line"])
+        self.assertNotIn(self.home.encode("utf-8"), got.stdout)
+        self.assertEqual(sorted(os.listdir(self.folder)), sorted([R[0] + ".json", R[1] + ".json", R[2] + ".json",
+                                                                   R[2] + ".done", R[3] + ".json"]))  # nothing written
+
+    def test_no_folder_has_every_id_gone(self):
+        got = self.cli(self.project, self.R[0])
+        self.assertEqual((got.returncode, json.loads(got.stdout)), (0, {"requests": [], "gone": [self.R[0]]}), got.stderr)
+
+    def test_refusals_print_nothing_on_stdout(self):
+        self.write(self.R[0], "2026-11-07T10:00:00Z")
+        for args in ((), (self.project,), (self.project,) + tuple(self.R[:11]), (self.project, self.R[0], self.R[0]),
+                     (self.project.upper(), self.R[0]), (self.project[1:], self.R[0]), (self.project, self.R[0] + "0")):
+            got = self.cli(*args)
+            self.assertEqual((got.returncode, got.stdout), (1, b""), args)
+        got = self.cli(self.project, self.R[0], env=dict(self.env, SIGNOFF_INBOX_HOME="relative/home"))
+        self.assertEqual((got.returncode, got.stdout), (1, b""))
+
+    def test_only_for_the_project_its_session_folder_is_in(self):
+        # A nested project (its own .git) is another project, though the mod may not know its root yet.
+        self.write(self.R[0], "2026-11-07T10:00:00Z")
+        nested = os.path.join(self.root, "sub")
+        os.makedirs(os.path.join(nested, ".git"))
+        outside = os.path.join(self.base, "else")
+        os.makedirs(outside)
+        for folder in (nested, os.path.join(nested, "deep"), outside, "proj/src", ""):
+            got = self.cli(self.project, self.R[0], folder=folder)
+            self.assertEqual((got.returncode, got.stdout), (1, b""), folder)
+        got = self.cli(self.project, self.R[0], folder=self.root)
+        self.assertEqual((got.returncode, [r["id"] for r in json.loads(got.stdout)["requests"]]), (0, [self.R[0]]),
+                         got.stderr)
+
+
 @unittest.skipIf(sys.platform == "win32", "the inbox's control socket is a Unix socket; no inbox on Windows yet")
 class InboxWaiter(unittest.TestCase):
     """A run while an inbox lives is a waiter. Once inbox.lock's time has changed twice since the run noted itself

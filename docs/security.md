@@ -20,19 +20,24 @@ exit 0 and print nothing, so they never block or change a session; without Pytho
 exception is the hand-over of messages from the inbox at a session's start, described in [the inbox's page](inbox.md#the-inbox). They
 run in `sh`: on Windows that is Git Bash, which Claude Code uses for hooks when it is installed; without it Claude
 Code uses PowerShell, where each command does nothing (Claude Code then says once per session that a hook ran in
-PowerShell; for Signoff's hooks you can ignore it, or install Git for Windows). The plugin's monitor
-(`plugin/monitors/`) keeps one process for as long as each interactive session runs (the status line shows "1
-monitor"): until an inbox runs, a shell loop that sleeps and looks at `inbox.lock` every 30 seconds (on
-Windows a loop that only sleeps); then, for the rest of the session, the Python program, which looks for new messages every two seconds. It never ends by itself, because Claude Code
-would give the agent a turn to read that it ended. The plugin's mod (`plugin/hooks/register.tsx`, in a Claude Code
+PowerShell; for Signoff's hooks you can ignore it, or install Git for Windows). The plugin keeps no
+background process in a session. The plugin's mod
+(`plugin/hooks/register.tsx`, in a Claude Code
 that runs plugin mods, interactive sessions, not on Windows) runs inside Claude Code and starts no process of its own
 to look. Every five seconds it checks for `inbox.lock` in the default homes. Once one is there, it runs
 `signoff inbox home` once each time Claude Code loads the mod. Then it reads `inbox.lock`'s time, `projects/` and
 `state.json` in the home through Claude Code's file reads, and shows the session's project count above the prompt
-(or in the status line, or nothing: the `hint` setting; with `off` it looks at nothing, and reads only when you
-open the panel).
+(or in the status line, or nothing: the `hint` setting; with `off` it reads no count). While an inbox lives it also
+reads the time of `requests/<project>/` and lists it when that changed, whatever the `hint`; only for a request it
+has not handed over does it run `signoff inbox requests <folder> <project> <id>…` (fixed arguments: the session's
+root, which the command checks is in that project, and the project's and the requests' 16 hex digit ids), check
+that each line it prints is one line in the fixed frame ending with its own id, and hand those lines to the session
+as one prompt from the plugin (a line in that frame that holds a control, format or line or paragraph separator character or a lone surrogate,
+or is too long, is not sent; a later session
+start with no other live session of the project hands it over). Whoever can write the home's `requests/` folder
+can put such a line before the agent; that folder is the user's own, in the 0700 home, as before.
 
-Its Open button and `/signoff:open` open a panel. They run `signoff inbox rows <session folder>` once. That asks
+Its Open button and `/signoff:open` open a panel. They run `signoff inbox rows <session root>` once. That asks
 the running inbox's control socket for the project's open rounds and their open questions (run and item numbers and
 one-line titles, with the project's folder and your home replaced; no path, link or token of its own). A URL the
 agent wrote in a title stays, and so does the project's folder when the agent wrote it through a link, as the inbox
@@ -69,7 +74,7 @@ There is no telemetry and no update check.
 **Written to disk:** the answers files, their Markdown copies and, when the folder has none, a `.gitignore`;
 once the inbox has run, also the round locks, the run notes and the hooks' project and session notes and
 `waiting.flag` described under [the exit codes](running.md#running-it-yourself), and the inbox's own files and requests described in [the inbox's page](inbox.md#the-inbox), with the `.done`
-marks agents write; with the macOS app installed, the hooks' `launcher` link in the home; on your click, Uptick's scan list; with `--notes` (the Notes folder setting), a note per round done in that run, created in your notes folder and never written over ([the checks](running.md#notes-folder)). A folder another app syncs sends the notes where that app sends them. The monitor writes nothing. The
+marks agents write; with the macOS app installed, the hooks' `launcher` link in the home; on your click, Uptick's scan list; with `--notes` (the Notes folder setting), a note per round done in that run, created in your notes folder and never written over ([the checks](running.md#notes-folder)). A folder another app syncs sends the notes where that app sends them. The mod and `signoff inbox requests` write nothing. The
 past-decisions page writes nothing. Nothing is deleted, with two narrow exceptions: the MCP server removes its own
 temporary files, and a starting inbox removes the socket a stopped inbox left in the Signoff home, and only that.
 The `launcher` link, when it points elsewhere, is replaced by renaming a new link over it.

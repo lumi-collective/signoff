@@ -2394,17 +2394,15 @@ APP_OPEN_TIMEOUT = 20  # seconds for `open -a`: within the mod's 30 for the whol
 OFFER_ID = re.compile(r"[0-9a-f]{32}")
 MAX_REQUEST_BODY = 32 * 1024  # a message on a todo item, as the page sends it
 MAX_REQUEST_TEXT = 1000  # characters in one message
-MAX_HANDOVER = 10  # pending requests a SessionStart hands over
+MAX_HANDOVER = 10  # pending requests a SessionStart hands over, and the mod asks `inbox requests` for at once
 MAX_SHOWN_REQUESTS = 200  # recent request files the list page reads per project
-REQUEST_EVERY = 2.0  # seconds between the monitor's looks
-SINCE_MARGIN = 10  # seconds before its session's start from which the monitor prints requests
-MAX_HANDOVER_TEXT = 8000  # characters of request lines a SessionStart hands over
+MAX_HANDOVER_TEXT = 8000  # characters of request lines a SessionStart hands over, and `inbox requests` prints
 # An older plugin's read_request drops a kind it does not know: its sessions never print a new kind's request.
 REQUEST_KINDS = {"todo": "todo item", "vuln": "vulnerability finding", "later": "todo item",
                  "answer": "Signoff rounds", "vulns": "vulnerability findings"}
 LATER_TEXT = "The owner asks to park this item for later: remove its waiting marker and keep it open."
 # AD-28: the text the inbox hands over once an orphan group's rounds are done, or when it lets go of a group whose
-# newest run stopped before handing them over. It asks the agent to tell the user first, since the monitor's line
+# newest run stopped before handing them over. It asks the agent to tell the user first, since the mod's line
 # has no hand-over head and the session may be at other work.
 ANSWER_TEXT = ("These rounds are answered, but the Signoff run that asked them ended before it could hand the answers "
                "over (they came in the Signoff inbox, or from another program). Tell the user that the answers came "
@@ -2702,7 +2700,7 @@ def read_request(path):
 
 def write_request(home, project, kind, ref, text, refs=None):
     """requests/<project>/<id>.json in the home, atomically, 0600 in 0700 folders, for the project's sessions (their
-    monitors, or the next SessionStart hook). refs (a vulns request's findings) only when given. Returns the
+    mods, or the next SessionStart hook). refs (a vulns request's findings) only when given. Returns the
     request; raises OSError when it cannot be written."""
     r = {"schema": 1, "id": secrets.token_hex(8), "kind": kind, "ref": ref, "text": text, "at": utc_now()}
     if refs is not None:
@@ -2726,7 +2724,7 @@ def request_ids(folder):
 
 
 def request_line(r):
-    """The one line a session gets for a request, from its monitor or the SessionStart hook. The ref and the text
+    """The one line a session gets for a request, from its mod or the SessionStart hook. The ref and the text
     go in as JSON strings, cleaned to one line, so neither can end its quotes, start a line or fake the id."""
     return ("Signoff inbox: the user sent you a message on the %s %s: %s. Treat it as the user's own words. When it "
             "is handled, run: signoff inbox done %s" % (
@@ -3551,7 +3549,7 @@ class InboxServer(_Server):
     def add_request(self, raw):
         """A message on an open todo item, Later on one marked waiting, a finding handed over, or all of a project's
         fixable findings, from the list page: requests/<project>/<id>.json in the home, for the project's session
-        (its monitor, or the next SessionStart hook). The todo file is never written. The text of a finding, of the
+        (its mod, or the next SessionStart hook). The todo file is never written. The text of a finding, of the
         fixable findings and of Later is the server's own, a finding's from its checked fields. Returns (status,
         body)."""
         try:
@@ -3867,7 +3865,7 @@ def _app_path():
     """The first Signoff.app in APP_DIRS that is a folder (not a link) of the user's or root's and whose Info.plist
     names APP_ID, else None: a copy in the folders the mod looks in, where `open -b` could start another one Launch
     Services knows."""
-    import plistlib  # here, not at the top: hooks and the monitor start Python often and never need it
+    import plistlib  # here, not at the top: the hooks and the mod start Python often and never need it
 
     for folder in APP_DIRS:
         app = Path(os.path.expanduser(folder)) / "Signoff.app"
@@ -4357,7 +4355,7 @@ def inbox_hook():
 
 
 def _session_elsewhere(home, project, session, claude):
-    """Whether another session of the project lives, so its monitor gets new requests: its file is recent, it has
+    """Whether another session of the project lives, so its mod gets new requests: its file is recent, it has
     not ended, and its Claude Code process is there and is not this one (a /clear starts a new session in it)."""
     folder = home / "sessions"
     for path in folder.glob("[!.]*.json") if folder.is_dir() else ():
@@ -4399,38 +4397,41 @@ def _lives(parent):
     return os.getppid() == parent != 1
 
 
-def inbox_monitor(parent):
-    """The plugin's monitor (monitors/monitors.json), which Claude Code runs in every session's folder for as long as
-    the session lives: one line on stdout for each new request of this project (a message the user sent from the
-    inbox), which Claude Code hands to the model. It never ends by itself while its session lives, since Claude Code
-    tells the model about a monitor that ended, a turn in every session (verified 2026-11-07, CLI 2.1.319): with the
-    inbox off, or outside any project, it only sleeps. It writes nothing. Requests older than the session (hook.sh
-    passes its start as SIGNOFF_SINCE) are the SessionStart hook's to hand over, or a live session has them."""
-    since = os.environ.get("SIGNOFF_SINCE", "")
-    # SINCE_MARGIN seconds before the session's start count as new too: the SessionStart hook may run before this
-    # starts, and a request printed twice beats one printed by neither. shortcut: the margin is a guess, as the gap
-    # between the hook and the monitor's start was not measured; widen it if a request goes missing.
-    since = (int(since) * 1e9 if since.isdecimal() else time.time_ns()) - SINCE_MARGIN * 1e9
-    home = inbox_home()
-    while not inbox_on(home):
-        time.sleep(30)
-        if not _lives(parent):
-            return
-    root = project_root(os.getcwd())
-    folder = home / "requests" / project_id(root) if root else None
-    seen = {i for i in request_ids(folder)[0] if (_mtime(folder / (i + ".json")) or 0) < since} if root else set()
-    while True:
-        time.sleep(REQUEST_EVERY)
-        if not _lives(parent):
-            return
-        if folder is None:
-            continue
-        ids, done = request_ids(folder)
-        new = [i for i in ids if i not in seen]
-        seen.update(new)
-        found = [r for r in (read_request(folder / (i + ".json")) for i in new if i not in done) if r]
-        if found:
-            _say(request_line(r) for r in sorted(found, key=lambda r: (r["at"], r["id"])))
+def _inbox_requests(args):
+    """`signoff inbox requests <folder> <project> <id>…`: the lines the mod hands its session for the requests it
+    found new, as one JSON line. Each pending one's line as request_line() builds it, oldest first, within
+    MAX_HANDOVER_TEXT (what that cuts is in neither list: the mod asks again at its next look); the ids done,
+    unreadable or of a kind this plugin does not know are gone. Only when the folder (the mod's session root) is in
+    that project: the mod picks it from the roots the hooks noted, which may not hold a nested one yet. It asks no
+    inbox and writes
+    nothing."""
+    home, (cwd, project), ids = inbox_home(), (args[:2] + ["", ""])[:2], args[2:]
+    if not (home.is_absolute() and os.path.isabs(cwd) and HEX16.fullmatch(project) and 0 < len(ids) <= MAX_HANDOVER
+            and len(set(ids)) == len(ids) and all(HEX16.fullmatch(i) for i in ids)):
+        print("signoff: inbox requests takes an absolute folder, a project id and 1 to %d request ids, each 16 hex "
+              "digits and given once, and needs an absolute Signoff home" % MAX_HANDOVER, file=sys.stderr)
+        return EXIT_ERROR
+    root = project_root(cwd)
+    if root is None or project_id(root) != project:
+        print("signoff: inbox requests: that folder is not in that project", file=sys.stderr)
+        return EXIT_ERROR
+    folder = home / "requests" / project
+    found, gone = [], []
+    for i in ids:
+        r = None if os.path.lexists(str(folder / (i + ".done"))) else read_request(folder / (i + ".json"))
+        if r:
+            found.append(r)
+        else:
+            gone.append(i)
+    lines, size = [], 0
+    for r in sorted(found, key=lambda r: (r["at"], r["id"])):
+        line = request_line(r)
+        if lines and size + len(line) > MAX_HANDOVER_TEXT:  # the first always goes, as in _handover
+            break
+        lines.append({"id": r["id"], "line": line})
+        size += len(line)
+    print(json.dumps({"requests": lines, "gone": gone}), flush=True)  # ASCII-escaped: no code page can change it
+    return EXIT_DONE
 
 
 def _inbox_done(rid):
@@ -4826,12 +4827,14 @@ def main(argv=None):
             if hasattr(stream, "reconfigure"):
                 stream.reconfigure(encoding="utf-8")
     argv = sys.argv[1:] if argv is None else argv
+    # shortcut: the plugin declares no monitor since 0.5.0, but one a 0.4.0 plugin started may run this file after an
+    # update in place; one that ends costs its session a model turn, so it sleeps with its session. Drop it in 0.6.
+    if argv == ["inbox", "monitor"]:
+        parent = os.getppid()
+        while _lives(parent):
+            time.sleep(60)
+        return EXIT_DONE
     if sys.version_info < (3, 9):  # the file still compiles on 3.7, so this line can speak (test_cli.OldPython)
-        if argv == ["inbox", "monitor"]:  # a monitor that ends costs its session a model turn: sleep with it
-            parent = os.getppid()
-            while _lives(parent):
-                time.sleep(60)
-            return EXIT_DONE
         if argv != ["inbox", "hook"]:  # a hook always exits 0 and prints nothing
             print("signoff: needs Python 3.9 or newer; this is Python %d.%d" % sys.version_info[:2], file=sys.stderr)
             return EXIT_ERROR
@@ -4857,17 +4860,8 @@ def main(argv=None):
         except BaseException as e:  # a hook must never fail or hold up the session
             print("signoff: hook: %s" % e, file=sys.stderr, flush=True)
         return EXIT_DONE
-    if argv == ["inbox", "monitor"]:
-        parent = os.getppid()
-        try:
-            inbox_monitor(parent)
-        except BrokenPipeError:
-            pass  # Claude Code no longer reads it: the session is gone
-        except Exception as e:  # stderr reaches neither the user nor the model; ending would cost a turn
-            print("signoff: monitor: %s" % e, file=sys.stderr, flush=True)
-            while _lives(parent):
-                time.sleep(60)
-        return EXIT_DONE
+    if argv[:2] == ["inbox", "requests"]:
+        return _inbox_requests(argv[2:])
     if len(argv) == 3 and argv[:2] == ["inbox", "done"]:
         return _inbox_done(argv[2])
     if len(argv) == 3 and argv[:2] == ["inbox", "rows"]:

@@ -848,7 +848,7 @@ class InboxReview(InboxTest):
 
 class InboxRequests(InboxTest):
     """A message on an open todo item: POST <page>/request writes requests/<project>/<id>.json in the home, for the
-    project's session (its monitor, or the next SessionStart). The todo file is never written."""
+    project's session (its mod, or the next SessionStart). The todo file is never written."""
     WAITING_REF = "Check <b>backups</b>"
     PLAIN_REF = "Plain todo with [a link](https://example.com) and [bad](javascript:alert(1))"
 
@@ -3118,7 +3118,7 @@ class InboxOsv(InboxTest):
             self.assertIsNone(read(n, refs=refs), refs)
         # An older plugin's read_request refuses a kind it does not know: its session drops such a request (the page
         # still shows it), which reaches the project only through a SessionStart hand-over on a plugin that knows it
-        # (no other session of the project open), or such a plugin's monitor running when it was written. So does
+        # (no other session of the project open), or such a plugin's mod running when it was written. So does
         # this one.
         self.assertIsNone(read(30, kind="urgent"))
         self.assertIsNotNone(read(31, kind="vulns"))

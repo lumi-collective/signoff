@@ -4,8 +4,9 @@ import type { Args, EngineInterface, Next, PluginOptions, Register, RenderInput 
 import type { PanelRows } from '../types'
 
 // The Signoff band: how many rounds and todo items wait on the user in this session's project, from the inbox's
-// state.json. It reads files through $.fs every EVERY ms and starts no Python for that; the one process it starts
-// by itself is `signoff inbox home`, once per load of this module, and only after an inbox.lock showed that an inbox has run.
+// state.json. It reads files through $.fs every EVERY ms and starts no Python for that; the processes it starts
+// by itself are `signoff inbox home`, once per load of this module, and only after an inbox.lock showed that an inbox
+// has run, and `signoff inbox requests` for a message from the inbox it found new, whose lines it hands the session.
 // Open and /signoff:open open the panel: this project's open rounds from `signoff inbox rows`, run once per opening.
 
 type Engine = EngineInterface
@@ -21,6 +22,16 @@ const EVERY = 5_000
 const LIVE_WITHIN = 15_000
 const MAX_FILE = 64 * 1024 // state.json and projects/<id>.json hold a few hundred bytes
 const ID = /^[0-9a-f]{16}$/
+const REQUEST_FILE = /^[0-9a-f]{16}\.json$/
+// A request written near the session's start may also come in the SessionStart hand-over: twice beats never.
+// shortcut: the margin is a guess, as the gap between that hook and the first look is not measured.
+const SINCE_MARGIN = 10_000
+const MAX_IDS = 10 // MAX_HANDOVER in signoff.py
+const MAX_SENT = 1000
+const MAX_LINE = 4096 // a request_line() is at most about 2,800 characters
+const RETRY_AFTER = 60_000
+const MAX_RETRIES = 3 // in a row per load; then only at the folder's next change
+const NOT_ONE_LINE = /[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/u
 
 const countA = atom({ plugin: 'signoff', key: 'count' } as const, 0)
 const hiddenA = atom({ plugin: 'signoff', key: 'hiddenFor' } as const, null)
@@ -28,6 +39,7 @@ const toastedA = atom({ plugin: 'signoff', key: 'isToasted' } as const, false)
 const rowsA = atom({ plugin: 'signoff', key: 'rows' } as const, null)
 const whereA = atom({ plugin: 'signoff', key: 'where' } as const, null)
 const hasAppA = atom({ plugin: 'signoff', key: 'hasApp' } as const, false) // in state: a mod reload keeps the rows too
+const requestsA = atom({ plugin: 'signoff', key: 'requests' } as const, null) // a reload keeps it, a /clear empties it
 
 // One load's facts. A reload (an options change too) starts a fresh module; $.state keeps the count meanwhile.
 const look = {
@@ -38,6 +50,7 @@ const look = {
   home: undefined as string | undefined,
   isHomeAsked: false,
   project: undefined as string | undefined,
+  root: '', // the session root it was found for: $.session.root(), which a `/cd` moves and a Bash `cd` does not
   projectsAt: -1, // the projects/ folder's time at the last listing
   stateKey: '',
   stateCount: 0,
@@ -48,6 +61,13 @@ const look = {
   isShown: false, // whether show() has drawn this load's first count (and set the status line)
   isBusy: false,
   isOpening: false, // a panel row's `signoff inbox open` runs
+  // The requests: their own flag, so a submit the engine holds does not hold up the count.
+  isDelivering: false,
+  listedAt: -1, // the requests folder's time at the last listing
+  listedNow: 0, // and the clock's then
+  isCut: false, // a batch left new requests for the next look
+  failures: 0, // failed batches in a row
+  retryAt: 0, // when a failed batch is tried again; 0: not by time
 }
 
 const hint = () => (look.options.hint === 'status' || look.options.hint === 'off' ? look.options.hint : 'band')
@@ -82,13 +102,16 @@ async function findHome($: Engine): Promise<string | undefined> {
   return look.home
 }
 
-// The hooks note each project's root in projects/<id>.json; the session's is the longest root holding its folder.
+// The hooks note each project's root in projects/<id>.json; the session's is the longest root holding the session's
+// root, as the monitor fixed its project at the session's start: a Bash `cd` does not move it.
 async function findProject($: Engine, home: string): Promise<string | undefined> {
   const folder = `${home}/projects`
   const at = (await $.fs.stat(folder)).mtimeMs
-  if (at === look.projectsAt) return look.project // a new note (a nested project's, say) changes the folder's time
-  const cwd = (await $.fs.stat(await $.session.cwd(), { resolve: true })).realPath
-  if (!cwd) return undefined
+  const session = await $.session.root()
+  // A new note (a nested project's, say) changes the folder's time.
+  if (at === look.projectsAt && session === look.root) return look.project
+  const real = (await $.fs.stat(session, { resolve: true })).realPath
+  if (!real) return undefined
   let best = ''
   let project: string | undefined
   for (const entry of await $.fs.list(folder)) {
@@ -96,12 +119,15 @@ async function findProject($: Engine, home: string): Promise<string | undefined>
     const noted = (await readJSON($, `${folder}/${entry.name}`).catch(() => undefined)) as { id?: unknown; root?: unknown } | undefined
     const root = typeof noted?.root === 'string' ? noted.root.replace(/\/$/, '') : ''
     if (typeof noted?.id !== 'string' || !ID.test(noted.id) || !isAbsolute(root) || root.length <= best.length) continue
-    if (cwd === root || cwd.startsWith(`${root}/`)) {
+    if (real === root || real.startsWith(`${root}/`)) {
       best = root
       project = noted.id
     }
   }
+  // The notes on the requests folder were the other project's, as at a /clear.
+  if (project !== look.project) Object.assign(look, { listedAt: -1, isCut: false, failures: 0, retryAt: 0 })
   look.project = project
+  look.root = session
   look.projectsAt = at // only after a whole listing: a failed one is tried again at the next look
   return project
 }
@@ -150,15 +176,154 @@ async function show($: Engine, live: number | undefined) {
   if (hint() === 'status') $.ui.status(n ? `${line(n)} · /${COMMAND}` : undefined)
 }
 
+// The one way this mod puts text before the model: a turn of its own, which Claude Code starts once the session is
+// idle (after a running turn; a draft in the prompt box stays). False when it did not enter. The log never gets the
+// text, nor a drop's reason, which may quote it.
+async function submit($: Engine, text: string): Promise<boolean> {
+  try {
+    if ((await $.prompt.submit({ text })).drop === undefined) return true
+    $.ui.log('signoff: a prompt was dropped', { to: 'debug' })
+  } catch (err) {
+    $.ui.log(`signoff: a prompt did not enter (${err instanceof Error ? err.name : typeof err})`, { to: 'debug' })
+  }
+  return false
+}
+
+type Ran = { exitCode: number; stdout: string; isStdoutTruncated: boolean }
+
+// `signoff inbox requests` builds each line with request_line(), the one escaper; this only checks the reply is
+// exactly that for the ids asked, and passes the lines on unchanged. Undefined for anything else, except a line in
+// its frame with its own id that is not one line by this engine's Unicode table (an older Python's misses a few
+// format characters): marked, not sent, so it holds up no later request; a later session start with no other live
+// session of the project hands it over.
+function checkReply($: Engine, ran: Ran, asked: string[]): { lines: string[]; sentIds: string[]; named: string[] } | undefined {
+  if (ran.exitCode !== 0 || ran.isStdoutTruncated) return undefined
+  let got: { requests?: unknown; gone?: unknown }
+  try {
+    got = JSON.parse(ran.stdout)
+  } catch {
+    return undefined
+  }
+  if (!Array.isArray(got?.requests) || !Array.isArray(got.gone)) return undefined
+  const named: string[] = []
+  const lines: string[] = []
+  const sentIds: string[] = []
+  const isNew = (id: unknown): id is string => typeof id === 'string' && asked.includes(id) && !named.includes(id)
+  for (const r of got.requests as { id?: unknown; line?: unknown }[]) {
+    const { id, line } = r ?? {}
+    if (!isNew(id) || typeof line !== 'string') return undefined
+    if (!line.startsWith('Signoff inbox: ') || !line.endsWith(`inbox done ${id}`)) return undefined
+    named.push(id)
+    if (line.length > MAX_LINE || NOT_ONE_LINE.test(line)) {
+      $.ui.log('signoff: a request line was not one line; a later session start with no other live session of the project hands it over', { to: 'debug' })
+      continue
+    }
+    sentIds.push(id)
+    lines.push(line)
+  }
+  for (const id of got.gone) {
+    if (!isNew(id)) return undefined
+    named.push(id)
+  }
+  // The command always fits the first one, so a reply naming none is no answer.
+  return named.length ? { lines, sentIds, named } : undefined
+}
+
+function failed($: Engine, now: number) {
+  look.failures += 1
+  look.retryAt = look.failures <= MAX_RETRIES ? now + RETRY_AFTER : 0
+  look.isCut = false // a cut batch waits for the retry too
+  $.ui.log('signoff: a request hand-over failed', { to: 'debug' })
+}
+
+// The requests the user sent this project from the inbox: listed through $.fs only when the folder changed (or a
+// batch was cut, or a retry is due), and a process only for ids it has not handed over.
+async function deliver($: Engine, home: string, project: string, root: string) {
+  if (look.isDelivering) return
+  look.isDelivering = true
+  try {
+    const now = await $.clock.now()
+    const held = await read($, requestsA)
+    // The mark is for the project beside it, set at the first live look; a reload keeps both. A root moved into
+    // another project gets a new mark, as a /clear does: the ids handed over stay, and that project's older requests
+    // come at a later session start with no other live session of the project. A held mark with no project (a build
+    // before this one) takes this one.
+    const isOther = held?.project !== undefined && held.project !== project
+    const mark = {
+      since: held && !isOther ? held.since : now - SINCE_MARGIN,
+      sent: held?.sent ?? [],
+      project,
+    }
+    if (held?.project !== project) await update($, requestsA, () => mark)
+    const folder = `${home}/requests/${project}`
+    const at = await $.fs.stat(folder).then(
+      s => (s.kind === 'dir' ? s.mtimeMs : undefined),
+      () => undefined, // no folder: no request yet
+    )
+    if (at === undefined) return
+    const isRetry = look.retryAt > 0 && now >= look.retryAt
+    // A listing within 2 s of the folder's time may share its tick with a later write (HFS+ 1 s, FAT 2 s): once more,
+    // unless a failed batch waits for its retry.
+    if (at === look.listedAt && (look.listedNow - at >= 2_000 || look.retryAt > 0) && !look.isCut && !isRetry) return
+    look.listedAt = at // before the listing: a write during it changes the time again, for the next look
+    look.listedNow = now
+    look.isCut = false
+    look.retryAt = 0
+    let entries
+    try {
+      entries = await $.fs.list(folder)
+    } catch (err) {
+      look.listedAt = -1 // tried again at the next look
+      throw err
+    }
+    const names = new Set(entries.map(e => e.name))
+    const pending = entries.filter(e => e.kind === 'file' && !e.isLink && REQUEST_FILE.test(e.name) && !names.has(`${e.name.slice(0, 16)}.done`))
+    // Only a done one is dropped: an id not in this folder may be another project's, handed over before a /cd.
+    const sent = mark.sent.filter(id => !names.has(`${id}.done`)).slice(-MAX_SENT)
+    const fresh = pending
+      .filter(e => e.mtimeMs >= mark.since && !sent.includes(e.name.slice(0, 16)))
+      .sort((a, b) => a.mtimeMs - b.mtimeMs || (a.name < b.name ? -1 : 1))
+    const asked = fresh.slice(0, MAX_IDS).map(e => e.name.slice(0, 16))
+    // Each write keeps the mark and its project as $.state holds them.
+    const keep = (ids: string[]) => update($, requestsA, old => ({ since: old?.since ?? mark.since, sent: ids, project: old?.project ?? project }))
+    if (sent.length !== mark.sent.length) await keep(sent)
+    if (!asked.length) return
+    // The session root too: the command checks it is in this project (a nested one the hooks have not noted is not).
+    const ran = await $.process
+      .run([`${$.plugin.root}/bin/signoff`, 'inbox', 'requests', root, project, ...asked], { timeoutMs: 10_000 })
+      .catch(() => undefined)
+    const reply = ran && checkReply($, ran, asked) // its stderr is never read
+    if (!reply) return failed($, now)
+    // What the command cut at MAX_HANDOVER_TEXT, and what did not fit MAX_IDS, goes at the next look.
+    look.isCut = fresh.length > asked.length || reply.named.length < asked.length
+    // Marked before it goes, so a reload while the engine holds the submit does not send it again.
+    const marked = [...sent, ...reply.named].slice(-MAX_SENT)
+    await keep(marked)
+    if (reply.lines.length && !(await submit($, reply.lines.join('\n')))) {
+      await keep(marked.filter(id => !reply.sentIds.includes(id)))
+      return failed($, now)
+    }
+    look.failures = 0
+  } catch (err) {
+    $.ui.log(`signoff: requests look failed (${err instanceof Error ? err.name : typeof err})`, { to: 'debug' })
+  } finally {
+    look.isDelivering = false
+  }
+}
+
 async function poll($: Engine) {
   if (look.isBusy) return
   look.isBusy = true
+  const isShown = hint() !== 'off' // off shows nothing, yet the user's messages still reach the session
   let n: number | undefined
   try {
     const home = await findHome($)
     if (home && (await alive($, home))) {
       const project = await findProject($, home)
-      if (project) n = await countOf($, home, project)
+      if (project) {
+        void deliver($, home, project, look.root) // the root it was found for, kept with it
+        if (isShown) n = await countOf($, home, project)
+      }
     }
   } catch (err) {
     // Any failure shows nothing. Only the error's kind: a message may hold a path.
@@ -166,7 +331,7 @@ async function poll($: Engine) {
   } finally {
     look.isBusy = false
   }
-  await show($, n)
+  if (isShown) await show($, n)
 }
 
 // A panel row: the numbers its rows reply gave. The inbox maps them to the item and opens it in Focus.
@@ -221,10 +386,12 @@ const fit = (text: string, width: number) => {
 }
 const FAILED: PanelRows = { rounds: [], more: 0, inbox: 0, isFailed: true }
 
-// `signoff inbox rows <cwd>`: numbers and titles only, or FAILED. Its stderr is never read.
+// `signoff inbox rows <root>`: numbers and titles only, or FAILED. Its stderr is never read. The session root's
+// project, as the band counts it: the root the project was found for, else the session's root now.
 async function fetchRows($: Engine): Promise<PanelRows> {
   try {
-    const ran = await $.process.run([`${$.plugin.root}/bin/signoff`, 'inbox', 'rows', await $.session.cwd()], { timeoutMs: 10_000 })
+    const root = look.root || (await $.session.root())
+    const ran = await $.process.run([`${$.plugin.root}/bin/signoff`, 'inbox', 'rows', root], { timeoutMs: 10_000 })
     if (ran.exitCode !== 0 || ran.isStdoutTruncated) return FAILED
     const got = JSON.parse(ran.stdout) as { rounds?: unknown; more?: unknown; inbox?: unknown }
     if (!Array.isArray(got?.rounds) || !isIndex(got.more)) return FAILED
@@ -365,7 +532,6 @@ async function arm($: Engine) {
   if (look.isArmed) return
   look.isArmed = true
   if (hint() !== 'status') $.ui.status(undefined) // a status line stays until replaced, also past a switch in /config
-  if (hint() === 'off') return
   look.isWindows = (await $.env.get('OS')) === 'Windows_NT'
   if (look.isWindows) return // no inbox there yet: nothing to look at
   look.candidates = await candidates($)
@@ -376,6 +542,13 @@ async function onSessionStart($: Engine, e: Args<'session.start'>, next: Next<'s
   const started = await next(e)
   if (e.isInteractive) await arm($)
   return started
+}
+
+// A /clear ends the conversation and empties $.state but keeps this module: this load's notes on the requests go too,
+// so the new mark is looked at from a fresh listing.
+async function onSessionEnd(_$: Engine, e: Args<'session.end'>, next: Next<'session.end'>) {
+  if (e.reason === 'clear') Object.assign(look, { listedAt: -1, isCut: false, failures: 0, retryAt: 0 })
+  return next(e)
 }
 
 // Typed at the prompt it opens the panel and says nothing: the command's output row would go into the conversation.
@@ -441,6 +614,7 @@ async function onBand($: Engine, e: RenderInput<'AbovePrompt'>, next: Next<'ui.r
 export const register: Register = (on, options) => {
   look.options = options
   on('session.start', onSessionStart)
+  on('session.end', onSessionEnd)
   on('command.run', { command: COMMAND }, onCommandRun)
   on('ui.close', onClose)
   on('ui.render', { component: 'AbovePrompt' }, onBand)

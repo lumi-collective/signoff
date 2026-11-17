@@ -101,9 +101,6 @@ older one, use two steps: `/plugin marketplace add lumi-collective/signoff`, the
 
 In the desktop app: + next to the prompt box → Plugins → Add marketplace `lumi-collective/signoff` → Add plugin.
 
-Then the status line shows one monitor: a small process that only sleeps until you use the
-[Signoff inbox](#the-inbox).
-
 Auto-update is off by default for a third-party marketplace; turn it on in `/plugin` → Marketplaces → Enable
 auto-update. Update by hand: `claude plugin update signoff@signoff`, then `/reload-plugins`.
 Uninstall: `claude plugin uninstall signoff@signoff`. Decision folders and answers files in your projects stay
@@ -186,8 +183,8 @@ the app can find it. Other ways to build it, and the details: [docs/inbox.md](do
 
 ## What runs, and what leaves your machine
 
-- **Runs:** one Python process for as long as the page is open, and your browser. The plugin's hooks and its
-  monitor run in every Claude Code session; until the inbox has run, they only look for `inbox.lock`, and while
+- **Runs:** one Python process for as long as the page is open, and your browser. The plugin's hooks run in every
+  Claude Code session; until the inbox has run, they only look for `inbox.lock`, and while
   no inbox runs, only a session's start does more than look at that file's time (on macOS
   with the Signoff app installed, a new session's start also keeps a link to the plugin's command for the app). The hooks
   always exit 0 and print nothing, so they never block or change a session; the one exception is the hand-over of
@@ -198,8 +195,11 @@ the app can find it. Other ways to build it, and the details: [docs/inbox.md](do
   `/signoff:open` and its Open button list the project's open rounds in a panel (`signoff inbox rows`, once per
   opening). Each row runs `signoff inbox open` for its question. With the macOS app installed, an App button beside
   it runs `signoff inbox open --app`, which runs `open -a` with the path of the app copy it checked. The `hint`
-  setting moves the count to the status line or turns it off. The inbox and the macOS app are extra processes only
-  when you start them.
+  setting moves the count to the status line or turns it off. The mod also hands an open session the messages you
+  send its project from the inbox: it lists the project's `requests/` folder when its time changed, and only for a
+  message it has not handed over runs `signoff inbox requests`, whose lines it sends as one prompt from the plugin
+  (also with the `hint` off). No background process stays in a session. The inbox and the macOS app are extra
+  processes only when you start them.
 - **Leaves your machine:** nothing from Signoff. The server listens on `127.0.0.1` only, the page loads nothing
   from outside, and there is no telemetry and no update check. A board's own script could still send data out over
   WebRTC, so boards hold synthetic data only.

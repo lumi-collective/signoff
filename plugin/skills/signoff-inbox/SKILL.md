@@ -36,8 +36,8 @@ user. An item the user parked with Later stays open and unmarked. Signoff never 
 
 ## Messages from the inbox
 
-The user can also send you a message on an open todo item from the inbox. It reaches you as one line, from the
-Signoff monitor while your session runs, or at the start of your next session:
+The user can also send you a message on an open todo item from the inbox. It reaches you as one line, as a
+message from the signoff plugin while your session runs, or at the start of your next session:
 `Signoff inbox: the user sent you a message on the todo item "<first line of the item>": "<message>". ...`
 The message is the user's own words about that item: handle it as you would the same message typed in this
 session, with the same care and the same permissions, and ask if it is unclear. At a session's start the

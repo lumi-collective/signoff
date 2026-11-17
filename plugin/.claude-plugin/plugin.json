@@ -19,7 +19,7 @@
     "hint": {
       "type": "string",
       "title": "Waiting hint",
-      "description": "While the Signoff inbox runs, how a session shows what waits on you in its project: band (a line above the prompt), status (a status line entry) or off (nothing, and no looking). Any other value is band.",
+      "description": "While the Signoff inbox runs, how a session shows what waits on you in its project: band (a line above the prompt), status (a status line entry) or off (nothing shown; messages you send from the inbox still reach the session). Any other value is band.",
       "default": "band"
     },
     "chat": {

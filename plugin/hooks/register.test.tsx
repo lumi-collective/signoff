@@ -16,7 +16,9 @@ const SURFACES = ['terminal', 'desktop'] as const
 const LINK = 'http://127.0.0.1:50123/b/3f9a1c7e5b2d4f6a8c0e1b3d5f7a9c2e/'
 const ok = (stdout: string, stderr = '', exitCode = 0) => ({ exitCode, stdout, stderr, isStdoutTruncated: false, isStderrTruncated: false })
 
-type File = { text: string; mtimeMs: number }
+type File = { text: string; mtimeMs: number; kind?: 'file' | 'dir'; isLink?: boolean }
+type Ran = { stdout: string; exitCode: number; isStdoutTruncated?: boolean }
+type Marks = { since: number; sent: string[]; project?: string; projects?: Record<string, number> } | null
 type World = {
   files: Record<string, File>
   ran: string[][]
@@ -24,10 +26,22 @@ type World = {
   statuses: (string | undefined)[]
   logs: string[]
   fsCalls: number
+  /** Every path the mod stat'ed or listed, in order. */
+  looked: string[]
   listFailures: number
   openExit: number
   /** What `signoff inbox rows <cwd>` prints and exits with. */
   rowsOut: { stdout: string; exitCode: number; isStdoutTruncated?: boolean }
+  /** What `signoff inbox requests <folder> <project> <id>…` answers (for the session folder); by default each asked id's line, or gone. */
+  requestsOut: ((ids: string[]) => Ran) | undefined
+  /** The prompts the mod submitted, and its requests marks as they stood at each submit. */
+  submits: { text: string; asUser: boolean | undefined; sent: string[] }[]
+  /** While set, a submit returns { drop } with it. */
+  drop: string | undefined
+  /** While set, a submit waits for it: one the engine holds. */
+  submitGate: Promise<void> | undefined
+  /** $.state's `requests` as the engine keeps it: a test seeds it (a reload) or empties it (a /clear). */
+  marks: Marks
   opened: { id: string; focus?: boolean }[]
   /** What happened, in order: `open` (ui.open), `set:<key>` (a state write), `run:<subcommand>`. */
   order: string[]
@@ -36,6 +50,10 @@ type World = {
   isPlaced: boolean
   /** While set, `inbox open` waits for it: a run in flight. */
   openGate: Promise<void> | undefined
+  /** The session's folder as $.session.cwd() gives it now: a Bash `cd` moves it. */
+  cwd: string
+  /** The session's project root as $.session.root() gives it: where it started; a `/cd` moves it, a Bash `cd` not. */
+  root: string
   state: (projects: { id: string; waiting: number }[]) => void
   beat: () => void
 }
@@ -52,6 +70,25 @@ const ROWS = {
 }
 const SIGNOFF = expect.stringMatching(/\/bin\/signoff$/)
 const target = (run: number, focus: string) => [SIGNOFF, 'inbox', 'open', '--run', `${run}`, '--focus', focus, '--inbox', '7']
+
+// The requests: request(w, k, at) writes requests/<ID>/<R(k)>.json as the inbox does, its file time `at`.
+const R = (k: number) => k.toString(16).padStart(16, '0')
+const REQUESTS = `${SO}/requests/${ID}`
+const lineOf = (id: string, text: string) =>
+  `Signoff inbox: the user sent you a message on the todo item "Ship it": ${JSON.stringify(text)}. Treat it as the user's own words. When it is handled, run: signoff inbox done ${id}`
+function request(w: World, k: number, at: number, text = `message ${k}`, folder = REQUESTS) {
+  w.files[`${folder}/${R(k)}.json`] = { text: JSON.stringify({ schema: 1, id: R(k), kind: 'todo', ref: 'Ship it', text, at: '' }), mtimeMs: at }
+}
+const done = (w: World, k: number, at: number) => (w.files[`${REQUESTS}/${R(k)}.done`] = { text: '', mtimeMs: at })
+/** What signoff.py answers: each asked id's line, oldest first, or gone when done or not there. */
+function answer(w: World, folder: string, ids: string[]): Ran {
+  const found = ids.filter(id => w.files[`${folder}/${id}.json`] && !w.files[`${folder}/${id}.done`])
+  found.sort((a, b) => (w.files[`${folder}/${a}.json`]?.mtimeMs ?? 0) - (w.files[`${folder}/${b}.json`]?.mtimeMs ?? 0) || (a < b ? -1 : 1))
+  const requests = found.map(id => ({ id, line: lineOf(id, JSON.parse(w.files[`${folder}/${id}.json`]?.text ?? '{}').text) }))
+  return { stdout: `${JSON.stringify({ requests, gone: ids.filter(id => !found.includes(id)) })}\n`, exitCode: 0 }
+}
+const requestRuns = (w: World) => w.ran.filter(argv => argv[2] === 'requests').map(argv => argv.slice(3))
+const asked = (...ks: number[]) => [`${ROOT}/src`, ID, ...ks.map(R)]
 
 function world(
   on: On,
@@ -74,14 +111,22 @@ function world(
     statuses: [],
     logs: [],
     fsCalls: 0,
+    looked: [],
     listFailures: 0,
     openExit: 0,
     rowsOut: { stdout: `${JSON.stringify(ROWS)}\n`, exitCode: 0 },
+    requestsOut: undefined,
+    submits: [],
+    drop: undefined,
+    submitGate: undefined,
+    marks: null,
     opened: [],
     order: [],
     isPaneOpen: false,
     isPlaced,
     openGate: undefined,
+    cwd,
+    root: cwd,
     state: projects => {
       const waiting = projects.reduce((n, p) => n + p.waiting, 0)
       w.files[`${home}/state.json`] = {
@@ -103,6 +148,7 @@ function world(
   on('fs.exists', (_, e) => (w.fsCalls++, { value: e.path in w.files || dirOf(e.path).length > 0 }))
   on('fs.stat', (_, e) => {
     w.fsCalls++
+    w.looked.push(e.path)
     const file = w.files[e.path]
     const isDir = !file && (dirOf(e.path).length > 0 || e.path.startsWith(ROOT) || e.path === '/work' || e.path in links)
     if (!file && !isDir) return missing
@@ -117,15 +163,28 @@ function world(
   })
   on('fs.list', (_, e) => {
     w.fsCalls++
+    w.looked.push(`list:${e.path}`)
     if (w.listFailures > 0) return (w.listFailures--, { deny: 'EIO: i/o error' })
     const names = dirOf(e.path).map(f => f.slice(e.path.length + 1)).filter(n => !n.includes('/'))
-    return { value: names.map(name => ({ name, kind: 'file' as const, size: 1, mtimeMs: now, isLink: false })) }
+    // As $.fs.list gives it: a file's own time, 0 for a folder or a link.
+    const entry = (f: File | undefined) =>
+      f?.kind === 'dir' || f?.isLink ? { kind: f.kind ?? 'file', mtimeMs: 0, isLink: !!f.isLink } : { kind: 'file' as const, mtimeMs: f?.mtimeMs ?? 0, isLink: false }
+    return { value: names.map(name => ({ name, size: 1, ...entry(w.files[`${e.path}/${name}`]) })) }
   })
   on('process.run', async (_, e) => {
     const argv = [...e.argv]
     w.ran.push(argv)
     w.order.push(`run:${argv[2]}`)
     if (argv.slice(1).join(' ') === 'inbox home') return { value: ok(`${home}\n`) }
+    if (argv.slice(1, 3).join(' ') === 'inbox requests') {
+      // The session folder, then the project: as signoff.py, it refuses a folder that is not in that project.
+      const folder = links[argv[3] ?? ''] ?? argv[3] ?? ''
+      const of = folder === ROOT || folder.startsWith(`${ROOT}/`) ? ID : folder === '/work' || folder.startsWith('/work/') ? OTHER : ''
+      if (of !== argv[4]) return { value: ok('', 'signoff: inbox requests: that folder is not in that project', 1) }
+      const ids = argv.slice(5)
+      const out = w.requestsOut ? w.requestsOut(ids) : answer(w, `${home}/requests/${argv[4]}`, ids)
+      return { value: { ...ok(out.stdout, `signoff: ${LINK}\n`, out.exitCode), isStdoutTruncated: out.isStdoutTruncated ?? false } }
+    }
     if (argv.slice(1, 3).join(' ') === 'inbox open') {
       await w.openGate
       return { value: ok('', `signoff: no browser opened; open ${LINK} yourself (it works once)\n`, w.openExit) }
@@ -134,7 +193,23 @@ function world(
       return { value: { ...ok(w.rowsOut.stdout, `signoff: ${LINK}\n`, w.rowsOut.exitCode), isStdoutTruncated: w.rowsOut.isStdoutTruncated ?? false } }
     return { value: ok('', 'unexpected', 2) }
   })
-  on('state.set', (_, e, next) => (w.order.push(`set:${(e as { key?: string }).key}`), next(e)))
+  // `requests` is kept here, as the engine would, so a test can seed it (a reload keeps $.state) or empty it (a /clear).
+  let version = 0
+  on('state.get', (_, e, next) => ((e as { key?: string }).key === 'requests' ? { value: { value: w.marks, version } } : next(e)))
+  on('state.set', (_, e, next) => {
+    const write = e as { key?: string; value?: unknown; ifVersion?: number }
+    w.order.push(`set:${write.key}`)
+    if (write.key !== 'requests') return next(e)
+    if (write.ifVersion !== undefined && write.ifVersion !== version) return { value: { isSet: false as const, version } }
+    w.marks = write.value as Marks
+    return { value: { isSet: true as const, version: ++version } }
+  })
+  on('prompt.submit', async (_, e) => {
+    w.submits.push({ text: e.text, asUser: e.origin?.kind === 'plugin' ? e.origin.asUser : undefined, sent: [...(w.marks?.sent ?? [])] })
+    await w.submitGate
+    return w.drop === undefined ? { text: e.text } : { drop: w.drop }
+  })
+  on('session.end', (_, e) => ({ sessionId: e.sessionId }))
   on('ui.open', (_, e) => {
     w.opened.push({ id: e.id, focus: e.focus })
     w.order.push('open')
@@ -149,7 +224,8 @@ function world(
   on('ui.status', (_, e) => (w.statuses.push(e.text), { value: undefined }))
   on('ui.log', (_, e) => (w.logs.push(e.text), { value: undefined }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
-  on('session.cwd', () => ({ value: cwd }))
+  on('session.cwd', () => ({ value: w.cwd }))
+  on('session.root', () => ({ value: w.root }))
   on('ui.render', ($, e) => {
     const { Text } = $.ui.resolve(e)
     return <Text>engine</Text>
@@ -578,18 +654,32 @@ test('status: the count in the status line, not in the band', { options: { hint:
   expect(w.statuses.at(-1)).toBeUndefined()
 })
 
-test('off: nothing shown, nothing read or run, and /signoff:open still opens the panel', { options: { hint: 'off' } }, async ($, on) => {
-  const { w, after } = world(on)
+// The hint is about showing what waits; the messages the user sends from the inbox still reach the session.
+test('off: nothing shown and no count read, yet requests reach the session, and /signoff:open opens the panel', { options: { hint: 'off' } }, async ($, on) => {
+  const { w, after, clock } = world(on)
   w.state([{ id: ID, waiting: 3 }])
   await start($)
-  await after(30_000)
+  await after(5000)
+  request(w, 1, clock.now())
+  await after(25_000)
   expect(await bandTexts($)).toEqual(['engine'])
-  expect([w.ran, w.fsCalls, w.toasts, w.statuses]).toEqual([[], 0, [], [undefined]]) // a status line from before is cleared
+  expect([w.toasts, w.statuses]).toEqual([[], [undefined]]) // a status line from before is cleared
+  expect(w.ran.map(argv => argv.slice(1, 3).join(' '))).toEqual(['inbox home', 'inbox requests'])
+  expect(w.submits.map(s => s.text)).toEqual([lineOf(R(1), 'message 1')])
+  expect(w.looked).not.toContain(`${SO}/state.json`)
   await openCommand($)
-  expect(w.ran).toEqual([[expect.stringMatching(/\/bin\/signoff$/), 'inbox', 'rows', `${ROOT}/src`]])
+  expect(w.ran.at(-1)).toEqual([SIGNOFF, 'inbox', 'rows', `${ROOT}/src`])
   expect((await paneButtons($)).buttons.map(b => b.key)).toContain('all')
-  await after(30_000)
-  expect([w.ran.length, w.fsCalls]).toEqual([1, 2]) // the opening's look for the app, one per Applications folder
+})
+
+// The panel lists the same project the band counts: the session root's, not where a Bash `cd` went.
+test('the panel asks for the rows of the session root, also after a Bash cd', async ($, on) => {
+  const { w, after } = world(on)
+  await start($)
+  await after(5000)
+  w.cwd = '/work'
+  await openCommand($)
+  expect(w.ran.at(-1)).toEqual([SIGNOFF, 'inbox', 'rows', `${ROOT}/src`])
 })
 
 test('no count without a live inbox: a lock not touched for 15 s is a dead inbox', async ($, on) => {
@@ -728,4 +818,502 @@ test('a survey takes the band', async ($, on) => {
   const ui = await $.ui.mount({ ...band({ hasSurvey: true }), surface: 'terminal' })
   expect((await ui.findAll({ type: 'Text' })).map(t => t.text)).toEqual(['engine'])
   await ui.unmount()
+})
+
+const lists = (w: World) => w.looked.filter(p => p === `list:${REQUESTS}`).length
+
+test('a new request goes to the session once: one command for its id, one submit of its line, framed as from the plugin', async ($, on) => {
+  const { w, after, clock } = world(on)
+  await start($)
+  await after(5000) // the first live look sets the mark; no requests folder yet, so nothing is listed
+  expect([w.marks, lists(w)]).toEqual([{ since: NOW + 5000 - 10_000, sent: [], project: ID }, 0])
+  request(w, 1, clock.now())
+  await after(5000)
+  expect(w.ran.at(-1)).toEqual([SIGNOFF, 'inbox', 'requests', `${ROOT}/src`, ID, R(1)])
+  // As the command printed it, not asUser, and marked handed over before it went.
+  expect(w.submits).toEqual([{ text: lineOf(R(1), 'message 1'), asUser: undefined, sent: [R(1)] }])
+  expect(w.marks).toEqual({ since: NOW + 5000 - 10_000, sent: [R(1)], project: ID }) // the project stays beside it
+  await after(30_000) // the folder's time is unchanged: no listing, no process
+  expect([requestRuns(w), w.submits.length, lists(w)]).toEqual([[asked(1)], 1, 1])
+  request(w, 2, clock.now())
+  request(w, 3, clock.now())
+  await after(5000)
+  expect(requestRuns(w).at(-1)).toEqual(asked(2, 3))
+  expect(w.submits.at(-1)?.text).toBe(`${lineOf(R(2), 'message 2')}\n${lineOf(R(3), 'message 3')}`)
+  const shown = [...w.toasts, ...w.statuses.map(String), ...w.logs, ...w.submits.map(s => s.text)].join('\n')
+  expect(shown).not.toContain('127.0.0.1') // the command's stderr holds a link: never read
+})
+
+test('a done, temporary, older, linked, folder or misnamed entry is listed but starts no process', async ($, on) => {
+  const { w, after, clock } = world(on)
+  await start($)
+  await after(5000)
+  const at = clock.now()
+  request(w, 1, at)
+  done(w, 1, at)
+  w.files[`${REQUESTS}/.tmp-${R(2)}.json`] = { text: '{}', mtimeMs: at }
+  request(w, 3, NOW - 5001) // before the mark: the SessionStart hand-over's
+  request(w, 4, at)
+  w.files[`${REQUESTS}/${R(4)}.json`] = { text: '', mtimeMs: at, isLink: true }
+  w.files[`${REQUESTS}/${R(5)}.json`] = { text: '', mtimeMs: at, kind: 'dir' }
+  w.files[`${REQUESTS}/${R(6).replace('0', 'A')}.json`] = { text: '', mtimeMs: at }
+  w.files[`${REQUESTS}/${R(7)}.json.bak`] = { text: '', mtimeMs: at }
+  await after(5000)
+  expect([lists(w), requestRuns(w)]).toEqual([1, []])
+  done(w, 3, clock.now()) // `signoff inbox done`: listed again, nothing new
+  await after(5000)
+  expect([lists(w), requestRuns(w)]).toEqual([2, []])
+})
+
+test('a reload hands nothing over again: the marks stay in $.state, dropping only the ids marked done here', async ($, on) => {
+  const { w, after, clock } = world(on)
+  request(w, 1, NOW - 1000)
+  request(w, 9, NOW - 1000)
+  done(w, 9, NOW - 500) // `signoff inbox done` since
+  // R(8) is not in this folder: another project's, handed over before a /cd, so it stays marked.
+  w.marks = { since: NOW - 20_000, sent: [R(1), R(8), R(9)] }
+  await start($)
+  await after(10_000)
+  expect([requestRuns(w), w.submits]).toEqual([[], []])
+  expect(w.marks).toEqual({ since: NOW - 20_000, sent: [R(1), R(8)], project: ID })
+  request(w, 2, clock.now())
+  await after(5000)
+  expect([requestRuns(w), w.marks?.sent]).toEqual([[asked(2)], [R(1), R(8), R(2)]])
+})
+
+test('a /clear sets a new mark: what waits from before is the clear hand-over, and what comes after goes', async ($, on) => {
+  const { w, after, clock } = world(on)
+  await start($)
+  await after(5000)
+  request(w, 1, clock.now())
+  await after(5000)
+  await after(20_000)
+  expect([w.submits.length, lists(w)]).toEqual([1, 1])
+  await $.session.end({ reason: 'clear', sessionId: 's1', resume: { id: 's1' } })
+  w.marks = null as Marks // Claude Code empties $.state at a /clear; the module stays
+  await after(5000)
+  expect(lists(w)).toBe(2) // this load's notes went with the clear: listed again, the folder unchanged
+  expect([w.marks?.since, w.submits.length]).toEqual([clock.now() - 10_000, 1])
+  request(w, 2, clock.now())
+  await after(5000)
+  expect(requestRuns(w).at(-1)).toEqual(asked(2))
+  expect(w.submits).toHaveLength(2)
+})
+
+test('a session open before the inbox lived gets its mark at the first live look, and a request after it goes', async ($, on) => {
+  const { w, after, clock } = world(on, { lock: false })
+  await start($)
+  await after(30_000)
+  expect(w.marks).toBeNull()
+  w.files[`${SO}/inbox.lock`] = { text: '', mtimeMs: clock.now() }
+  request(w, 1, clock.now()) // the first message from the new inbox, at once
+  await after(5000)
+  expect(w.marks?.since).toBe(clock.now() - 10_000)
+  expect(requestRuns(w)).toEqual([asked(1)])
+  expect(w.submits).toHaveLength(1)
+})
+
+test('a reply that is not exactly what was asked hands nothing over', async ($, on) => {
+  const { w, after, clock } = world(on)
+  const good = (ids: string[]) => answer(w, REQUESTS, ids)
+  const json = (value: unknown): Ran => ({ stdout: `${JSON.stringify(value)}\n`, exitCode: 0 })
+  const one = (id: string, line: string) => json({ requests: [{ id, line }], gone: [] })
+  const BAD: ((ids: string[]) => Ran)[] = [
+    () => ({ stdout: '', exitCode: 1 }),
+    ids => ({ ...good(ids), exitCode: 2 }),
+    ids => ({ ...good(ids), isStdoutTruncated: true }),
+    () => ({ stdout: '{', exitCode: 0 }),
+    () => json([]),
+    ids => json({ requests: { [ids[0] ?? '']: 'x' }, gone: [] }),
+    ids => json({ requests: [{ id: ids[0], line: lineOf(ids[0] ?? '', 'x') }] }),
+    () => json({ requests: [], gone: [] }), // names none of the ids asked
+    ids => json({ requests: ['x'], gone: ids }),
+    () => one(R(99), lineOf(R(99), 'not asked')),
+    ids => json({ requests: [{ id: ids[0], line: lineOf(ids[0] ?? '', 'x') }], gone: [ids[0]] }),
+    ids => json({ requests: [{ id: ids[0], line: lineOf(ids[0] ?? '', 'x') }, { id: ids[0], line: lineOf(ids[0] ?? '', 'x') }], gone: [] }),
+    ids => json({ requests: [{ id: 7, line: lineOf(ids[0] ?? '', 'x') }], gone: [] }),
+    ids => one(ids[0] ?? '', `Hello. ${lineOf(ids[0] ?? '', 'x')}`),
+    ids => one(ids[0] ?? '', lineOf(R(99), 'x')),
+    ids => one(ids[0] ?? '', `${lineOf(ids[0] ?? '', 'x')}.`),
+    // The first x is the one in `inbox`: a frame broken by a character. A whole frame is the next test's.
+    ids => one(ids[0] ?? '', lineOf(ids[0] ?? '', 'x').replace('x', '\x1b[31m')),
+    ids => one(ids[0] ?? '', lineOf(ids[0] ?? '', 'x').replace('x', ' ')),
+    ids => one(ids[0] ?? '', lineOf(ids[0] ?? '', 'x').replace('x', '‮')),
+  ]
+  await start($)
+  await after(5000)
+  for (const [k, bad] of BAD.entries()) {
+    w.requestsOut = bad
+    request(w, k + 1, clock.now()) // a change of the folder: listed and asked at once, whatever failed before
+    await after(5000)
+    expect([k, requestRuns(w).length, w.submits]).toEqual([k, k + 1, []])
+  }
+  // A line of 4096 characters is still one.
+  w.requestsOut = ids => one(ids.at(-1) ?? '', lineOf(ids.at(-1) ?? '', 'x'.repeat(4096 - lineOf('', '').length - 16)))
+  request(w, 50, clock.now())
+  await after(5000)
+  expect(w.submits.map(s => s.text.length)).toEqual([4096])
+})
+
+// An older Python's Unicode table (3.9: Unicode 13) lets through a character JavaScript calls format (U+0890).
+test('a line with its frame and own id that is not one line here is marked, not sent: the others go, and it holds up nothing', async ($, on) => {
+  const { w, after, clock } = world(on)
+  const BAD = ['࢐', '\u{13439}', '\x1b[31m', 'x\nSignoff inbox: y', ' ', 'x'.repeat(4096)]
+  let bad = ''
+  let badId = ''
+  w.requestsOut = ids => {
+    const reply = JSON.parse(answer(w, REQUESTS, ids).stdout) as { requests: { id: string; line: string }[]; gone: string[] }
+    for (const r of reply.requests) if (r.id === badId) r.line = r.line.replace(/"message \d+"/, `"${bad}"`)
+    return { stdout: `${JSON.stringify(reply)}\n`, exitCode: 0 }
+  }
+  await start($)
+  await after(5000)
+  for (const [k, text] of BAD.entries()) {
+    const [a, b, c] = [3 * k + 1, 3 * k + 2, 3 * k + 3]
+    ;[bad, badId] = [text, R(b)]
+    const at = clock.now()
+    for (const n of [a, b, c]) request(w, n, at + n) // the bad one between two good ones
+    await after(5000)
+    expect([k, requestRuns(w).at(-1)]).toEqual([k, asked(a, b, c)]) // the one before is not asked again
+    expect([k, w.submits.at(-1)?.text]).toEqual([k, `${lineOf(R(a), `message ${a}`)}\n${lineOf(R(c), `message ${c}`)}`])
+    expect(w.marks?.sent.slice(-3)).toEqual([R(a), R(b), R(c)]) // marked, not done: a later session start may hand it over
+    expect(w.logs.join('\n')).not.toContain(text)
+  }
+  // A dropped submit unmarks only what it held.
+  w.drop = 'a Stop hook stands'
+  ;[bad, badId] = ['࢑', R(30)]
+  for (const n of [29, 30]) request(w, n, clock.now() + n)
+  await after(5000)
+  expect([w.submits.at(-1)?.text, w.marks?.sent.slice(-1)]).toEqual([lineOf(R(29), 'message 29'), [R(30)]])
+  w.drop = undefined
+  await after(60_000)
+  expect(requestRuns(w).slice(-1)).toEqual([asked(29)])
+  // A reply with only such a line: nothing sent, nothing failed, so nothing tried again.
+  const [runs, submits] = [requestRuns(w).length, w.submits.length]
+  ;[bad, badId] = ['࢐', R(40)]
+  request(w, 40, clock.now())
+  await after(125_000)
+  expect([requestRuns(w).length, w.submits.length, w.marks?.sent.at(-1)]).toEqual([runs + 1, submits, R(40)])
+})
+
+test('the requests mark is written once, not at every look', async ($, on) => {
+  const { w, after } = world(on)
+  await start($)
+  await after(30_000)
+  expect(w.order.filter(o => o === 'set:requests')).toHaveLength(1)
+})
+
+// A coarse clock (HFS+ 1 s, FAT 2 s, a network home) gives a listing and a write right after it the same folder time.
+test('a write in the same time tick as the listing goes: a listing under 2 s after the folder time is made again, once', async ($, on) => {
+  const { w, after, clock } = world(on)
+  await start($)
+  await after(5000)
+  const tick = clock.now() + 5000 // the next look's own time
+  request(w, 1, tick)
+  await after(5000)
+  expect([requestRuns(w), lists(w)]).toEqual([[asked(1)], 1])
+  request(w, 2, tick) // after that listing, in its tick: the folder's time stays
+  await after(5000)
+  expect([requestRuns(w).at(-1), lists(w)]).toEqual([asked(2), 2])
+  await after(30_000)
+  expect(lists(w)).toBe(2)
+})
+
+test('a failed batch from a listing in the folder time tick waits the 60 s, not the next look', async ($, on) => {
+  const { w, after, clock } = world(on)
+  w.requestsOut = () => ({ stdout: '', exitCode: 1 })
+  await start($)
+  await after(5000)
+  request(w, 1, clock.now() + 5000) // the next look's own time
+  await after(5000)
+  expect(requestRuns(w)).toHaveLength(1)
+  await after(5000)
+  expect(requestRuns(w)).toHaveLength(1)
+  await after(55_000)
+  expect(requestRuns(w)).toEqual([asked(1), asked(1)])
+})
+
+// The project follows the session's root: a `/cd` or a worktree move, never a Bash `cd`.
+test('a Bash cd moves nothing: the project, the folder the command gets and the mark stay', async ($, on) => {
+  const { w, after, clock } = world(on)
+  await start($)
+  await after(5000)
+  const mark = w.marks
+  w.cwd = '/work'
+  request(w, 1, clock.now())
+  await after(10_000)
+  expect([requestRuns(w), w.marks?.since]).toEqual([[asked(1)], mark?.since])
+})
+
+// A /cd moves the root; `inbox requests` gets a folder in the root's project.
+test('a /cd into another noted project and back: each root gets its own project, and delivery goes on with no folder change', async ($, on) => {
+  const { w, after, clock } = world(on)
+  await start($)
+  await after(5000)
+  request(w, 1, clock.now())
+  await after(5000)
+  expect(w.submits.map(s => s.text)).toEqual([lineOf(R(1), 'message 1')])
+  w.root = '/work'
+  w.files[`${SO}/requests/${OTHER}/${R(7)}.json`] = {
+    text: JSON.stringify({ schema: 1, id: R(7), kind: 'todo', ref: 'Ship it', text: 'elsewhere', at: '' }),
+    mtimeMs: clock.now(),
+  }
+  request(w, 2, clock.now()) // to the first project, while the session is away
+  await after(5000)
+  expect(requestRuns(w).at(-1)).toEqual(['/work', OTHER, R(7)])
+  w.root = `${ROOT}/src`
+  await after(5000) // no write since: the first project's folder is listed again all the same
+  expect(requestRuns(w).at(-1)).toEqual(asked(2))
+  await after(30_000)
+  // Every command got a folder in its project, and nothing went twice (R(1) was handed over before the /cd).
+  expect(w.ran.filter(argv => argv[2] === 'requests' && argv[3] === '/work' && argv[4] !== OTHER)).toEqual([])
+  expect(w.submits.map(s => s.text)).toEqual([lineOf(R(1), 'message 1'), lineOf(R(7), 'elsewhere'), lineOf(R(2), 'message 2')])
+})
+
+// The demo project (ROOT) is nested in /work. A root change sets a new mark, as a /clear does: the older requests of
+// the project it moves into come at a later session start with no other live session of the project.
+test('a /cd into a nested project hands over only what is written after it; back out and in, nothing twice', async ($, on) => {
+  const { w, after, clock } = world(on, { cwd: '/work' })
+  request(w, 1, NOW - 60_000) // in the nested project, long before the /cd
+  request(w, 2, NOW - 60_000, 'outer, before the mark', `${SO}/requests/${OTHER}`) // the session's own start had it
+  await start($, { cwd: '/work' })
+  await after(10_000)
+  expect(requestRuns(w)).toEqual([])
+  w.root = `${ROOT}/src`
+  await after(5000)
+  expect([requestRuns(w), w.marks?.since]).toEqual([[], clock.now() - 10_000])
+  request(w, 3, clock.now())
+  await after(5000)
+  expect(requestRuns(w)).toEqual([asked(3)])
+  w.root = '/work'
+  await after(10_000)
+  w.root = `${ROOT}/src`
+  await after(10_000)
+  expect([requestRuns(w), w.submits.map(s => s.text)]).toEqual([[asked(3)], [lineOf(R(3), 'message 3')]])
+})
+
+test('a /cd while a submit waits on the engine: once it is dropped, the next look sets the new project mark', async ($, on) => {
+  const { w, after, clock } = world(on)
+  let release = () => {}
+  w.submitGate = new Promise(resolve => (release = resolve))
+  w.drop = 'a Stop hook stands'
+  await start($)
+  await after(5000)
+  request(w, 1, clock.now())
+  await after(5000)
+  expect(w.submits).toHaveLength(1)
+  w.root = '/work'
+  await after(5000)
+  release() // dropped: its ids are unmarked; the next look sets the new project's mark
+  await after(5000)
+  expect([w.marks?.project, w.marks?.since, w.marks?.sent]).toEqual([OTHER, clock.now() - 10_000, []])
+})
+
+// The project the mark is for is in $.state with it, so a reload between a /cd and the next look still resets it.
+test('a reload after a /cd: the held mark is the other project, so a new one is set and nothing older goes', async ($, on) => {
+  const { w, after } = world(on, { cwd: '/work' })
+  w.marks = { since: NOW - 3_600_000, sent: [], project: ID }
+  request(w, 2, NOW - 1_800_000, 'outer, half an hour old', `${SO}/requests/${OTHER}`)
+  await start($, { cwd: '/work' })
+  await after(10_000)
+  expect([requestRuns(w), w.marks]).toEqual([[], { since: NOW + 5000 - 10_000, sent: [], project: OTHER }])
+})
+
+test('a held mark with no project (a build before this one) takes the current project and keeps its time', async ($, on) => {
+  const { w, after } = world(on)
+  w.marks = { since: NOW - 20_000, sent: [] }
+  request(w, 1, NOW - 15_000)
+  await start($)
+  await after(5000)
+  expect([requestRuns(w), w.marks?.since, w.marks?.project]).toEqual([[asked(1)], NOW - 20_000, ID])
+})
+
+test('a root that leaves every project and then moves into another: a new mark there, nothing from meanwhile', async ($, on) => {
+  const { w, after, clock } = world(on, { links: { '/else': '/else' } })
+  await start($)
+  await after(5000)
+  w.root = '/else' // an existing folder outside every project
+  await after(5000)
+  request(w, 2, clock.now(), 'outer, while outside', `${SO}/requests/${OTHER}`)
+  await after(20_000)
+  w.root = '/work'
+  await after(5000)
+  expect([requestRuns(w), w.marks?.project, w.marks?.since]).toEqual([[], OTHER, clock.now() - 10_000])
+})
+
+test('a /cd within one project keeps the mark, and the command gets the new root', async ($, on) => {
+  const { w, after, clock } = world(on)
+  await start($)
+  await after(5000)
+  const since = w.marks?.since ?? 0
+  await after(30_000)
+  w.root = `${ROOT}/docs`
+  request(w, 1, since + 1000) // after the mark, well before this look: a new mark would leave it out
+  await after(5000)
+  expect([requestRuns(w), w.marks?.since, clock.now() - since > 30_000]).toEqual([[[`${ROOT}/docs`, ID, R(1)]], since, true])
+})
+
+test('a $.state with per-project marks (a build before this one) reads by its session mark', async ($, on) => {
+  const { w, after } = world(on)
+  request(w, 1, NOW - 60_000)
+  request(w, 2, NOW - 10_000)
+  w.marks = { since: NOW - 20_000, sent: [], projects: { [ID]: 0 } }
+  await start($)
+  await after(5000)
+  expect(requestRuns(w)).toEqual([asked(2)])
+})
+
+// The folder the project was found for is the one the command gets, even if the root moved meanwhile.
+test('inbox requests gets the folder its project was found for, not where the session is when it runs', async ($, on) => {
+  const { w, after, clock } = world(on)
+  await start($)
+  await after(5000)
+  request(w, 1, clock.now())
+  const files = w.files
+  w.files = new Proxy(files, {
+    ownKeys(target) {
+      if (w.looked.at(-1) === `list:${REQUESTS}`) w.root = '/work' // a /cd right after the listing
+      return Reflect.ownKeys(target)
+    },
+  })
+  await after(5000)
+  expect(requestRuns(w)[0]).toEqual(asked(1))
+})
+
+test('a project change starts the failure count afresh: the new project gets its three retries', async ($, on) => {
+  const { w, after, clock } = world(on)
+  w.requestsOut = () => ({ stdout: '', exitCode: 1 })
+  await start($)
+  await after(5000)
+  request(w, 1, clock.now())
+  await after(5000)
+  await after(200_000)
+  expect(requestRuns(w)).toHaveLength(4) // one and its three retries: no more by time
+  w.root = '/work'
+  request(w, 2, clock.now(), 'outer', `${SO}/requests/${OTHER}`)
+  await after(5000)
+  await after(60_000)
+  expect(requestRuns(w).slice(4)).toEqual([
+    ['/work', OTHER, R(2)],
+    ['/work', OTHER, R(2)],
+  ])
+})
+
+test('a failed hand-over is tried again after 60 s, three times in a row, then at the folder next change', async ($, on) => {
+  const { w, after, clock } = world(on)
+  const fail = () => ({ stdout: '', exitCode: 1 })
+  w.requestsOut = fail
+  await start($)
+  await after(5000)
+  request(w, 1, clock.now())
+  await after(5000)
+  expect(requestRuns(w)).toHaveLength(1)
+  await after(55_000)
+  expect(requestRuns(w)).toHaveLength(1)
+  await after(5000)
+  expect(requestRuns(w)).toEqual([asked(1), asked(1)])
+  await after(120_000)
+  expect(requestRuns(w)).toHaveLength(4) // the third try in a row
+  await after(300_000)
+  expect(requestRuns(w)).toHaveLength(4)
+  w.requestsOut = undefined
+  request(w, 2, clock.now())
+  await after(5000)
+  expect(requestRuns(w).at(-1)).toEqual(asked(1, 2))
+  expect(w.submits).toHaveLength(1)
+  // A batch that went resets the count: the next failure is tried again after 60 s.
+  w.requestsOut = fail
+  request(w, 3, clock.now())
+  await after(5000)
+  await after(60_000)
+  expect(requestRuns(w).slice(-2)).toEqual([asked(3), asked(3)])
+})
+
+test('a dropped submit is unmarked and tried again; the log says it was dropped, never the text or reason', async ($, on) => {
+  const { w, after, clock } = world(on)
+  w.drop = 'a Stop hook stands'
+  await start($)
+  await after(5000)
+  request(w, 1, clock.now(), 'private words')
+  await after(5000)
+  expect([w.submits.length, w.marks?.sent]).toEqual([1, []])
+  w.drop = undefined
+  await after(60_000)
+  expect(w.submits.map(s => s.text)).toEqual([lineOf(R(1), 'private words'), lineOf(R(1), 'private words')])
+  expect(w.marks?.sent).toEqual([R(1)])
+  expect(w.logs.some(l => l.startsWith('signoff:'))).toBe(true)
+  expect(w.logs.join('\n')).not.toMatch(/private words|Stop hook/)
+})
+
+test('more new requests than a batch holds: the oldest ten, then the rest at the next look', async ($, on) => {
+  const { w, after, clock } = world(on)
+  await start($)
+  await after(5000)
+  const at = clock.now()
+  for (let k = 11; k >= 1; k--) request(w, k, at + k) // file time first, then the name
+  request(w, 12, at + 1)
+  await after(5000)
+  expect(requestRuns(w)).toEqual([asked(1, 12, 2, 3, 4, 5, 6, 7, 8, 9)])
+  await after(5000) // no change of the folder
+  expect(requestRuns(w).at(-1)).toEqual(asked(10, 11))
+  expect(w.submits).toHaveLength(2)
+})
+
+test('what the command cut at its text limit goes at the next look; gone ids are marked and never sent', async ($, on) => {
+  const { w, after, clock } = world(on)
+  w.requestsOut = ids => answer(w, REQUESTS, ids.slice(0, 2))
+  await start($)
+  await after(5000)
+  const at = clock.now()
+  for (const k of [1, 2, 3]) request(w, k, at + k)
+  await after(5000)
+  expect(w.submits.map(s => s.text)).toEqual([`${lineOf(R(1), 'message 1')}\n${lineOf(R(2), 'message 2')}`])
+  w.requestsOut = ids => ({ stdout: `${JSON.stringify({ requests: [], gone: ids })}\n`, exitCode: 0 })
+  await after(5000)
+  expect(requestRuns(w).at(-1)).toEqual(asked(3))
+  expect([w.submits.length, w.marks?.sent]).toEqual([1, [R(1), R(2), R(3)]])
+  await after(30_000)
+  expect(requestRuns(w)).toHaveLength(2)
+})
+
+test('while a submit waits on the engine, no second command runs, and the band keeps its count', async ($, on) => {
+  const { w, after, clock } = world(on)
+  let release = () => {}
+  w.submitGate = new Promise(resolve => (release = resolve))
+  w.state([{ id: ID, waiting: 1 }])
+  await start($)
+  await after(5000)
+  request(w, 1, clock.now())
+  await after(5000)
+  request(w, 2, clock.now())
+  w.state([{ id: ID, waiting: 3 }])
+  await after(10_000)
+  expect([requestRuns(w), w.submits.length]).toEqual([[asked(1)], 1])
+  expect((await bandTexts($))[0]).toBe('Signoff: 3 waiting')
+  release()
+  await after(5000)
+  expect(requestRuns(w).at(-1)).toEqual(asked(2))
+})
+
+test('no live inbox, or a session outside every project: the requests folder is never looked at', async ($, on) => {
+  const { w, after } = world(on, { cwd: '/else', links: { '/else': '/else' } })
+  request(w, 1, NOW)
+  await start($, { cwd: '/else' })
+  await after(10_000)
+  expect(w.looked.filter(p => p.includes('/requests'))).toEqual([])
+  expect([requestRuns(w), w.marks]).toEqual([[], null])
+})
+
+test('a dead inbox stops the looking at requests until it lives again', async ($, on) => {
+  const { w, after, clock } = world(on)
+  await start($)
+  await after(5000)
+  const looks = () => w.looked.filter(p => p.includes('/requests')).length
+  await after(20_000, { isAlive: false })
+  const before = looks()
+  request(w, 1, clock.now())
+  await after(10_000, { isAlive: false })
+  expect([looks(), requestRuns(w)]).toEqual([before, []])
+  await after(5000)
+  expect(requestRuns(w)).toEqual([asked(1)])
 })
