@@ -20,8 +20,8 @@ class SkillTest(unittest.TestCase):
         self.assertLess(len((SKILL / "SKILL.md").read_text(encoding="utf-8").encode("utf-8")), MAX_SKILL)
 
     def test_short_questions_follow_the_chat_setting(self):
-        # A string, as hint is: a number type is not known to load on Claude Code 2.1.200. The skill reads it as it
-        # reads the folder, and a value it cannot use falls back to the default.
+        # A string, as hint is: an `options` list is only for a string field (the manifest schema). The skill reads
+        # it as it reads the folder, and a value it cannot use falls back to the default.
         self.assertEqual((SETTINGS["chat"]["type"], SETTINGS["chat"]["default"]), ("string", "4"))
         skill = " ".join((SKILL / "SKILL.md").read_text(encoding="utf-8").split())
         self.assertIn("${user_config.chat}", skill)

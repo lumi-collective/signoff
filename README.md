@@ -55,14 +55,14 @@ has no browser. It sends the same requests the page does.
 
 ## Requirements
 
-Use Claude Code from the stable channel or newer. Signoff needs Python 3.9 or newer. It stays at 3.9 because the
-Command Line Tools on macOS bring that version (3.9.6 on macOS 27.3).
+Use Claude Code from the stable channel or newer.
 
 - **Claude Code on your own computer.** Signoff starts a local server and opens your browser on the machine
   Claude Code runs on, so it works only in Claude Code there: not on claude.ai on the web or on mobile, and not
   in Cowork.
 - **Python 3.9 or newer** as `python3` (macOS, Linux) or through the `py` launcher (Windows). Standard library
-  only; nothing else to install. To get it:
+  only; nothing else to install. Signoff asks for no newer one because the Command Line Tools on macOS bring 3.9
+  (3.9.6 on macOS 27.3). To get it:
   - Windows: the Python install manager from [python.org](https://www.python.org/downloads/) (or
     `winget install 9NQ7512CXL7T -e`), which brings the `py` command.
   - macOS: `xcode-select --install` (the Command Line Tools bring Python 3.9), or the installer from python.org.

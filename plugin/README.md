@@ -10,9 +10,9 @@ project, with a search over the answers. Ask the agent to look back at earlier r
 
 ## Where it works
 
-Claude Code on your own computer only. Use Claude Code from the stable channel or newer. It needs Python 3.9 or
-newer and a web browser on that computer. Signoff stays at 3.9 because the Command Line Tools on macOS bring
-that version. It does not work on claude.ai on the web or on mobile, or in Cowork. No Python yet? On Windows, install the
+Claude Code on your own computer only. Use Claude Code from the stable channel or newer. Signoff needs Python
+3.9 or newer and a web browser on that computer. It asks for no newer Python because the Command Line Tools on
+macOS bring 3.9. It does not work on claude.ai on the web or on mobile, or in Cowork. No Python yet? On Windows, install the
 Python install manager from python.org; on a Mac, run xcode-select --install or use python.org's installer; on
 Linux, install your distribution's python3 package.
 
