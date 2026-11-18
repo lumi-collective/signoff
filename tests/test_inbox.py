@@ -2454,8 +2454,11 @@ class InboxElsewhere(InboxTest):
             code, out, err = self.mark(topic / "round-01.json", "q", "n")
             t.join(5)
             self.assertEqual((code, out, err), (1, "", "signoff: the Signoff inbox refused the request (%s); nothing "
-                                                "was written. Its Python may know fewer characters than this one: "
-                                                "use plainer characters in the note\n" % reply))
+                                                "was written. An inbox started before an update may not know the "
+                                                "request: restart it (signoff inbox stop, then signoff inbox open) "
+                                                "and run the same command again. If it still refuses, its Python "
+                                                "may know fewer characters than this one: use plainer characters in "
+                                                "the note\n" % reply))
             self.assertEqual(got[-1]["op"], "elsewhere")
             self.assertEqual(self.files(topic), before)
 

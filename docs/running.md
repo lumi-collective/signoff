@@ -115,10 +115,10 @@ The run, or the inbox, shows the mark within a few seconds; a tab that saved bef
 on stdout and exits 0 once written (or when the item already has that mark and note), else 1 with one line on
 stderr: an invalid round or answers file, an unknown item, a round already done, a bad note, your own answer on the
 item, a page run holding the round, an inbox that refused it or did not answer, a lock file it cannot open, an
-answers file that kept changing, or a write that failed. An inbox from before this command answers that it does
-not know the request: the line says to restart it (`signoff inbox stop`, then `signoff inbox open`) and run the
-command again. An inbox on an older Python may refuse a note character its Python does not know yet: the line
-says to use plainer characters. Restart a run an older Signoff started
+answers file that kept changing, or a write that failed. When the inbox refuses the request for another reason,
+the line gives its text and says to restart it (`signoff inbox stop`, then `signoff inbox open`) and run the
+command again. An inbox started before an update may not know the request. If it still refuses, use plainer
+characters in the note: an inbox on an older Python may refuse a character its Python does not know yet. Restart a run an older Signoff started
 before you use it too: that run refuses the new `source`.
 
 ## Plan review

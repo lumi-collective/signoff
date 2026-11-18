@@ -756,11 +756,11 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
     read only), `answered`, `changed` (a save landed first; the command asks again, three times in all), `failed`
     (a write failed; it may leave a new Markdown copy, as a failed save does). `gone` for a round the command found
     says the path must be spelled as the run's (the match is by text, so another letter case or Unicode form of
-    the same file misses), not to try again. An error that starts `unknown request`, as every inbox from before
-    the op gives: exit 1, nothing written, and a stderr line saying to restart the inbox (`signoff inbox stop`,
-    then `signoff inbox open`) and run the same command again. Any other error (the shape refused, as an inbox on
-    an older Python may refuse a note's character): exit 1, nothing written, the inbox's text and plainer
-    characters advised, never a restart.
+    the same file misses), not to try again. Any other error (an op the inbox does not know, as one started
+    before an update gives, or the shape refused, as an inbox on an older Python may refuse a note's character):
+    exit 1, nothing written, and one stderr line with the inbox's text that says to restart the inbox (`signoff
+    inbox stop`, then `signoff inbox open`) and run the same command again, then, if it still refuses, to use
+    plainer characters.
   - the lock held and no inbox alive (a page run holds it): exit 1, nothing written, as for a second run.
   The lock file is opened non-blocking and never through a link (`_hold_round`). A file system that cannot lock:
   `flock` refusing with one of `NO_LOCKS` (`ENOLCK`, `EOPNOTSUPP`, `ENOSYS`, `EINVAL`) on a descriptor `fstat`

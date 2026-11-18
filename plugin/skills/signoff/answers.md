@@ -89,7 +89,9 @@ are still woken at Done.
 - Exit 1, with one stderr line, nothing written: tell the user what it says. It refuses a bad round file, item
   id or note, a round already done, and an item that holds the user's own answer (never overwrite that: ask in
   chat). When the round is open in a run of its own page (no inbox running), the user answers it there. When
-  it asks for plainer characters, run it again with a plainer note.
+  the inbox refused the request, the line says to restart it: ask the user to restart the inbox (`signoff inbox
+  stop`, then `signoff inbox open`), then run the same command again. If it still refuses, run it again with a
+  plainer note.
   A run an older plugin started does not take the mark in and refuses saves until it restarts: tell the user.
 
 ## 4. Turn the answers into actions

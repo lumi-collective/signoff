@@ -4545,11 +4545,12 @@ def _mark_by_inbox(home, r, item_id, note, say):
             continue
         if why in MARK_REFUSALS:
             return say(_mark_refusal(why, r, item_id))
-        # Any other error, such as the request's shape refused: on an older Python the inbox may not know a character
-        # this one does, so its note check refuses what this one let through.
-        return say("the Signoff inbox refused the request (%s); nothing was written. Its Python may know fewer "
-                   "characters than this one: use plainer characters in the note"
-                   % _one_line(str(why), MAX_OFFER_TEXT))
+        # Any other error: an inbox started before an update may not know the op, or, on an older Python, the inbox
+        # may not know a character this one does, so its note check refuses what this one let through.
+        return say("the Signoff inbox refused the request (%s); nothing was written. An inbox started before an "
+                   "update may not know the request: restart it (signoff inbox stop, then signoff inbox open) and run "
+                   "the same command again. If it still refuses, its Python may know fewer characters than this one: "
+                   "use plainer characters in the note" % _one_line(str(why), MAX_OFFER_TEXT))
     return say(_mark_refusal("changed", r, item_id))
 
 
