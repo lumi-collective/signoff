@@ -72,7 +72,8 @@
   round is first shown), the first screen at once and the rest after it, so even a 256 KiB file leaves the page
   answering.
 - **Line notes.** On an item whose lines take notes (`lines`), each row of its attachments leads with the line's
-  number in the file (in a diff, before the old and new numbers, which come from the diff's own headers); a line
+  number in the file (in a diff, before the old and new numbers, which come from the diff's own headers; on a
+  phone those two are left out, so the text has room); a line
   above the attachments says so. Press it (Tab to it, then Enter or Space) and a field opens under that line, with
   **Remove**; a second press goes back to the field, and Esc in the field goes back to the number. A field left
   empty saves nothing. An item takes up to 50 notes; past that the numbers of the other lines are off, and the line

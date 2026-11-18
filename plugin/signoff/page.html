@@ -729,6 +729,8 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
 [data-density=compact] .opt input{top:10px}
 @media (max-width:760px){
   body.run>main{padding:0 12px 32px}
+  /* a noted diff keeps only the file's line: room for the text */
+  .pin.diff [role=row]{grid-template-columns:8ch 2ch 1fr}.pin.diff [role=row]>:nth-child(2),.pin.diff [role=row]>:nth-child(3){display:none}
   body.run>header{flex-wrap:wrap}
   body.run:not(.hist)>header .head-text{flex-basis:0}  /* beside the project's monogram, not on a row of its own */
   body.run>header .actions{flex:1 0 100%;flex-wrap:wrap}
@@ -3513,7 +3515,10 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
               status.textContent = fmt(L.saved, {t: clock()});
               if (done) {
                 closed[ri] = true;  // final on the server: stop taking edits that could no longer be saved
-                Array.prototype.forEach.call(byId('panel-' + ri).querySelectorAll('input, textarea, .mark-tools button, .mark-row button, .n button'), function (i) { i.disabled = true; });
+                Array.prototype.forEach.call(byId('panel-' + ri).querySelectorAll('input, textarea, .mark-tools button, .mark-row button, .n button, .lfull'), function (i) {
+                  i.disabled = true;
+                  if (i.tagName === 'P') i.hidden = true;  // the line-notes hint
+                });
               }
               return true;
             });

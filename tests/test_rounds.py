@@ -882,8 +882,10 @@ class Page(unittest.TestCase):
                                              "ez volt:',\n      lnHint: 'Egy sorszámot megnyomva megjegyzést írhatsz "
                                              "a sorhoz.'}\n  };"), hu[-300:])
         self.assertIn("was.append(' ', el('code', '', vis(x.quote)));", self.page)
-        # A round closed by Done while the run goes on takes its numbers and Remove buttons out with its fields.
-        self.assertIn("querySelectorAll('input, textarea, .mark-tools button, .mark-row button, .n button')", self.page)
+        # A round closed by Done while the run goes on takes its numbers and Remove buttons out with its fields, and
+        # its hint.
+        self.assertIn("querySelectorAll('input, textarea, .mark-tools button, .mark-row button, .n button, .lfull')",
+                      self.page)
 
 
 if __name__ == "__main__":

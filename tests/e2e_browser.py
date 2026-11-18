@@ -1293,7 +1293,9 @@ NOT_DIFFS = ["--- a/x\n+++ b/x\n@@ -1,3 +1,3 @@\n a\n-b\n+c\n", "--- a/x\n+++ b/
 # Two diff -u outputs back to back, with no diff line between: the --- line after a full hunk starts the next file.
 CONCAT_DIFF = "--- a\n+++ b\n@@ -1 +1 @@\n-a\n+b\n--- c\n+++ d\n@@ -1 +1 @@\n-x\n+y\n"
 CONCAT_CLASSES = ["file", "file", "hunk", "del", "add"] * 2
-FAR_DIFF = "--- a/lock\n+++ b/lock\n@@ -123456,3 +123456,3 @@\n a\n-b\n+c\n d\n"  # six-digit numbers, as in a lockfile
+# Six-digit numbers and lines as in a lockfile.
+FAR_DIFF = ('--- a/lock\n+++ b/lock\n@@ -123456,3 +123456,3 @@\n   "lodash": {\n-    "version": "4.17.20",\n'
+            '+    "version": "4.17.21",\n     "dev": false\n')
 # git format-patch output: a mail head, a diffstat, two files and the "-- " trailer. It is a diff, and its blank lines
 # outside a hunk keep their height.
 MAIL_PATCH = ("From 0000000 Mon Sep 17 00:00:00 2001\nSubject: [PATCH] Skip empty exports\n\n---\n export.py | 2 +-\n"
@@ -1416,6 +1418,15 @@ def run_attachment(work):
                                   % json.dumps(boxes))  # the hunk line's own text may wrap at 400 px
             check(len(far_high) == 6 and max(far_high) < 25, "at %d px each row of a far hunk should be one line: %r"
                   % (width, far_high))
+            # On a phone a noted diff keeps the file's line (the note's anchor) and drops the diff's own numbers,
+            # headers too, so the text has room; on a desktop all three show.
+            shown_n = browser.js("(function (b) { function on(list) { return Array.prototype.filter.call(list, function (c) { "
+                                 "return getComputedStyle(c).display !== 'none'; }); } return [on(b.querySelectorAll("
+                                 "'[role=rowgroup] > .del > .n')).map(function (c) { return c.textContent; }), "
+                                 "on(b.querySelectorAll('[role=columnheader]')).length]; })(document.querySelectorAll(%s)[12])"
+                                 % json.dumps(boxes))
+            check(shown_n == ([["5"], 3] if width == 400 else [["5", "123457", ""], 5]),
+                  "at %d px a noted diff's number columns: %r" % (width, shown_n))
         browser.click(boxes + ":nth-of-type(1) > summary")
         diff = browser.js(ATTACH_BOXES % json.dumps(boxes))[0]
         # Its item takes line notes: each row leads with its line in the file, the number a note anchors on.
@@ -1812,8 +1823,9 @@ def run_line_notes(work):
         wait_for("round 1 done", lambda: json.loads((two / "round-01.answers.json").read_text(encoding="utf-8"))["done"])
         off = wait_for("round 1's buttons off", lambda: (lambda s: s[0] and s)(browser.js(
             "[document.querySelector('#panel-0 [data-line]').disabled, "
-            "document.querySelector('#panel-0 .lnote button').disabled, document.getElementById('done').disabled]")))
-        check(off == [True, True, False], "a round closed by its Done should take its buttons out: %r" % off)
+            "document.querySelector('#panel-0 .lnote button').disabled, document.getElementById('done').disabled, "
+            "document.querySelector('#panel-0 .lfull').hidden]")))
+        check(off == [True, True, False, True], "a round closed by its Done should take its buttons and hint out: %r" % off)
         browser.click("#tab-0")
         browser.click("#panel-0 details.attach:nth-of-type(2) > summary")
         rows = wait_for("the rows drawn after round 1's Done", lambda: browser.js(
