@@ -63,8 +63,10 @@
   line's, the sign and the text; added and removed lines on backgrounds of their own (the palette's green and red,
   Rose Pine's foam and love), the `+` and `-` always
   shown (and read out as "added" and "removed"), file and hunk headers set apart. One that is not a unified diff shows
-  as numbered lines, and so does a `.md` or `.txt` on an item whose lines take notes (`lines`). A hunk's lines must
-  add up to the counts in its `@@` line, and it counts only after a `+++` line. A line is what the answers file
+  as numbered lines, and so does a `.md` or `.txt` on an item whose lines take notes (`lines`). A hunk counts
+  only after a `+++` line. A file shows as numbered lines when it has no such hunk, when a hunk has fewer lines
+  than its `@@` counts or a stray line inside, or when a `+`, `-` or space line comes straight after a full hunk or
+  its `\ No newline` line (a `+++` or `---` line and the `-- ` trailer aside). A line is what the answers file
   counts as one: the text split at each line feed. The rows are drawn when the box first opens (an open box: when its
   round is first shown), the first screen at once and the rest after it, so even a 256 KiB file leaves the page
   answering.

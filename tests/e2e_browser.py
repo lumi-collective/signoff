@@ -1285,9 +1285,14 @@ DIFF_TEXT = "".join(r[3][:1] + r[4] + "\n" if r[0] in ("add", "del", "ctx") else
 PLAIN_PATCH = ("Not a diff, only notes.\n- a dash line\n+ a plus line\n@@ looks like a hunk @@\n@@ -1 +1 @@\n-a\n+b\n"
                "+++ b/notes\n@@ -%s +%s x\n" % ("1" * 10000, "2" * 10000))
 # Each fails only the count rule and shows as numbered plain text: a hunk that claims more lines than it has, one
-# with a stray line inside, and one that claims fewer (its extra line comes straight after it).
+# with a stray line inside, one that claims fewer (its extra line comes straight after it), one whose stray line is
+# its last, and one that claims fewer with a "\ No newline" line before the extra one.
 NOT_DIFFS = ["--- a/x\n+++ b/x\n@@ -1,3 +1,3 @@\n a\n-b\n+c\n", "--- a/x\n+++ b/x\n@@ -1,2 +1,2 @@\n a\nx stray\n-b\n+c\n",
-             "--- a\n+++ b\n@@ -1 +1 @@\n-a\n+b\n+c\n"]
+             "--- a\n+++ b\n@@ -1 +1 @@\n-a\n+b\n+c\n", "--- a/x\n+++ b/x\n@@ -1,2 +1,2 @@\n a\n-b\nx stray\n",
+             "--- a\n+++ b\n@@ -1 +1 @@\n-a\n+b\n\\ No newline at end of file\n+c\n"]
+# Two diff -u outputs back to back, with no diff line between: the --- line after a full hunk starts the next file.
+CONCAT_DIFF = "--- a\n+++ b\n@@ -1 +1 @@\n-a\n+b\n--- c\n+++ d\n@@ -1 +1 @@\n-x\n+y\n"
+CONCAT_CLASSES = ["file", "file", "hunk", "del", "add"] * 2
 # git format-patch output: a mail head, a diffstat, two files and the "-- " trailer. It is a diff, and its blank lines
 # outside a hunk keep their height.
 MAIL_PATCH = ("From 0000000 Mon Sep 17 00:00:00 2001\nSubject: [PATCH] Skip empty exports\n\n---\n export.py | 2 +-\n"
@@ -1324,7 +1329,8 @@ def run_attachment(work):
     rule = json.loads((ROOT / "tests" / "line_rule.json").read_text(encoding="ascii"))
     for name, body in (("change.diff", DIFF_TEXT), ("plain.patch", PLAIN_PATCH), ("rule.txt", rule["text"]),
                        ("big.diff", BIG_DIFF), ("over.diff", NOT_DIFFS[0]), ("stray.diff", NOT_DIFFS[1]),
-                       ("under.diff", NOT_DIFFS[2]), ("mail.patch", MAIL_PATCH), ("long.txt", LONG_TEXT)):
+                       ("under.diff", NOT_DIFFS[2]), ("mail.patch", MAIL_PATCH), ("long.txt", LONG_TEXT),
+                       ("stray-end.diff", NOT_DIFFS[3]), ("eof.diff", NOT_DIFFS[4]), ("concat.diff", CONCAT_DIFF)):
         (topic / "notes" / name).write_bytes(body.encode("utf-8"))
     check((topic / "notes" / "big.diff").stat().st_size <= 256 * 1024, "the big diff must stay within the limit")
     data = json.loads((DEMO / "round-03.json").read_text(encoding="utf-8"))
@@ -1335,7 +1341,8 @@ def run_attachment(work):
                                           {"src": "notes/plain.patch", "open": True}, {"src": "notes/rule.txt"},
                                           {"src": "notes/big.diff", "caption": "Everything"}]
                           + [{"src": "notes/" + name, "open": True}
-                             for name in ("over.diff", "stray.diff", "under.diff", "mail.patch", "long.txt")]})
+                             for name in ("over.diff", "stray.diff", "under.diff", "mail.patch", "long.txt",
+                                          "stray-end.diff", "eof.diff", "concat.diff")]})
     target = topic / "decisions.json"
     target.write_text(json.dumps(data), encoding="utf-8")
     item = data["items"][0]
@@ -1364,18 +1371,23 @@ def run_attachment(work):
         boxes = '[data-item="change"] details.attach'
         shown = wait_for("the open boxes' rows", lambda: (lambda b: b[-1]["high"] is not None and b)(
             browser.js(ATTACH_BOXES % json.dumps(boxes))))
-        diff, plain, ruled, big, over, stray, under, mail, long_ = shown
+        diff, plain, ruled, big, over, stray, under, mail, long_, stray_end, eof, concat = shown
         check(not diff["open"] and diff["rows"] is None and not ruled["open"] and ruled["rows"] is None
               and big["rows"] is None, "a closed box should have no rows until it opens: %r" % [diff, ruled, big])
-        for got, want in ((plain, PLAIN_PATCH), (over, NOT_DIFFS[0]), (stray, NOT_DIFFS[1]), (under, NOT_DIFFS[2])):
+        for got, want in ((plain, PLAIN_PATCH), (over, NOT_DIFFS[0]), (stray, NOT_DIFFS[1]), (under, NOT_DIFFS[2]),
+                          (stray_end, NOT_DIFFS[3]), (eof, NOT_DIFFS[4])):
             check(got["open"] and got["rows"] == [["", str(n), line] for n, line in enumerate(want.splitlines(), 1)]
                   and got["heads"] == ["Line", "Text"], "an open box should start open, a non-diff as numbered text: %r" % got)
         check([r[0] for r in mail["rows"]] == MAIL_CLASSES, "git format-patch output is a diff: %r" % mail["rows"])
+        check([r[0] for r in concat["rows"]] == CONCAT_CLASSES, "two diff -u outputs back to back are a diff: %r"
+              % concat["rows"])
         # Drawn where they are, on the screen or not: a box below the fold takes its rows' height, not a stand-in's,
         # its later row groups too.
         check(browser.js("document.querySelectorAll(%s)[1].getBoundingClientRect().top > innerHeight" % json.dumps(boxes))
               and plain["high"] < 20000, "an open box below the fold should take its rows' height: %r" % plain["high"])
-        check(long_["high"] < 20000, "a box of 301 rows below the fold should take about their height: %r" % long_["high"])
+        # 301 rows measure 5890 px; one stand-in for every group would make them 3920.
+        check(5000 < long_["high"] < 20000, "a box of 301 rows below the fold should take about their height: %r"
+              % long_["high"])
         # A blank line outside a hunk keeps a line's height, on a desktop and on a phone.
         blank = ("Array.prototype.filter.call(document.querySelectorAll(%s)[7].querySelectorAll('[role=row].file'), "
                  "function (r) { return !r.textContent; }).map(function (r) { return r.offsetHeight; })" % json.dumps(boxes))
