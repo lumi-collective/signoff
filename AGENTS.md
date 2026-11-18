@@ -30,16 +30,15 @@ Instructions for coding agents working on Signoff. The README says what it does 
   the hooks rule, in `sh`); `resume|clear|compact` runs `hook.sh session`. The plugin declares no monitor (Claude
   Code's `/restart` refuses while one runs): `hook.sh monitor` only sleeps while its parent lives, without Python,
   for a monitor a 0.4.0 plugin started (one that ends costs its session a model turn).
-- `plugin/hooks/register.tsx`: the plugin's mod, the hooks module `hooks.json` names under `modules` (Claude Code's
-  docs give 2.1.286 as the first to run mods; its test runs on 2.1.309 in CI and 2.1.322; 2.1.200 skips the key
-  and runs the hooks, checked). The band (`Signoff: N waiting`, Open, Hide),
+- `plugin/hooks/register.tsx`: the plugin's mod, the hooks module `hooks.json` names under `modules` (its test runs in
+  CI on Claude Code's stable and latest channels). The band (`Signoff: N waiting`, Open, Hide),
   the toast, the status line entry, the hand-over of the inbox's requests (`$.prompt.submit`), the panel (the
   `signoff` pane) and the answer to `/signoff:open`
   (`plugin/commands/open.md`: a mod cannot
   register a name with a colon, so the file declares it and the mod's `command.run` hook answers it; its body is
   the prompt the model gets when no mod runs). Its session values are declared in `plugin/types/index.d.ts`
-  (`types` in `plugin.json`); the `hint` option in `plugin.json` is `band`, `status` or `off`, without an
-  `options` list: Claude Code 2.1.200 refuses the whole plugin, hooks and skills too, over that key (a test checks).
+  (`types` in `plugin.json`); the `hint` option in `plugin.json` lists `band`, `status` and `off`,
+  and `chat` lists `0` to `4`, under `options`, the values the mod and the skill accept (a test checks).
   `plugin/hooks/register.test.tsx` is its test, run by `claude plugin test plugin`.
 - `plugin/commands/demo.md`: `/signoff:demo`, typed only (`disable-model-invocation: true`); its body asks the model
   to write one synthetic round in a `mktemp -d` folder, run Signoff on it, and give the user the `rm -r` command
@@ -335,8 +334,9 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   (the mod's hand-over rule). It starts looking once per load, from `session.start` or the band's
   first drawing (a reload after an options change may fire no `session.start`; the desktop app and the VS Code
   extension send it with `isInteractive` false, tried on 2026-11-15, so there the band starts it). With `claude -p`
-  and on Windows (`OS` is `Windows_NT`) it looks at nothing; with `hint` `off` it shows nothing and looks only for
-  requests (the mod's hand-over rule). Only a live count (an inbox that lives,
+  (the mod loads there, but `session.start` says `isInteractive` false and no band is drawn) and on Windows (`OS`
+  is `Windows_NT`) it looks at nothing; with `hint` `off` it shows nothing and looks only for requests (the mod's
+  hand-over rule). Only a live count (an inbox that lives,
   a project found) moves Hide (cleared by any other live count) and the toast (once a session, after a live 0 and
   two live counts above it in a row). Open and `/signoff:open` (typed at the prompt, also with `hint` `off`) open
   the panel: `$.ui.open` of the `signoff` pane before anything else is awaited (so it is the person's own press
@@ -518,8 +518,8 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   the session is idle; a `drop` unmarks them, as a failure. `gone` ids (done, unreadable, or of a kind this
   plugin does not know) are marked and never sent; what the command cut at `MAX_HANDOVER_TEXT` goes at the next
   look. Every live session of the project gets each request. Nothing else goes into the prompt: no path, token,
-  link or other project's request; it writes no file. Known limits: a session without the mod (a Claude Code
-  before 2.1.286, `claude -p`, the SDK, `allowManagedModsOnly`) gets requests only at a later session start and
+  link or other project's request; it writes no file. Known limits: a session whose mod does not look
+  (`claude -p`, where it loads but is not armed; the SDK; `allowManagedModsOnly`) gets requests only at a later session start and
   still counts as live, so new sessions of the project get no hand-over while it runs; a project the
   session's root moves into gets its older requests at a later session start with no other live session of the
   project; and the hooks note a session by each event's `cwd`, so after a shell `cd` into another project the inbox

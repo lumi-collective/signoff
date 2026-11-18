@@ -30,7 +30,7 @@ cd app && go vet ./... && go test ./...
 
 The tests use the standard library only. They start real servers on `127.0.0.1` and run the command line and
 the MCP server as real processes. CI runs them on Linux, macOS and Windows with Python 3.9 and 3.13, and
-validates the plugin on the pinned Claude Code.
+validates the plugin on Claude Code's stable and latest channels.
 
 `tests/e2e_browser.py` is a separate check that needs Chrome (set `CHROME` to its path if it is not found); the
 unit-test discovery does not pick it up. It opens the start link in headless Chrome over the DevTools protocol, drives

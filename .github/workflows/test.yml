@@ -50,8 +50,12 @@ jobs:
       - run: python -I -B tests/e2e_browser.py
 
   plugin:
-    name: plugin (claude plugin validate + test)
+    name: plugin (claude plugin validate + test, claude-code ${{ matrix.channel }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        channel: [stable, latest]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -59,7 +63,8 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
-      - run: npm install -g --no-fund --no-audit @anthropic-ai/claude-code@2.1.309
+      - run: npm install -g --no-fund --no-audit @anthropic-ai/claude-code@${{ matrix.channel }}
+      - run: claude --version
       - run: claude plugin validate plugin
       - run: claude plugin validate .claude-plugin/marketplace.json
       - run: claude plugin test plugin

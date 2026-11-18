@@ -10,8 +10,9 @@ project, with a search over the answers. Ask the agent to look back at earlier r
 
 ## Where it works
 
-Claude Code on your own computer only. It needs Python 3.9 or newer and a web browser on that computer.
-It does not work on claude.ai on the web or on mobile, or in Cowork. No Python yet? On Windows, install the
+Claude Code on your own computer only. Use Claude Code from the stable channel or newer. It needs Python 3.9 or
+newer and a web browser on that computer. Signoff stays at 3.9 because the Command Line Tools on macOS bring
+that version. It does not work on claude.ai on the web or on mobile, or in Cowork. No Python yet? On Windows, install the
 Python install manager from python.org; on a Mac, run xcode-select --install or use python.org's installer; on
 Linux, install your distribution's python3 package.
 
@@ -23,8 +24,6 @@ At the prompt of a Claude Code session in a terminal:
 /plugin install signoff --marketplace lumi-collective/signoff
 ```
 
-The one-line `--marketplace` form works from Claude Code 2.1.275 in a session and from 2.1.292 in a shell. In an
-older one, use two steps: `/plugin marketplace add lumi-collective/signoff`, then `/plugin install signoff@signoff`.
 Auto-update is off by default for a third-party marketplace; turn it on in `/plugin` → Marketplaces → Enable
 auto-update.
 

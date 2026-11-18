@@ -55,10 +55,12 @@ has no browser. It sends the same requests the page does.
 
 ## Requirements
 
+Use Claude Code from the stable channel or newer. Signoff needs Python 3.9 or newer. It stays at 3.9 because the
+Command Line Tools on macOS bring that version (3.9.6 on macOS 27.3).
+
 - **Claude Code on your own computer.** Signoff starts a local server and opens your browser on the machine
   Claude Code runs on, so it works only in Claude Code there: not on claude.ai on the web or on mobile, and not
   in Cowork.
-- **Claude Code**: CI validates the plugin with a pinned version, 2.1.309 at the time of writing.
 - **Python 3.9 or newer** as `python3` (macOS, Linux) or through the `py` launcher (Windows). Standard library
   only; nothing else to install. To get it:
   - Windows: the Python install manager from [python.org](https://www.python.org/downloads/) (or
@@ -95,9 +97,6 @@ From a shell:
 ```
 claude plugin install signoff --marketplace lumi-collective/signoff
 ```
-
-The one-line `--marketplace` form works from Claude Code 2.1.275 in a session and from 2.1.292 in a shell. In an
-older one, use two steps: `/plugin marketplace add lumi-collective/signoff`, then `/plugin install signoff@signoff`.
 
 In the desktop app: + next to the prompt box → Plugins → Add marketplace `lumi-collective/signoff` → Add plugin.
 
@@ -162,7 +161,7 @@ While the inbox runs, each Claude Code session shows above its prompt how much w
 `Signoff: 2 waiting`, with **Open** and **Hide**. **Open**, or `/signoff:open`, lists the project's open rounds and
 their questions in a panel beside the chat. A row opens that question in the browser. With the macOS app
 installed, its **App** button opens it in the app. The `hint` setting in `/config` moves the number to the status
-line or turns it off. This needs a Claude Code that runs plugin mods; an older one skips it.
+line or turns it off. This needs a Claude Code that runs plugin mods.
 
 ## The macOS app
 
