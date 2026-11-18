@@ -38,7 +38,7 @@
   view shows it again later, so attach nothing secret. `sensitive` does not hide it: it is your text.
 - `"lines": true` on an item with attachments when the user should comment on single lines, such as a change for
   review: attach its unified diff (the output of `git diff`, saved as a `.diff` file in the folder), and the user
-  can note any line of it. The
+  can note any line of it by pressing the line's number on the page. The
   notes come back in the answer's `lines` (see answers.md). `.diff`, `.patch`, `open` and `lines` need Signoff
   0.5.0 or newer.
 - `commands` when the user should run something before deciding (a check, a preview):

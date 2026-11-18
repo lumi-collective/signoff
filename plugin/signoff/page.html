@@ -195,6 +195,9 @@ button.icon svg{width:18px;height:18px}
 .att-lines{position:relative}.att-lines [role=rowgroup]+*{content-visibility:auto}
 .att-lines [role=row]{display:grid;grid-template-columns:8ch 1fr}.att-lines [role=cell]{min-height:1.5em}.diff [role=row]{grid-template-columns:8ch 8ch 2ch 1fr}
 .att-lines .n{padding-right:8px;text-align:right;color:var(--quiet);background:var(--field);user-select:none}
+.n button{padding:0 2px;border:0;background:none;box-shadow:none;color:inherit}.n button:hover{background:var(--hover)}
+.pin.diff [role=row]{grid-template-columns:7ch 6ch 6ch 2ch 1fr}.lnote>*{grid-column:1/-1}
+.lnote{font:14px/1.45 system-ui,sans-serif;white-space:normal}.lnote .readonly-note{flex-basis:100%}
 .diff .add{background:var(--add)}.diff .del{background:var(--del)}.diff .file,.diff .hunk{color:var(--soft);background:var(--hover)}
 .board-bar{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;margin:0 0 8px}
 .board-label{font-size:12.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--accent)}
@@ -812,6 +815,7 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
   var SVG = 'http://www.w3.org/2000/svg';
   var MAX_TEXT = 20000;  // the server refuses longer text
   var MAX_MARKS = 50;
+  var MAX_LINE_NOTES = 50, MAX_QUOTE = 300;
   var OTHER = '_other', SKIP = '_skip';  // option ids never start with "_"
   var VIEWPORTS = [1280, 768, 390];
   var LABELS = {
@@ -930,7 +934,8 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
       stakes_high: 'High stakes', stakes_medium: 'Medium stakes', stakes_low: 'Low stakes', highShort: 'high stakes',
       irreversible: 'Cannot be undone', undoShort: 'irreversible', settledEarlier: 'Settled earlier',
       change: 'Change', fold: 'Hide options', handAll: 'Hand all fixable over ({n})',
-      lnAdd: 'added', lnDel: 'removed', lnOld: 'Old line', lnNew: 'New line', lnNum: 'Line', lnSign: 'Change', lnText: 'Text'},
+      lnAdd: 'added', lnDel: 'removed', lnOld: 'Old line', lnNew: 'New line', lnNum: 'Line', lnSign: 'Change', lnText: 'Text',
+      lnNote: 'Note on line {n} of {f}', lnFull: 'At most 50 line notes on an item.', lnStale: 'This file changed since: line {n} said “{q}”'},
     hu: {done: 'Kész', doneRounds: 'Kész ({n} kör)', acceptShort: 'Javaslatok elfogadása', acceptRest: '',
       undo: 'Elfogadás visszavonása', recommended: 'Javasolt', cost: 'Költség',
       comment: 'Megjegyzés (nem kötelező)', many: 'Több is választható.', other: 'Egyéb', otherText: 'Egyéb: a te válaszod',
@@ -1000,7 +1005,8 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
       stakes_high: 'Nagy tét', stakes_medium: 'Közepes tét', stakes_low: 'Kis tét', highShort: 'nagy tét',
       irreversible: 'Nem vonható vissza', undoShort: 'végleges', settledEarlier: 'Korábban eldőlt',
       change: 'Módosítás', fold: 'Opciók elrejtése', handAll: 'Minden javítható átadása ({n})',
-      lnAdd: 'hozzáadva', lnDel: 'törölve', lnOld: 'Régi sor', lnNew: 'Új sor', lnNum: 'Sor', lnSign: 'Változás', lnText: 'Szöveg'}
+      lnAdd: 'hozzáadva', lnDel: 'törölve', lnOld: 'Régi sor', lnNew: 'Új sor', lnNum: 'Sor', lnSign: 'Változás', lnText: 'Szöveg',
+      lnNote: 'Megjegyzés: {f}, {n}. sor', lnFull: 'Egy tételen legfeljebb 50 sor-megjegyzés lehet.', lnStale: 'A fájl azóta változott: a {n}. sor ez volt: „{q}”'}
   };
   var data = JSON.parse(document.getElementById('signoff-data').textContent);
   var historyMode = data.mode === 'history';
@@ -2483,6 +2489,7 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
   // ---- Pictures, the agent's boxes, the user's marks, and boards ----
   var imageCount = 0;
   var markState = rounds.map(function () { return {}; });  // round -> item id -> [{image, box, comment}]
+  var lineState = rounds.map(function () { return {}; });  // round -> item id -> line notes
   var selected = null;  // {ri, item, k}
 
   function boxRect(b, attrs) {
@@ -2662,6 +2669,10 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
   }
 
   function marksOf(ri, item) { return markState[ri][item.id] || (markState[ri][item.id] = []); }
+  function noteList(ri, item) {  // saved: no empty field, in file and line order
+    return (lineState[ri][item.id] || []).filter(function (x) { return x.comment; })
+      .sort(function (a, b) { return a.att - b.att || a.line - b.line; });
+  }
   function addMark(ri, item, k, b) {
     var list = marksOf(ri, item);
     if (list.length >= MAX_MARKS) return;
@@ -2947,6 +2958,7 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
     // Hidden, it keeps its place: the slider must not change width under a drag.
     byId(k + '-rt').classList.toggle('off', unset || Number(range.value) !== item.recommended);
   }
+  function cut(s) { return Array.from(s).slice(0, MAX_QUOTE).join(''); }  // by code point, as the server
   // As the server's attachment_lines(): LF only.
   function attLines(t) {
     var a = t.split('\n');
@@ -2974,25 +2986,28 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
     }
     return hunks && !lo && !ln ? out : null;
   }
-  // Roles, not <table>: it lays out every row per chunk.
-  function lineBox(lines, diff) {
-    var box = el('div', 'att-lines' + (diff ? ' diff' : '')), head = el('div'), i = 0;
+  // Roles, not <table>: it lays out every row per chunk. pin(row, i) numbers a row for notes.
+  function lineBox(lines, diff, pin) {
+    var box = el('div', 'att-lines' + (diff ? ' diff' : '') + (pin ? ' pin' : '')), head = el('div'), i = 0;
     function role(e, r) { e.setAttribute('role', r); return e; }
-    (diff ? [L.lnOld, L.lnNew, L.lnSign, L.lnText] : [L.lnNum, L.lnText]).forEach(function (h) {
+    (pin && diff ? [L.lnNum] : []).concat(diff ? [L.lnOld, L.lnNew, L.lnSign, L.lnText] : [L.lnNum, L.lnText]).forEach(function (h) {
       head.append(role(el('span', 'visually-hidden', h), 'columnheader'));
     });
     role(box, 'table').append(role(head, 'row'));
-    var rows = diff || lines.map(function (s, k) { return [0, k + 1, s]; });
+    var rows = diff || lines.map(function (s, k) { return pin ? [0, s] : [0, k + 1, s]; });
     (function chunk() {
       var g = role(el('div'), 'rowgroup');
       for (var end = i + (i ? 2000 : 200); i < end && i < rows.length; i++) {
         var r = rows[i], tr = role(el('div', r[0]), 'row');
+        if (pin) tr.append(role(el('span', 'n'), 'cell'));
         for (var k = 1; k < r.length; k++) {
-          var td = role(el('span', k < 3 && k < r.length - 1 ? 'n' : '', r[k]), 'cell');
+          // A lone CR, U+2028 and kin stay in their line, so they must not break its row.
+          var td = role(el('span', k < 3 && k < r.length - 1 ? 'n' : '', k < r.length - 1 ? r[k] : r[k].replace(/[\r\v\f\x85\u{2028}\u{2029}]/gu, '↵')), 'cell');
           if (k === 3 && r[k].trim()) td.append(el('span', 'visually-hidden', r[k] === '+' ? L.lnAdd : L.lnDel));
           tr.append(td);
         }
         g.append(tr);
+        if (pin) pin(tr, i);
       }
       g.style.containIntrinsicSize = 'auto ' + 1.5 * g.children.length + 'em';  // undrawn, as tall as its rows
       box.append(g);
@@ -3129,10 +3144,59 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
     if (compare && item.options.some(function (o) { return o.facts && Object.keys(o.facts).some(function (c) { return o.facts[c].tone; }); })) {
       fs.append(el('p', 'legend-line', L.legend));
     }
+    // Notes are data: rows draw late. A saved one off its line shows apart, read only, and goes back as it came.
+    var atts = (item.attachments || []).map(function (att) { return attLines(att.text || ''); });
+    var got = rounds[ri].answers && rounds[ri].answers.answers[item.id], ro = rounds[ri].readonly;
+    var notes = lineState[ri][item.id] = ((got && got.lines) || []).map(function (x) {
+      var ls = atts[x.att] || [];
+      return Object.assign({stale: !(x.line <= ls.length && cut(ls[x.line - 1]) === x.quote)}, x);
+    });
+    var full = el('p', 'hint lfull', L.lnFull);
+    function find(ai, at) { return notes.filter(function (x) { return x.att === ai && x.line === at && !x.stale; })[0]; }
+    function limit() {
+      full.hidden = notes.length < MAX_LINE_NOTES;
+      card.querySelectorAll('[data-line]').forEach(function (b) {
+        b.disabled = !full.hidden && !find(+b.dataset.att, +b.dataset.line);
+      });
+    }
+    function shut() { return ro || closed[ri] || finished; }  // rows may be drawn after Done
+    function noteRow(x, b) {
+      var row = el('div', 'lnote'), cell = el('div', 'mark-row'), name = fmt(L.lnNote, {n: x.line, f: item.attachments[x.att].src}), off = shut();
+      if (b) row.setAttribute('role', 'row'), cell.setAttribute('role', 'cell');
+      if (x.stale) cell.append(el('p', 'readonly-note', fmt(L.lnStale, {n: x.line, q: x.quote})));
+      if (off || x.stale) {
+        cell.append(el('p', 'mark-text', x.comment));
+      } else {
+        var ta = x.ta = el('textarea');
+        ta.value = x.comment;
+        ta.maxLength = MAX_TEXT;
+        ta.dataset.round = ri;
+        ta.setAttribute('aria-label', name);
+        ta.addEventListener('input', function () { x.comment = ta.value; });
+        ta.addEventListener('keydown', function (e) { if (e.key === 'Escape') { e.preventDefault(); b.focus(); } });
+        cell.append(ta);
+      }
+      if (!off) {
+        var rm = el('button', '', L.remove);
+        rm.type = 'button';
+        rm.setAttribute('aria-label', L.remove + ': ' + name);
+        rm.addEventListener('click', function () {
+          if (shut()) return;
+          notes.splice(notes.indexOf(x), 1);
+          row.remove();
+          (b || card).focus();
+          limit();
+          if (x.comment) later(ri, 250);  // an empty field was never saved
+        });
+        cell.append(rm);
+      }
+      row.append(cell);
+      return row;
+    }
     // The agent's text files, never rendered: a diff or noted lines as rows when first opened.
-    (item.attachments || []).forEach(function (att) {
+    (item.attachments || []).forEach(function (att, ai) {
       var box = el('details', 'attach'), sum = el('summary', '', att.caption || att.src);
-      var lines = attLines(att.text || ''), n = lines.length;
+      var lines = atts[ai], n = lines.length;
       var meta = [att.caption ? att.src : '', n ? (n === 1 ? L.line : fmt(L.lines, {n: n})) : ''];
       var diff = /\.(diff|patch)$/i.test(att.src);
       function view(e) {
@@ -3142,19 +3206,48 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
       }
       sum.append(el('span', 'attach-meta', meta.filter(Boolean).join(' · ')));
       box.append(sum);
-      box.open = !!att.open;
+      box.open = !!att.open || notes.some(function (x) { return x.att === ai && !x.stale; });
+      function pin(tr, i) {  // the file's line, never the diff's
+        var at = i + 1, off = shut(), b = el(off ? 'span' : 'button', '', String(at)), last = tr;
+        if (!off) {
+          b.dataset.att = ai;
+          b.dataset.line = at;
+          b.setAttribute('aria-label', fmt(L.lnNote, {n: at, f: att.src}));
+          b.disabled = notes.length >= MAX_LINE_NOTES && !find(ai, at);
+        }
+        tr.firstChild.append(b);
+        notes.forEach(function (x) {
+          if (x.att !== ai || x.line !== at || x.stale) return;
+          var r = noteRow(x, b);
+          last.after(r);
+          last = r;
+        });
+      }
       if (att.text === undefined) {
         box.append(el('p', 'attach-missing', fmt(L.attachMissing, {r: att.missing})));
       } else if (diff || item.lines) {
         // Setting open fires one toggle after render; a box in a hidden round waits for showRound's.
         box.addEventListener('toggle', function () {
-          if (box.open && !box.children[1] && !box.closest('[hidden]')) view(lineBox(lines, diff && diffRows(lines)));
+          if (box.open && !box.children[1] && !box.closest('[hidden]')) view(lineBox(lines, diff && diffRows(lines), item.lines && pin));
+        });
+        box.addEventListener('click', function (e) {  // one listener: a box may hold 131k numbers
+          var b = e.target.closest('[data-line]'), at = b && +b.dataset.line, x = b && find(ai, at);
+          if (!b || shut()) return;
+          if (!x) {
+            if (notes.length >= MAX_LINE_NOTES) return;
+            notes.push(x = {att: ai, line: at, quote: cut(lines[at - 1]), comment: ''});
+            b.closest('[role=row]').after(noteRow(x, b));
+            limit();
+          }
+          x.ta.focus();
         });
       } else {
         view(el('pre', '', att.text));
       }
       fs.append(box);
+      notes.forEach(function (x) { if (x.att === ai && x.stale) fs.append(noteRow(x)); });
     });
+    if (item.lines && !ro) fs.append(full), limit();
     if (item.marks) {
       var marks = el('div', 'mark-list');
       marks.append(el('p', 'clabel', L.marks));
@@ -3163,9 +3256,9 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
       marks.append(holder);
       fs.append(marks);
     }
-    // Private covers the item's text: comment, Other text and mark comments. No data-item and no name, so it is
+    // Private covers the item's text: comment, Other text, mark and line notes. No data-item and no name, so it is
     // never taken for one of the choices.
-    var k = key(ri, item), lockable = item.comment || item.other || item.marks;
+    var k = key(ri, item), lockable = item.comment || item.other || item.marks || item.lines;
     // The agent marked the item decided elsewhere (signoff elsewhere): its note, filled in when the answers come in.
     var away = el('p', 'readonly-note');
     away.id = k + '-e';
@@ -3381,6 +3474,7 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
       }
       if (picked.indexOf(OTHER) >= 0) a.other = byId(key(ri, item) + '-t').value;
       if (item.marks) a.marks = marksOf(ri, item);
+      if (item.lines) a.lines = noteList(ri, item).map(function (x) { return {att: x.att, line: x.line, quote: x.quote, comment: x.comment}; });
       if (isPrivate(ri, item)) a.private = true;
       answers[item.id] = a;
     });
@@ -3851,6 +3945,10 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
           // The Summary is the view most likely to end up in a screenshot: a private comment is only named here.
           li.append(priv ? el('blockquote', 'summary-private', L.privateNote) : el('blockquote', 'summary-note', note));
         }
+        noteList(ri, item).forEach(function (x) {
+          li.append(el('blockquote', priv ? 'summary-private' : 'summary-note',
+            fmt(L.lnNote, {n: x.line, f: item.attachments[x.att].src}) + ': ' + (priv ? L.privateBadge : x.comment)));
+        });
         var marks = el('span', 'flags');  // one cell on the sheet
         flags.forEach(function (f) { marks.append(el('span', 'badge' + (f === L.differs ? ' warn' : ''), f)); });
         if (item.blocking) marks.append(waitMark('badge', L.blocking));  // the agent's mark, not a flag on the answer
@@ -4076,7 +4174,7 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
       if (!ok) { doneButtons.forEach(function (b) { b.disabled = false; }); return; }
       finished = true;
       acceptButton.disabled = true;
-      Array.prototype.forEach.call(document.querySelectorAll('main input, main textarea, .mark-tools button, .mark-row button'), function (i) { i.disabled = true; });
+      Array.prototype.forEach.call(document.querySelectorAll('main input, main textarea, .mark-tools button, .mark-row button, .n button'), function (i) { i.disabled = true; });
       status.textContent = L.done;
       var banner = byId('banner');
       banner.textContent = data.orphan ? L.doneOrphan : L.doneBanner;

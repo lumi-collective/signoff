@@ -847,16 +847,37 @@ class Page(unittest.TestCase):
 
     def test_an_attachment_counts_and_names_its_lines_as_the_server_does(self):
         # The line rule of attachment_lines(): LF only (a regex . or \R would also end a line at a lone CR or U+2028),
-        # one CR cut, no line after a final LF. The diff view's words for screen readers end each LABELS block.
+        # one CR cut, no line after a final LF. The diff view's words for screen readers come before the line notes'.
         self.assertIn("var a = t.split('\\n');\n    if (a[a.length - 1] === '') a.pop();\n"
                       "    return a.map(function (s) { return s.slice(-1) === '\\r' ? s.slice(0, -1) : s; });", self.page)
         labels = self.page[self.page.index("var LABELS = {"):self.page.index("var data = JSON.parse")]
         en, hu = labels[:labels.index("hu: {")], labels[labels.index("hu: {"):]
-        self.assertTrue(en.rstrip().endswith("lnAdd: 'added', lnDel: 'removed', lnOld: 'Old line', lnNew: 'New line', "
-                                             "lnNum: 'Line', lnSign: 'Change', lnText: 'Text'},"), en[-300:])
+        self.assertIn("lnAdd: 'added', lnDel: 'removed', lnOld: 'Old line', lnNew: 'New line', "
+                      "lnNum: 'Line', lnSign: 'Change', lnText: 'Text',\n      lnNote: ", en)
         self.assertIn("lnAdd: 'hozzáadva', lnDel: 'törölve', lnOld: 'Régi sor', lnNew: 'Új sor', lnNum: 'Sor', "
-                      "lnSign: 'Változás', lnText: 'Szöveg'}", hu)
-        self.assertTrue(hu.rstrip().endswith("lnText: 'Szöveg'}\n  };"), hu[-100:])
+                      "lnSign: 'Változás', lnText: 'Szöveg',\n      lnNote: ", hu)
+
+    def test_line_notes_follow_the_server_rule_and_end_each_labels_block(self):
+        # A note's quote is its line cut by code point (Array.from), not by UTF-16 unit, at the server's limits;
+        # the notes go out from the page's own list (rows are drawn late), Private covers them, and their labels
+        # are the last of each LABELS block.
+        self.assertIn("var MAX_LINE_NOTES = %d, MAX_QUOTE = %d;" % (signoff.MAX_LINE_NOTES, signoff.MAX_QUOTE),
+                      self.page)
+        self.assertIn("Array.from(s).slice(0, MAX_QUOTE).join('')", self.page)
+        self.assertIn("lockable = item.comment || item.other || item.marks || item.lines", self.page)
+        collect = self.page[self.page.index("function collect("):]
+        collect = collect[:collect.index("\n  }\n")]
+        self.assertIn("if (item.lines) a.lines = noteList(ri, item).map(", collect)
+        # Characters that end a line in pre-wrap but not by the line rule show as a mark, so a note's row is plain.
+        self.assertIn(".replace(/[\\r\\v\\f\\x85\\u{2028}\\u{2029}]/gu, '↵')", self.page)
+        labels = self.page[self.page.index("var LABELS = {"):self.page.index("var data = JSON.parse")]
+        en, hu = labels[:labels.index("hu: {")], labels[labels.index("hu: {"):]
+        self.assertTrue(en.rstrip().endswith("lnNote: 'Note on line {n} of {f}', lnFull: 'At most 50 line notes on an "
+                                             "item.', lnStale: 'This file changed since: "
+                                             "line {n} said “{q}”'},"), en[-300:])
+        self.assertTrue(hu.rstrip().endswith("lnNote: 'Megjegyzés: {f}, {n}. sor', lnFull: 'Egy tételen legfeljebb 50 "
+                                             "sor-megjegyzés lehet.', lnStale: 'A fájl azóta "
+                                             "változott: a {n}. sor ez volt: „{q}”'}\n  };"), hu[-300:])
 
 
 if __name__ == "__main__":

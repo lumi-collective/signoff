@@ -22,7 +22,8 @@ PAIRS = ([(t, s, 4.5) for t in ("text", "soft", "quiet") for s in ("bg", "chrome
          + [("box", "bg", 3.0), ("focus", "bg", 3.0), ("focus", "chrome", 3.0), ("box", "chrome", 3.0),
             ("accent", "chrome", 4.5)]
          + [("m%dfg" % i, "m%dbg" % i, 4.5) for i in range(6)]
-         + [("text", "add", 4.5), ("text", "del", 4.5)])  # a diff's added and removed rows
+         + [("text", "add", 4.5), ("text", "del", 4.5)]  # a diff's added and removed rows
+         + [("focus", "field", 3.0)])  # a line note's number button and field, inside an attachment
 HIGH_PAIRS = [(a, b, 7.0 if m == 4.5 else m) for a, b, m in PAIRS] + [("line", s, 3.0) for s in ("bg", "panel")]
 
 

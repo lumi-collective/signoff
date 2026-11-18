@@ -1303,6 +1303,13 @@ MAIL_CLASSES = ["file"] * 10 + ["hunk", "ctx", "del", "add"] + ["file"] * 3 + ["
 LONG_TEXT = "".join("line %d\n" % n for n in range(1, 302))  # 301 rows: a second row group, drawn later
 BIG_ROWS = (256 * 1024 - 64) // 2  # one-character lines: the worst case within the 256 KiB limit
 BIG_DIFF = "--- a/big\n+++ b/big\n@@ -0,0 +1,%d @@\n" % BIG_ROWS + "+\n" * BIG_ROWS
+
+
+def marked(line):
+    """A line as its text cell shows it: what would break it in pre-wrap without ending it by the line rule is a mark."""
+    return re.sub("[\r\v\f\x85\N{LINE SEPARATOR}\N{PARAGRAPH SEPARATOR}]", "↵", line)
+
+
 # Each attachment box of an item: open or not, the summary, the headers, and each row as class and cell texts.
 ATTACH_BOXES = """(function () {
   return Array.prototype.map.call(document.querySelectorAll(%s), function (d) {
@@ -1390,7 +1397,8 @@ def run_attachment(work):
               % long_["high"])
         # A blank line outside a hunk keeps a line's height, on a desktop and on a phone.
         blank = ("Array.prototype.filter.call(document.querySelectorAll(%s)[7].querySelectorAll('[role=row].file'), "
-                 "function (r) { return !r.textContent; }).map(function (r) { return r.offsetHeight; })" % json.dumps(boxes))
+                 "function (r) { return !r.lastChild.textContent; }).map(function (r) { return r.offsetHeight; })"
+                 % json.dumps(boxes))
         for width in (400, 1280):
             browser.call("Emulation.setDeviceMetricsOverride", width=width, height=900, deviceScaleFactor=1, mobile=False)
             time.sleep(0.3)
@@ -1401,15 +1409,17 @@ def run_attachment(work):
             check(head == 0, "at %d px the hidden column names should take no height: %r" % (width, head))
         browser.click(boxes + ":nth-of-type(1) > summary")
         diff = browser.js(ATTACH_BOXES % json.dumps(boxes))[0]
-        check(diff["open"] and diff["rows"] == [list(r) for r in DIFF_ROWS], "the diff's rows: %r" % diff["rows"])
-        check(diff["heads"] == ["Old line", "New line", "Change", "Text"]
+        # Its item takes line notes: each row leads with its line in the file, the number a note anchors on.
+        check(diff["open"] and diff["rows"] == [[r[0], str(n)] + list(r[1:]) for n, r in enumerate(DIFF_ROWS, 1)],
+              "the diff's rows: %r" % diff["rows"])
+        check(diff["heads"] == ["Line", "Old line", "New line", "Change", "Text"]
               and diff["words"] == sum(r[0] in ("add", "del") for r in DIFF_ROWS),
               "the diff's headers and its words for screen readers: %r" % diff)
         check("16 lines" in diff["label"] and browser.js("document.querySelectorAll('.attach b').length") == 0,
               "the diff's count, and nothing in it rendered: %r" % diff["label"])
         browser.click(boxes + ":nth-of-type(3) > summary")
         ruled = browser.js(ATTACH_BOXES % json.dumps(boxes))[2]
-        check(ruled["rows"] == [["", str(n), line] for n, line in enumerate(rule["lines"], 1)]
+        check(ruled["rows"] == [["", str(n), marked(line)] for n, line in enumerate(rule["lines"], 1)]
               and "%d lines" % len(rule["lines"]) in ruled["label"], "the server's line rule on the page: %r" % ruled)
 
         # The worst case: the first screen at once, a key and a click answered while the rest draws.
@@ -1521,6 +1531,216 @@ def run_open_rounds(work):
     finally:
         kill(server)
         kill(browser.proc)
+
+
+# Each line note's field or text under the given item as [its line's number, the field's value or the text], and
+# the "changed since" notes kept apart.
+NOTES_SHOWN = """(function (sel) {
+  var card = document.querySelector(sel);
+  if (!card) return {under: [], apart: []};  // not drawn yet
+  return {under: Array.prototype.map.call(card.querySelectorAll('[role=rowgroup] > .lnote'), function (n) {
+      var row = n.previousElementSibling;
+      while (row.classList.contains('lnote')) row = row.previousElementSibling;
+      var t = n.querySelector('textarea'), p = n.querySelector('.mark-text');
+      return [row.firstChild.textContent, t ? t.value : p.textContent];
+    }),
+    apart: Array.prototype.map.call(card.querySelectorAll('.lnote:not([role])'), function (n) {
+      return [n.querySelector('.readonly-note').textContent, n.querySelector('.mark-text').textContent];
+    }),
+    fields: card.querySelectorAll('.lnote textarea').length, buttons: card.querySelectorAll('.att-lines button').length};
+})(%s)"""
+
+
+def run_line_notes(work):
+    """Line notes: a press on a line's number opens a field under it, saved with the round in attachment and line
+    order, its quote cut by code point as the server cuts it (the fixture's awkward lines too); at most 50 an item;
+    Private hides them in the Summary; a reload restores them; a file changed since shows its notes apart, read
+    only, and a save still passes; a done round and the past-decisions page show them with no button or field."""
+    root = work / "notes-proj"
+    topic = root / ".signoff" / "2026-01-11-review"
+    (topic / "notes").mkdir(parents=True)
+    rule = json.loads((ROOT / "tests" / "line_rule.json").read_text(encoding="ascii"))
+    for name, body in (("change.diff", DIFF_TEXT), ("todo.txt", "one\ntwo\nthree\n"), ("rule.txt", rule["text"]),
+                       ("many.txt", "".join("row %d\n" % n for n in range(1, 61)))):
+        (topic / "notes" / name).write_bytes(body.encode("utf-8"))
+    # No comment box: the line notes are the items' only text, so Private is there for them alone.
+    pick = {"select": "one", "recommended": "ok", "comment": False,
+            "options": [{"id": "ok", "label": "Ship it"}, {"id": "no", "label": "Not yet"}]}
+    data = {"version": 1, "title": "Review the export change", "items": [
+        dict(pick, id="review", title="Ship the export change?", lines=True,
+             attachments=[{"src": "notes/change.diff", "caption": "The change"}, {"src": "notes/todo.txt"},
+                          {"src": "notes/rule.txt"}]),
+        dict(pick, id="many", title="Fifty notes at most", lines=True, attachments=[{"src": "notes/many.txt"}]),
+        dict(pick, id="secret", title="A sensitive one", lines=True, sensitive=True,
+             attachments=[{"src": "notes/todo.txt"}])]}
+    target = topic / "round-01.json"
+    target.write_text(json.dumps(data), encoding="utf-8")
+    answers_path = topic / "round-01.answers.json"
+    many = [{"att": 0, "line": n, "quote": "row %d" % n, "comment": "note %d" % n} for n in range(1, 50)]
+    answers_path.write_text(json.dumps({
+        "version": 1, "done": False, "saved": "2026-01-11T10:00:00Z", "free_text": "",
+        "decisions": {"file": "round-01.json", "sha256": hashlib.sha256(target.read_bytes()).hexdigest()},
+        "answers": {"many": {"choice": "ok", "comment": "", "lines": many}}}), encoding="utf-8")
+    review, many_sel = '[data-item="review"]', '[data-item="many"]'
+
+    def button(item, line, src):
+        return '%s button[aria-label="Note on line %d of %s"]' % (item, line, src)
+
+    def note(line, src, text):
+        browser.click(button(review, line, src))
+        check(browser.js("document.activeElement.tagName === 'TEXTAREA' && document.activeElement.value === ''"),
+              "a press on line %d of %s should open an empty field and focus it" % (line, src))
+        browser.call("Input.insertText", text=text)
+
+    def saved():
+        return json.loads(answers_path.read_text(encoding="utf-8"))["answers"]
+
+    server, out, err, browser = serve(target, str(work / "profile-notes"))
+    try:
+        wait_for("the page", lambda: browser.js("!!document.getElementById('r0-i2-p')"))
+        check(browser.js("[document.getElementById('r0-i0-p').checked, document.getElementById('r0-i2-p').checked]")
+              == [False, True], "an item with lines has a Private box, and a sensitive one starts Private")
+        # 49 notes saved before: restored under their lines in a box opened for them. The 50th opens, the 51st is refused.
+        shown = wait_for("the restored notes", lambda: (lambda s: len(s["under"]) == 49 and s)(
+            browser.js(NOTES_SHOWN % json.dumps(many_sel))))
+        check(shown["under"] == [[str(n), "note %d" % n] for n in range(1, 50)], "the 49 notes under their lines: %r"
+              % shown["under"][:3])
+        browser.click(button(many_sel, 50, "notes/many.txt"))
+        browser.call("Input.insertText", text="fifty")
+        full = browser.js("(function () { var c = document.querySelector(%s); return [c.querySelector('.lfull').hidden, "
+                          "Array.prototype.filter.call(c.querySelectorAll('.att-lines button'), function (b) { "
+                          "return b.disabled; }).length]; })()" % json.dumps(many_sel))
+        check(full == [False, 10], "past 50 notes the free lines' buttons should be off, with the reason: %r" % full)
+        browser.click(button(many_sel, 51, "notes/many.txt"))
+        browser.click(button(many_sel, 3, "notes/many.txt"))  # a noted line still takes a press: its field
+        check(browser.js("document.activeElement.value") == "note 3"
+              and browser.js(NOTES_SHOWN % json.dumps(many_sel))["fields"] == 50, "the 51st press should be refused")
+
+        # Notes made out of order go back in attachment and line order, the awkward lines of the fixture included.
+        browser.click(review + " details.attach:nth-of-type(3) > summary")
+        cells = browser.js("Array.prototype.map.call(document.querySelectorAll(%s), function (c) { return c.textContent; })"
+                           % json.dumps(review + " details.attach:nth-of-type(3) [role=rowgroup] > [role=row] > :last-child"))
+        check(cells == [marked(l) for l in rule["lines"]] and "↵" in cells[1] and "↵" in cells[2],
+              "a lone CR or U+2028 should show as a mark in its row: %r" % cells[:3])
+        for line in (6, 1, 2, 3, 5):  # the astral cut, the BOM and CRLF, a lone CR, U+2028, a kept CR
+            note(line, "notes/rule.txt", "rule %d" % line)
+        browser.click(review + " details.attach:nth-of-type(2) > summary")
+        note(3, "notes/todo.txt", "three note")
+        note(2, "notes/todo.txt", "two note")
+        browser.click(review + " details.attach:nth-of-type(1) > summary")
+        note(8, "notes/change.diff", "Why not raise?")
+        # A second press goes back to the field; single keys type there; Esc goes back to the number.
+        browser.click(button(review, 8, "notes/change.diff"))
+        press(browser, "f", "KeyF", 70, text="f")
+        press(browser, "j", "KeyJ", 74, text="j")
+        check(browser.js("[document.activeElement.value, document.body.classList.contains('focusing')]")
+              == ["Why not raise?fj", False], "keys typed in a note should be its text: %r"
+              % browser.js("document.activeElement.value"))
+        press(browser, "Escape", "Escape", 27)
+        check(browser.js("[document.activeElement.tagName, document.activeElement.getAttribute('aria-label')]")
+              == ["BUTTON", "Note on line 8 of notes/change.diff"], "Esc in a note should go back to its line's number")
+        # By key: Enter on a number goes to its field; Tab past the field and its Remove reaches the next number,
+        # and Space there opens that line's field (left empty: it saves nothing).
+        press(browser, "Enter", "Enter", 13, text="\r")
+        check(browser.js("document.activeElement.value") == "Why not raise?fj", "Enter on a number should go to its note")
+        press(browser, "Tab", "Tab", 9)
+        press(browser, "Tab", "Tab", 9)
+        press(browser, " ", "Space", 32, text=" ")
+        check(browser.js("[document.activeElement.tagName, document.activeElement.value, "
+                         "document.activeElement.getAttribute('aria-label')]")
+              == ["TEXTAREA", "", "Note on line 9 of notes/change.diff"], "Space on the next number should open its field: %r"
+              % browser.js("document.activeElement.outerHTML.slice(0, 200)"))
+        # Private hides the notes in the Summary; another item's notes show.
+        browser.click("#r0-i0-p")
+        summary = browser.js("(function () { var s = document.getElementById('summary-rows'); return [s.textContent, "
+                             "s.querySelectorAll('.summary-private').length]; })()")
+        check("Why not raise" not in summary[0] and "rule 6" not in summary[0] and summary[1] == 8
+              and "Note on line 50 of notes/many.txt: fifty" in summary[0],
+              "Private should hide the notes in the Summary: %r" % summary)
+        want = [(0, 8, DIFF_ROWS[7][3][:1] + DIFF_ROWS[7][4], "Why not raise?fj"), (1, 2, "two", "two note"),
+                (1, 3, "three", "three note")] + [(2, n, rule["quotes"][n - 1], "rule %d" % n) for n in (1, 2, 3, 5, 6)]
+        want = [dict(zip(("att", "line", "quote", "comment"), w)) for w in want]
+        got = wait_for("the notes saved", lambda: (lambda a: a.get("review", {}).get("lines") == want and a)(saved()))
+        check(got["review"].get("private") is True and len(got["many"]["lines"]) == 50
+              and got["many"]["lines"][-1]["comment"] == "fifty", "Private and the 50th note saved: %r" % got["many"]["lines"][-1])
+
+        browser.call("Page.reload")
+        shown = wait_for("the notes after a reload", lambda: (lambda s: len(s["under"]) == 8 and s)(
+            browser.js(NOTES_SHOWN % json.dumps(review))))
+        check(shown["under"] == [[str(w["line"]), w["comment"]] for w in want] and shown["apart"] == []
+              and browser.js("document.getElementById('r0-i0-p').checked"), "a reload should restore them: %r" % shown)
+    except E2EError:
+        sys.stderr.write("--- Signoff stderr ---\n" + "".join(err))
+        raise
+    finally:
+        kill(server)
+        kill(browser.proc)
+
+    # The file changed since: its notes show apart, unchanged, and a save of another note still passes.
+    (topic / "notes" / "todo.txt").write_bytes(b"one\nTWO changed\n")
+    server, out, err, browser = serve(target, str(work / "profile-notes-2"))
+    try:
+        shown = wait_for("the changed file's notes", lambda: (lambda s: len(s["apart"]) == 2 and s)(
+            browser.js(NOTES_SHOWN % json.dumps(review))))
+        check(shown["apart"] == [["This file changed since: line 2 said “two”", "two note"],
+                                 ["This file changed since: line 3 said “three”", "three note"]]
+              and [u[0] for u in shown["under"]] == ["8", "1", "2", "3", "5", "6"], "notes on a changed file: %r" % shown)
+        browser.click(review + " details.attach:nth-of-type(1) .lnote textarea")
+        browser.js("(function (t) { t.setSelectionRange(t.value.length, t.value.length); })(document.activeElement)")
+        browser.call("Input.insertText", text=" Fine.")
+        want[0]["comment"] += " Fine."
+        wait_for("a save past the changed file", lambda: saved()["review"]["lines"] == want)
+        # Remove: a changed file's note (focus to its item), then one under its line (focus to the number).
+        browser.click(review + " .lnote:not([role]) button")
+        check(browser.js("[document.querySelectorAll(%s).length, document.activeElement.dataset.item]"
+                         % json.dumps(review + " .lnote:not([role])")) == [1, "review"],
+              "Remove should drop a changed file's note and leave focus on its item")
+        browser.click(review + ' .lnote [aria-label="Remove: Note on line 1 of notes/rule.txt"]')
+        check(browser.js("document.activeElement.getAttribute('aria-label')") == "Note on line 1 of notes/rule.txt",
+              "Remove under a line should leave focus on its number")
+        want = [w for w in want if (w["att"], w["line"]) not in ((1, 2), (2, 1))]
+        wait_for("the removals saved", lambda: saved()["review"]["lines"] == want)
+        browser.click("#done")
+        check(finished(server, out, err, [answers_path])[0]["answers"]["review"]["lines"] == want,
+              "Done should keep the notes")
+        # A box first opened after Done draws its numbers with nothing to press.
+        browser.click(review + " details.attach:nth-of-type(2) > summary")
+        rows = wait_for("the rows drawn after Done", lambda: browser.js(
+            "document.querySelectorAll(%s).length" % json.dumps(review + " details.attach:nth-of-type(2) [role=rowgroup] > [role=row]")))
+        check(rows == 2 and browser.js("document.querySelectorAll(%s).length" % json.dumps(
+            review + " details.attach:nth-of-type(2) button")) == 0, "after Done a box's numbers take no press")
+    except E2EError:
+        sys.stderr.write("--- Signoff stderr ---\n" + "".join(err))
+        raise
+    finally:
+        kill(server)
+        kill(browser.proc)
+
+    # Read only: a done round beside an open one, and the past-decisions page.
+    pair = work / "2026-01-12-done-notes"
+    shutil.copytree(str(topic), str(pair))
+    (pair / "round-02.json").write_text(json.dumps(dict(data, items=[data["items"][1]])), encoding="utf-8")
+    for history in (False, True):
+        server, out, err, browser = serve(root if history else pair, str(work / ("profile-notes-ro%d" % history)),
+                                          history=history)
+        try:
+            if history:
+                wait_for("the list", lambda: browser.js("!!document.querySelector('#h-list li button, #h-list li a')"))
+                browser.js("document.querySelector('#h-list li button, #h-list li a').click()")
+            else:
+                browser.click("#tab-0")
+            sel = '.rp:not([hidden]) ' + review
+            shown = wait_for("the read-only notes", lambda: (lambda s: len(s["under"]) == 5 and s)(
+                browser.js(NOTES_SHOWN % json.dumps(sel))))
+            check(shown["fields"] == 0 and shown["buttons"] == 0 and len(shown["apart"]) == 1
+                  and [u[1] for u in shown["under"]] == [w["comment"] for w in want if w["att"] != 1],
+                  "%s should show the notes with no button or field: %r" % ("--history" if history else "a done round", shown))
+        except E2EError:
+            sys.stderr.write("--- Signoff stderr ---\n" + "".join(err))
+            raise
+        finally:
+            kill(server)
+            kill(browser.proc)
 
 
 COMMANDS = [{"text": "rm -rf build && make docs\n  echo '<b>done</b>'", "lang": "bash", "caption": "Rebuild the docs"},
@@ -3335,6 +3555,7 @@ def run():
     run_table(work)
     run_attachment(work)
     run_open_rounds(work)
+    run_line_notes(work)
     run_commands(work)
     run_commands_elsewhere(work)
     run_blocking(work)
@@ -3490,6 +3711,10 @@ def main():
           "past-decisions page too), 131k rows drawn while the page answers, a hunk that does not add up as plain "
           "text, git format-patch output as a diff, blank rows a line high, no box a stand-in's height, exit 0; "
           "two open boxes of 262k rows in a hidden round drawn only when it is shown, the page answering; "
+          "line notes: a press on a line's number opens a field under it, saved in attachment and line order with its "
+          "quote cut by code point on the fixture's awkward lines, 50 at most, keys typed there, Esc back, Private "
+          "hiding them in the Summary, restored on a reload, a changed file's notes apart and still saved, exit 0, "
+          "read only on a done round and --history; "
           "an item's commands sit between its text and pictures as code blocks, unrendered, wrapped, Copy exact, a "
           "relative rm warns whatever the lang, Hungarian labels, exit 0, escaped in the Markdown copy, and on a done "
           "round and --history Copy is exact too; "

@@ -66,10 +66,21 @@
   as numbered lines, and so does a `.md` or `.txt` on an item whose lines take notes (`lines`). A hunk counts
   only after a `+++` line. A file shows as numbered lines when it has no such hunk, when a hunk has fewer lines
   than its `@@` counts or a stray line inside, or when a `+`, `-` or space line comes straight after a full hunk or
-  its `\ No newline` line (a `+++` or `---` line and the `-- ` trailer aside). A line is what the answers file
-  counts as one: the text split at each line feed. The rows are drawn when the box first opens (an open box: when its
+  its `\ No newline` line (a line starting with `+++ `, `--- ` or `-- ` aside). A line is what the answers file
+  counts as one: the text split at each line feed. A carriage return, vertical tab, form feed, next line (U+0085), line
+  or paragraph separator inside a line shows as `↵`, so each row is one line. The rows are drawn when the box first opens (an open box: when its
   round is first shown), the first screen at once and the rest after it, so even a 256 KiB file leaves the page
   answering.
+- **Line notes.** On an item whose lines take notes (`lines`), each row of its attachments leads with the line's
+  number in the file (in a diff, before the old and new numbers, which come from the diff's own headers). Press it
+  (Tab to it, then Enter or Space) and a field opens under that line, with **Remove**; a second press goes back to
+  the field, and Esc in the field goes back to the number. A field left empty saves nothing. An item takes up to 50
+  notes; past that the numbers of the other lines are off, with a line saying why. The notes save with the round,
+  each with the start of its line, and a box that holds one starts open. When the file has changed since a note was
+  saved (its line is gone, or no longer says what it did), the note shows under the box, read only, below "This
+  file changed since: line N said …", and goes back to the agent as it was; Remove drops it. **Private** covers the
+  notes, the Summary lists each under its item (file, line and comment), and a done round and the past-decisions
+  page show them without the numbers to press or the fields.
 - **Commands.** A command the agent asks you to run before you decide shows under the item's text as a code
   block, as in the inbox: its language, a **Copy** button that copies it exactly, and a hint under one that
   deletes with a relative path, whatever its language. A long line wraps, a command is at most 4000 characters
@@ -86,7 +97,7 @@
   again); the margin, with its stakes, still shows. Opened, it is answered like any other item; folding is a
   view, so a reload starts it folded again, with the choice saved. j, k and Focus visit it as any item; the digit
   keys pick nothing while it is folded. A done round shows the **Settled earlier** line above its answer.
-- **Private** beside a comment marks what you write on that item as private: the agent is asked not to
+- **Private** beside a comment (or an item's line notes) marks what you write on that item as private: the agent is asked not to
   repeat it, and the Markdown copy and the Summary hide it. The agent ticks it in advance where an answer may
   hold personal data; you can tick or untick it on any item. It is a request to the agent, not encryption.
 - **Everything saves as you go**; the key bar at the bottom shows when it last saved. The box at the end of each
