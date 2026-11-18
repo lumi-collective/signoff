@@ -192,6 +192,8 @@ class Browser:
             self.buf += chunk
         self.buf = self.buf.split(b"\r\n\r\n", 1)[1]
         self.mid = 0
+        # Headless Chrome 158 leaves the page unfocused, and the clipboard then refuses writeText; element focus stays real.
+        self.call("Emulation.setFocusEmulationEnabled", enabled=True)
 
     def _read(self, n):
         while len(self.buf) < n:
