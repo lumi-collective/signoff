@@ -109,8 +109,8 @@ func TestControlOpenTimesOut(t *testing.T) {
 	}
 }
 
-// The app's target from `signoff inbox open --app`: a link when one waits, errNone when none does or the inbox is
-// from before app targets, so the app then does what it did.
+// The app's target from `signoff inbox open --app`: a link when one waits, errNone when none does, and an error for
+// any other answer; either way the app then does what it did.
 func TestControlPending(t *testing.T) {
 	got := make(chan string, 1)
 	sock := fakeControl(t, shortDir(t), "{\"link\": \"http://127.0.0.1:5/b/abc/\"}\n", got)
@@ -121,8 +121,7 @@ func TestControlPending(t *testing.T) {
 		t.Fatalf("request %q", req)
 	}
 	for name, reply := range map[string]string{
-		"none":      "{\"link\": null}\n",
-		"old inbox": "{\"error\": \"unknown request\"}\n",
+		"none": "{\"link\": null}\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			if link, err := controlPending(fakeControl(t, shortDir(t), reply, nil)); err != errNone || link != "" {
@@ -135,6 +134,7 @@ func TestControlPending(t *testing.T) {
 		"no newline": "{\"link\": null}",
 		"link num":   "{\"link\": 5}\n",
 		"link empty": "{\"link\": \"\"}\n",
+		"error":      "{\"error\": \"unknown request\"}\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			if link, err := controlPending(fakeControl(t, shortDir(t), reply, nil)); err == nil || err == errNone {

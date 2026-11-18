@@ -2238,7 +2238,7 @@ class InboxPlan(InboxTest):
 class InboxElsewhere(InboxTest):
     """signoff elsewhere while the inbox holds the round's lock: the command sends the `elsewhere` op, and the inbox
     writes the mark through the run's own writer at the round's rev, as `accept` does. Refusals are one word and
-    write nothing; an inbox from before the op makes the command exit 1, writing nothing."""
+    write nothing; any other error the inbox answers makes the command exit 1, writing nothing."""
 
     case, end, ctl, offer, files = InboxOffer.case, InboxOffer.end, InboxOffer.ctl, InboxOffer.offer, InboxOffer.files
     rows = InboxRows.rows
@@ -2427,8 +2427,8 @@ class InboxElsewhere(InboxTest):
         self.assertIn("control line", err)
         asked.assert_not_called()
 
-    def test_an_inbox_before_the_op_makes_the_command_exit_1_and_write_nothing(self):
-        # 0.4.0's answer to an op it does not know: an error that is none of the refusal words.
+    def test_any_other_inbox_error_makes_the_command_exit_1_and_write_nothing(self):
+        # An error that is none of the refusal words: one line that names it, whatever it says.
         topic, _ = self.case([one_round(question("q"))])
         inbox = signoff.try_lock(self.home / "inbox.lock")
         self.addCleanup(signoff.unlock, inbox)
@@ -2446,19 +2446,16 @@ class InboxElsewhere(InboxTest):
                 got.append(json.loads(conn.makefile("rb").readline()))
                 conn.sendall(json.dumps({"error": reply}).encode("utf-8") + b"\n")
         before = self.files(topic)
-        # A current inbox that refuses the request's shape (an inbox on an older Python may not know a character
-        # of the note) is not an old inbox: only an unknown op says to restart it.
-        for reply, older in (('unknown request; send {"op": "open"}', True),
-                             ("elsewhere takes round (an absolute path), item and note (one line of at most 500 "
-                              "characters), and nothing else", False)):
+        for reply in ('unknown request; send {"op": "open"}',
+                      "elsewhere takes round (an absolute path), item and note (one line of at most 500 characters), "
+                      "and nothing else"):
             t = threading.Thread(target=answer, args=(reply,), daemon=True)
             t.start()
             code, out, err = self.mark(topic / "round-01.json", "q", "n")
             t.join(5)
-            self.assertEqual((code, out, err.count("\n")), (1, "", 1), err)
-            self.assertEqual(("signoff inbox stop" in err, "older" in err), (older, older), err)
-            if not older:
-                self.assertIn("note", err)
+            self.assertEqual((code, out, err), (1, "", "signoff: the Signoff inbox refused the request (%s); nothing "
+                                                "was written. Its Python may know fewer characters than this one: "
+                                                "use plainer characters in the note\n" % reply))
             self.assertEqual(got[-1]["op"], "elsewhere")
             self.assertEqual(self.files(topic), before)
 
@@ -2692,7 +2689,7 @@ class InboxAppTarget(InboxTest):
         self.assertEqual(self.ctl("app_open"), {"link": None})
         self.assertEqual(cli("--app", *target, platform="linux"), (1, ""))  # the app is macOS only
         self.assertFalse(record_to.exists())
-        # No inbox answers (or one from before app targets): nothing kept, the app opens all the same and starts or
+        # No inbox answers (or one refuses): nothing kept, the app opens all the same and starts or
         # shows the inbox's list itself.
         self.assertEqual(cli("--app", *target, home=Path(self._tmp.name) / "none"), (0, ""))
         self.assertTrue(record_to.exists())

@@ -3,16 +3,6 @@
 # and Git Bash on Windows (without Git Bash, its commands do nothing in PowerShell). The hook always exits 0: exit 2
 # would block the prompt or the stop. hooks.json execs this script, so $PPID is Claude Code.
 
-# shortcut: "monitor" is for a monitor a 0.4.0 plugin started (it declared one; the plugin has none since, as
-# Claude Code's /restart refuses while one runs), which may run this file after an update in place. One that ends
-# costs its session a model turn, so it sleeps, without Python, until Claude Code ($PPID) is gone; Git Bash has no
-# $PPID to look for, so on Windows until Claude Code stops it. Drop it in 0.6.
-if [ "$1" = monitor ]; then
-  while :; do
-    sleep 30
-    [ "$OS" = Windows_NT ] || kill -0 "$PPID" 2>/dev/null || exit 0
-  done
-fi
 # shortcut: the inbox needs Unix sockets, so it never runs on Windows and there is nothing to note: no Python starts
 # there. Drop these lines once the inbox runs on Windows.
 if [ "$OS" = Windows_NT ]; then

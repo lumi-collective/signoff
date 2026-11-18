@@ -326,8 +326,7 @@ func controlOpen(sock, offer string) (string, error) {
 var errNone = errors.New("no target waits for the app")
 
 // controlPending takes the app's pending target from the inbox (app_open): its start link, to that item in Focus or
-// to the list when it is gone. errNone when none waits, and from an inbox from before app targets (its answer is an
-// error): the app then does what it did before.
+// to the list when it is gone. errNone when none waits.
 func controlPending(sock string) (string, error) {
 	line, err := control(sock, map[string]string{"op": "app_open"})
 	if err != nil {
@@ -336,9 +335,6 @@ func controlPending(sock string) (string, error) {
 	var reply map[string]json.RawMessage
 	if json.Unmarshal(line, &reply) != nil {
 		return "", errors.New("the inbox gave no answer this app knows")
-	}
-	if _, old := reply["error"]; old {
-		return "", errNone
 	}
 	raw, ok := reply["link"]
 	if ok && string(raw) == "null" {

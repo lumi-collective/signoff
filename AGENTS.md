@@ -28,8 +28,7 @@ Instructions for coding agents working on Signoff. The README says what it does 
   `waiting.flag` is empty or absent, tested first. SessionStart has two groups: `startup` runs `hook.sh start` (on macOS with
   `/Applications/Signoff.app` or `~/Applications/Signoff.app` there, it first keeps the home's `launcher` link, see
   the hooks rule, in `sh`); `resume|clear|compact` runs `hook.sh session`. The plugin declares no monitor (Claude
-  Code's `/restart` refuses while one runs): `hook.sh monitor` only sleeps while its parent lives, without Python,
-  for a monitor a 0.4.0 plugin started (one that ends costs its session a model turn).
+  Code's `/restart` refuses while one runs).
 - `plugin/hooks/register.tsx`: the plugin's mod, the hooks module `hooks.json` names under `modules` (its test runs in
   CI on Claude Code's stable and latest channels). The band (`Signoff: N waiting`, Open, Hide),
   the toast, the status line entry, the hand-over of the inbox's requests (`$.prompt.submit`), the panel (the
@@ -108,17 +107,16 @@ Instructions for coding agents working on Signoff. The README says what it does 
   never ends it. `test_cli.py`'s `CliPlan` class covers `signoff plan`'s refusals, its files and their bytes, the
   rounds it closes and the runs that hold them, files left at the next number, `--resume` (only the fixed round,
   answers a run takes, no link), links at the topic folder, a create that meets a file, Ctrl+C, a forced waiter
-  with no inbox, and an older inbox (a stand-in and the real 0.4.0 one). `test_cli.py` runs a waiter, and a mark, against the real
-  0.4.0 inbox from `git show v0.4.0:` (skipped without the tag, as in a shallow clone), and its `WaiterVerdict`
+  with no inbox, and an older inbox (a stand-in). Its `WaiterVerdict`
   class steps the check poll by poll (rounds answered in the poll of the verdict, an inbox gone or started again
   between the looks); its `CliElsewhere` class covers `signoff elsewhere` in each of its writer's cases, the user's
   answer it never replaces, the note's checks and the hash before the rename. `test_inbox.py` covers the
   inbox in process: the `todo.md` reader and the `todo` key, the Markdown tree, routes, pairs, locks, the waiter it wakes, messages,
   the OSV section, the theme it keeps, the answer from a notification, the panel's rows and their targets, the
-  `elsewhere` op (its refusals, an old inbox, offer and rows with a mark, a round lock the command held), and
+  `elsewhere` op (its refusals, any other error, offer and rows with a mark, a round lock the command held), and
   `inbox open --app` with its app opener (`APP_OPEN`) swapped for a stand-in and its app folders (`APP_DIRS`)
   for temporary ones: no test runs the real `open` or finds an installed app.
-  `test_hooks.py` covers the hooks, the SessionStart hand-over, `inbox requests`, the monitor's sleeping stand-in,
+  `test_hooks.py` covers the hooks, the SessionStart hand-over, `inbox requests`,
   `inbox done` and `hook.sh`.
 - `examples/demo/`: synthetic decisions with mockups: `decisions.json` as one round, and the same questions as
   `round-01.json` to `round-04.json`, the source of the screenshots in the README and `docs/`; `boards/` holds a board.
@@ -286,8 +284,7 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   once, in any order; plain decimal numbers) asks for it, starting an inbox as `open` does (a new one has another
   number, so its link is the list's). The mod runs it for a row:
   an item's row opens that item, a round's row its `item`, All projects the plain `open`. A rows reply that lists
-  a round without `item`, or rounds without `inbox`, is another shape to the mod. An inbox from 0.3.0 ignores
-  the four keys and gives the list's link.
+  a round without `item`, or rounds without `inbox`, is another shape to the mod.
 - **A panel row for the app is kept in the inbox's memory, never in a URL.** `app_target` takes exactly `run`,
   `round`, `item` and `inbox` (the panel row rule's numbers, and no other key; else `{error}`) and answers
   `{ok: true}`: the inbox keeps that one target for the app, in memory only, the last one kept winning, for
@@ -305,7 +302,7 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   `app_open` (the link is dropped, never printed; it takes whatever target waits). Its check is stricter than the
   mod's (which follows a link and checks no owner), so a linked or another user's copy gets an App button whose
   press says the app did not open. With no inbox answering, or one
-  from before these ops, it opens the app all the same, which shows what it showed. It never starts an inbox.
+  that refuses the target (one stderr line), it opens the app all the same, which shows what it showed. It never starts an inbox.
   `signoff inbox open --app` with no target (macOS only; not with `--no-open`) finds the app the same way, asks a
   live inbox for `app_open` and drops the link (so a target an earlier press kept is not used; no inbox answering
   is ignored), keeps nothing, and runs the same `open -a`; the app then shows what it showed.
@@ -703,8 +700,7 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   them in (an inbox an older Signoff started refuses a round with a key it does not know, and locks nothing): one
   stderr line saying to restart the inbox and run the command again, and exit 1 with nothing on stdout. Any lock
   held (the inbox's, or another run's while the inbox shows the rounds read only), a file system that cannot
-  lock, or an inbox gone meanwhile: it waits as before. No look, no verdict, so a slow inbox only makes it later
-  (and an inbox from 0.3.0, which touches nothing, gets none).
+  lock, or an inbox gone meanwhile: it waits as before. No look, no verdict, so a slow inbox only makes it later.
   Every run and waiter writes `runs/<run>.json`
   (`schema, run, project, folder, rounds, mode, pid, started`; never a token or a link) at start and adds
   `ended` when it exits by itself, on Ctrl+C, SIGTERM or SIGHUP, with `exit`, its exit code (1 start link reused
@@ -839,8 +835,7 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   empty, `hook.sh clear` costs a session about what `hook.sh` costs with the inbox off (an `sh` start and a stat).
   The live gate: for the default homes, `hook.sh` runs `inbox hook` at SessionStart (every source; `hook.sh start`
   or `hook.sh session`) while `inbox.lock` is there, and at the other events only while the inbox is live:
-  `inbox.lock` touched within a minute (`find -mmin -1`; the inbox touches it every `STATE_EVERY` seconds, an inbox
-  from 0.3.0 never; a `find` that fails leaves the lock alone to decide), tested after `waiting.flag` for `clear`.
+  `inbox.lock` touched within a minute (`find -mmin -1`; the inbox touches it every `STATE_EVERY` seconds; a `find` that fails leaves the lock alone to decide), tested after `waiting.flag` for `clear`.
   Known limit: while the inbox is not live, those events write nothing, so a session file may be stale when an
   inbox starts (a wait that began or ended meanwhile, and `waiting.flag` with it) until the session's next event;
   a session that ended meanwhile is never marked `ended`, so only its pid tells, and a reused pid keeps it a live
@@ -903,14 +898,13 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   `open` with the offer into the main window (the item in Focus; the list when the inbox no longer has the offer).
   When the app comes up (its start, and a reopen: a Dock click or `open -a` while it runs), and only then, the
   main window first asks a live inbox for `app_open`; a link (checked as any start link) loads into it, before
-  the shown window's no-reload path, and none, an error reply (an inbox from before the op) or a failed ask leaves
+  the shown window's no-reload path, and none, an error reply or a failed ask leaves
   today's behaviour. The menu bar panel, its menu and a banner never take the target.
   The app never sends a choice. Quitting the app leaves the inbox running.
 - **stdout is answers paths and nothing else**, one per line, in tab order. Agents parse it. Messages go to
   stderr (`--notes` too: its notes print nothing on stdout, and each refusal or failure is one stderr line starting
   `signoff: notes:` that changes neither stdout nor the exit code). The exceptions: `signoff inbox home` prints the Signoff home (`inbox_home()`, never creating it),
-  `signoff inbox hook` prints nothing but the SessionStart hand-over, `signoff inbox monitor` (kept for a monitor
-  an older plugin started) prints nothing, `signoff inbox requests <folder> <project> <id>…` prints one JSON line, its
+  `signoff inbox hook` prints nothing but the SessionStart hand-over, `signoff inbox requests <folder> <project> <id>…` prints one JSON line, its
   reply, for the mod, and `signoff inbox rows <folder>` prints one JSON line, the `rows` reply (for a folder outside any
   project `{"rounds": [], "more": 0}`), for the mod. `signoff elsewhere` and `signoff inbox serve|open|stop|done`
   print nothing on stdout
@@ -931,7 +925,7 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   effort, see the security rules), every round already done, a round
   locked by another run, the start link used twice, a waiter whose rounds the running inbox did not take in (see
   the one writer rule), or a Python older than 3.9: one stderr line, from the first
-  lines of `main()`; `inbox hook` then exits 0 silently and `inbox monitor` sleeps while its parent lives; the
+  lines of `main()`; `inbox hook` then exits 0 silently; the
   file must keep compiling on 3.7 for that, which a test checks), 2 idle timeout (never for a waiter), 130 Ctrl+C,
   SIGTERM or SIGHUP (a run and a waiter, on macOS and Linux: they stop as on Ctrl+C; a signal ignored at start
   stays ignored; on Windows a stopped process gets no signal it can catch; `--history` and the `inbox` commands
@@ -945,14 +939,14 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   when `open -a` fails, else 0. `signoff inbox done <id>` exits 0 (also when marked before), or
   1 when there is no such request. `signoff inbox rows <folder>` exits 0 with its line (outside any project
   without asking an inbox, which need not run), or 1 with nothing on
-  stdout for a relative folder or home, when no inbox answers, or when the inbox answers without `rounds` (one
-  from before the op). `signoff inbox monitor` ends (0) only once its session is gone. `signoff inbox requests
+  stdout for a relative folder or home, when no inbox answers, or when the inbox answers without `rounds`.
+  `signoff inbox monitor` is no command any more: a usage error, exit 1. `signoff inbox requests
   <folder> <project> <id>…` exits 0 with its line (no requests folder: every id gone), or 1 with nothing on stdout
   for a relative folder or home, a folder whose project (`project_id(project_root(folder))`) is not that one, a
   project or id that is not 16 hex digits, no id, more than `MAX_HANDOVER`, or one given twice. `signoff elsewhere` exits 0
   when written or already marked with the same note, else 1 with one stderr line: a bad note, round or answers
   file, an unknown item, a done round, the user's own answer on the item, the round's lock held by a page run, an
-  inbox refusal or no answer, an inbox from before the op, a request shape the inbox refused, a lock file that
+  inbox refusal or no answer, any other error the inbox answers (such as a request shape it refused), a lock file that
   cannot be opened (not a file system without locks), a line too long for the control socket, a file that
   kept changing through three tries, or a write that failed (a file system that cannot lock adds a line to an
   exit 0). `signoff plan` exits as a waiter does (0 Done, 130 Ctrl+C, SIGTERM or SIGHUP; also 0 at once for a

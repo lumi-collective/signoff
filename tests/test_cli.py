@@ -887,69 +887,6 @@ class CliInbox(unittest.TestCase):
         finally:
             os.chmod(str(self.home / "runs"), 0o700)  # before tearDown removes the home
 
-    def real_0_4_0_inbox(self):
-        """0.4.0's own inbox, from git, started in this home: the one the user started before updating."""
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        old = Path(tmp.name)
-        for name in ("signoff.py", "page.html", "schema.json"):
-            try:
-                found = subprocess.run(["git", "-C", str(ROOT), "show", "v0.4.0:plugin/signoff/" + name],
-                                       stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=30)
-            except (OSError, subprocess.SubprocessError):
-                found = None
-            if found is None or found.returncode:
-                self.skipTest("needs git and the v0.4.0 tag (a shallow clone has neither)")
-            (old / name).write_bytes(found.stdout)
-        inbox = track(subprocess.Popen([sys.executable, "-I", "-B", str(old / "signoff.py"), "inbox", "serve"],
-                                       stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, universal_newlines=True,
-                                       encoding="utf-8", env=self.env))
-        deadline = time.monotonic() + 30
-        while not signoff.inbox_alive(self.home):
-            self.assertIsNone(inbox.poll(), "the 0.4.0 inbox did not start")
-            self.assertLess(time.monotonic(), deadline, "the 0.4.0 inbox did not start")
-            time.sleep(0.1)
-        return inbox
-
-    @unittest.skipIf(sys.platform == "win32", "the inbox does not run on Windows")
-    def test_a_waiter_on_a_real_0_4_0_inbox_that_refuses_its_round_exits_1(self):
-        # The inbox the user started before updating keeps running: 0.4.0's own code refuses `commands`.
-        data = json.loads(self.rounds.round(1).read_text(encoding="utf-8"))
-        data["items"][1]["commands"] = [{"text": "ls -l"}]
-        self.rounds.write(1, data)
-        inbox = self.real_0_4_0_inbox()
-        began = time.monotonic()
-        self.refused(self.start(), began)
-        signoff.inbox_request(self.home, "stop")
-        self.assertIn("unknown key 'commands'", inbox.communicate(timeout=20)[1])
-
-    @unittest.skipIf(sys.platform == "win32", "the inbox does not run on Windows")
-    def test_a_mark_on_a_round_a_real_0_4_0_inbox_holds_exits_1_and_writes_nothing(self):
-        # 0.4.0 takes the round in and holds its lock, but has no elsewhere op: it answers with an error.
-        inbox = self.real_0_4_0_inbox()
-        proc = self.start()
-        lock = self.rounds.path / "round-01.json.lock"
-
-        def free():
-            fd = signoff.try_lock(lock, create=False) if lock.exists() else -1
-            if fd is not None and fd >= 0:
-                signoff.unlock(fd)
-            return fd is not None
-        deadline = time.monotonic() + 30
-        while free():
-            self.assertIsNone(proc.poll(), "the waiter ended")
-            self.assertLess(time.monotonic(), deadline, "the 0.4.0 inbox did not take the round in")
-            time.sleep(0.2)
-        before = {p.name: p.read_bytes() for p in self.rounds.path.iterdir() if p.is_file()}
-        mark = subprocess.run([sys.executable, "-I", "-B", SCRIPT, "elsewhere", str(self.rounds.round(1)),
-                               "layout", "n"], capture_output=True, universal_newlines=True, encoding="utf-8",
-                              env=self.env, timeout=30)
-        self.assertEqual((mark.returncode, mark.stdout, mark.stderr.count("\n")), (1, "", 1), mark.stderr)
-        self.assertIn("signoff inbox stop, then signoff inbox open", mark.stderr)
-        self.assertEqual({p.name: p.read_bytes() for p in self.rounds.path.iterdir() if p.is_file()}, before)
-        signoff.inbox_request(self.home, "stop")
-        inbox.communicate(timeout=20)
-
     def test_the_lock_never_meets_a_lock_file_of_another_tool(self):
         # A decisions file named yarn.json sits beside yarn.lock: the round's lock is yarn.json.lock.
         yarn = self.rounds.path / "yarn.json"
@@ -1564,13 +1501,6 @@ class CliPlan(unittest.TestCase):
         self.live()
         CliInbox.looking(self)  # touches inbox.lock as an inbox's looks do, and locks no round
         self.older_inbox_refused(self.start(self.argv()))
-
-    @unittest.skipIf(sys.platform == "win32", "the inbox does not run on Windows")
-    def test_a_real_0_4_0_inbox_refuses_the_round_and_it_is_closed(self):
-        inbox = CliInbox.real_0_4_0_inbox(self)
-        self.older_inbox_refused(self.start(self.argv()))
-        signoff.inbox_request(self.home, "stop")
-        self.assertIn("unknown key", inbox.communicate(timeout=20)[1])
 
 
 def datetime_today():
@@ -2226,38 +2156,31 @@ class OldPython(unittest.TestCase):
     def guarded(self, argv):
         out, err = io.StringIO(), io.StringIO()
         with mock.patch.object(sys, "version_info", (3, 8, 20, "final", 0)), mock.patch.object(sys, "stdout", out), \
-                mock.patch.object(sys, "stderr", err), mock.patch.object(signoff, "_lives", return_value=False):
+                mock.patch.object(sys, "stderr", err):
             code = signoff.main(argv)
         return code, out.getvalue(), err.getvalue()
 
     def test_a_run_says_which_python_it_needs(self):
         for argv in (["somewhere"], ["--history", "."], ["inbox", "open"], ["inbox", "done", "0" * 16],
-                     ["elsewhere", "round-01.json", "q", "note"]):
+                     ["elsewhere", "round-01.json", "q", "note"], ["inbox", "monitor"]):
             self.assertEqual(self.guarded(argv), (1, "", "signoff: needs Python 3.9 or newer; this is Python 3.8\n"),
                              argv)
 
-    def test_the_hook_and_the_monitor_stay_silent(self):
-        # A hook always exits 0 and prints nothing. A monitor that ends costs its session a model turn, so it sleeps
-        # while Claude Code lives (here _lives says it is gone at once).
-        for argv in (["inbox", "hook"], ["inbox", "monitor"]):
-            self.assertEqual(self.guarded(argv), (0, "", ""), argv)
+    def test_the_hook_stays_silent(self):
+        # A hook always exits 0 and prints nothing.
+        self.assertEqual(self.guarded(["inbox", "hook"]), (0, "", ""))
 
-    def test_the_monitor_sleeps_while_its_session_lives(self):
-        with mock.patch.object(sys, "version_info", (3, 8, 20, "final", 0)), \
-                mock.patch.object(signoff, "_lives", side_effect=[True, False]), \
-                mock.patch.object(signoff.time, "sleep") as sleep:
-            self.assertEqual(signoff.main(["inbox", "monitor"]), 0)
-        sleep.assert_called_once_with(60)
-
-    def test_on_a_new_python_the_monitor_only_sleeps_too(self):
-        # The plugin has no monitor now; one a 0.4.0 plugin started may run this file after an update in place.
+    def test_monitor_is_a_usage_error(self):
+        # The plugin has no monitor: one an older plugin started that runs this file gets a usage error, as any
+        # unknown word does.
         out, err = io.StringIO(), io.StringIO()
         with mock.patch.object(sys, "stdout", out), mock.patch.object(sys, "stderr", err), \
-                mock.patch.object(signoff, "_lives", side_effect=[True, True, False]), \
-                mock.patch.object(signoff.time, "sleep") as sleep, \
                 mock.patch.object(signoff, "inbox_home", side_effect=AssertionError("looked at the home")):
-            self.assertEqual(signoff.main(["inbox", "monitor"]), 0)
-        self.assertEqual((sleep.call_count, out.getvalue(), err.getvalue()), (2, "", ""))
+            with self.assertRaises(SystemExit) as stop:
+                signoff.main(["inbox", "monitor"])
+        self.assertEqual((stop.exception.code, out.getvalue()), (1, ""))
+        self.assertTrue(err.getvalue().endswith("signoff: unrecognized arguments: monitor\n"), err.getvalue())
+        self.assertNotIn("Traceback", err.getvalue())
 
     def test_the_file_parses_as_python_3_7(self):
         # The guard speaks only if the old Python compiles the file first; 3.8 was also run by hand (NOTES).

@@ -3884,7 +3884,7 @@ def _app_path():
 def _inbox_open_app(target):
     """Keep a rows reply's numbers in the running inbox as the app's pending target, then open the macOS app found
     where the mod looks (_app_path): when it comes up it asks the inbox for that target's link (app_open). With no
-    inbox to keep it (none runs, or one from before app targets) the app opens all the same, on what it shows today.
+    inbox to keep it (none runs, or it refuses) the app opens all the same, on what it shows today.
     With no target (the panel's All projects row) it takes a waiting one back instead, so the app shows what it shows.
     Neither the command line nor the app's arguments ever hold a link."""
     if sys.platform != "darwin":
@@ -4058,7 +4058,7 @@ def _inbox_rows(cwd):
         except (OSError, AttributeError):  # AttributeError: no AF_UNIX
             print("signoff: no inbox is running", file=sys.stderr)
             return EXIT_ERROR
-        if not isinstance(reply.get("rounds"), list):  # an inbox from before rows: an error, said by its kind only
+        if not isinstance(reply.get("rounds"), list):  # an error, said by its kind only
             print("signoff: the running inbox does not list rows; restart it", file=sys.stderr)
             return EXIT_ERROR
     # Only these keys: a folder outside any project gets no inbox number, as no inbox was asked.
@@ -4147,8 +4147,8 @@ def _server_id(home):
 
 
 def _inbox_refused(rounds, home):
-    """Whether the live inbox shows none of these open rounds: it locks every round of a run it takes in (0.4.0 did
-    too), and a round it refuses (one from before a key the round uses) gets no lock. Any lock held, a file system
+    """Whether the live inbox shows none of these open rounds: it locks every round of a run it takes in, and a
+    round it refuses (one from before a key the round uses) gets no lock. Any lock held, a file system
     that cannot lock, or an inbox gone since: no, as the waiter then waits as before."""
     for r in rounds:
         try:
@@ -4391,12 +4391,6 @@ def _handover(home, project):
     return [HANDOVER_HEAD] + lines if lines else []
 
 
-def _lives(parent):
-    """Whether the process that started this one is still there: an orphan's parent becomes init or a subreaper.
-    On Windows a parent's pid stays, so this stays true there."""
-    return os.getppid() == parent != 1
-
-
 def _inbox_requests(args):
     """`signoff inbox requests <folder> <project> <id>…`: the lines the mod hands its session for the requests it
     found new, as one JSON line. Each pending one's line as request_line() builds it, oldest first, within
@@ -4551,12 +4545,8 @@ def _mark_by_inbox(home, r, item_id, note, say):
             continue
         if why in MARK_REFUSALS:
             return say(_mark_refusal(why, r, item_id))
-        if isinstance(why, str) and why.startswith("unknown request"):  # every inbox before the op says so
-            return say("the Signoff inbox that is running is older than this Signoff and cannot mark an item; nothing "
-                       "was written. Restart it (signoff inbox stop, then signoff inbox open) and run the same "
-                       "command again")
-        # A current inbox that refused the request's shape: on an older Python it may not know a character this one
-        # does, so its note check refuses what this one let through.
+        # Any other error, such as the request's shape refused: on an older Python the inbox may not know a character
+        # this one does, so its note check refuses what this one let through.
         return say("the Signoff inbox refused the request (%s); nothing was written. Its Python may know fewer "
                    "characters than this one: use plainer characters in the note"
                    % _one_line(str(why), MAX_OFFER_TEXT))
@@ -4827,13 +4817,6 @@ def main(argv=None):
             if hasattr(stream, "reconfigure"):
                 stream.reconfigure(encoding="utf-8")
     argv = sys.argv[1:] if argv is None else argv
-    # shortcut: the plugin declares no monitor since 0.5.0, but one a 0.4.0 plugin started may run this file after an
-    # update in place; one that ends costs its session a model turn, so it sleeps with its session. Drop it in 0.6.
-    if argv == ["inbox", "monitor"]:
-        parent = os.getppid()
-        while _lives(parent):
-            time.sleep(60)
-        return EXIT_DONE
     if sys.version_info < (3, 9):  # the file still compiles on 3.7, so this line can speak (test_cli.OldPython)
         if argv != ["inbox", "hook"]:  # a hook always exits 0 and prints nothing
             print("signoff: needs Python 3.9 or newer; this is Python %d.%d" % sys.version_info[:2], file=sys.stderr)

@@ -884,33 +884,19 @@ class HookFastPath(unittest.TestCase):
         s = json.loads((platform_home / "sessions" / "s-1.json").read_text(encoding="utf-8"))
         self.assertEqual(s["state"], "working")
 
-    def monitor(self, env, command=None):
-        """Start the monitor through sh as given (default: hook.sh monitor). Whether it still runs after a while,
-        and what it printed. A monitor that exits costs its session a model turn."""
-        p = subprocess.Popen(command or ["/bin/sh", str(HOOK_SH), "monitor"], stdin=subprocess.DEVNULL,
-                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, start_new_session=True)
-        time.sleep(1.5)
-        running = p.poll() is None
-        try:
-            os.killpg(p.pid, 9)  # its sleep too, which holds the pipes
-        except ProcessLookupError:
-            pass
-        out, err = p.communicate(timeout=10)
-        return running, out, err
-
-    def test_the_monitor_only_sleeps_without_python(self):
-        # A monitor a 0.4.0 plugin started runs this hook.sh after an update in place: it never reaches Python now,
-        # whether the inbox is off, live, or set by the test variable, nor on Windows.
+    def test_monitor_is_no_word_of_its_own(self):
+        # The plugin declares no monitor. A monitor an older plugin started that runs this file gets what the bare
+        # hook gets: exit 0 at once, nothing printed, and Python only while the inbox lives (not on Windows).
         elsewhere = self.tmp / "elsewhere"
         elsewhere.mkdir()
         (elsewhere / "inbox.lock").write_bytes(b"")
         path = str(self.bin) + os.pathsep + "/bin"
         self.uname("Darwin")
-        for env in (lambda: self.env(PATH=path), lambda: self.lock("Darwin", "darwin", 0),
-                    lambda: self.env(PATH=path, SIGNOFF_INBOX_HOME=str(elsewhere)),
-                    lambda: self.env(PATH=path, OS="Windows_NT", SIGNOFF_INBOX_HOME=str(elsewhere))):
-            running, out, err = self.monitor(env())  # the default home's lock only from the second case on
-            self.assertEqual((running, out, self.mark.exists()), (True, b"", False), err)
+        self.assertFalse(self.started(self.env(PATH=path), "monitor"))
+        self.assertFalse(self.started(self.env(PATH=path, OS="Windows_NT", SIGNOFF_INBOX_HOME=str(elsewhere)),
+                                      "monitor"))
+        self.assertTrue(self.started(self.env(PATH=path, SIGNOFF_INBOX_HOME=str(elsewhere)), "monitor"))
+        self.assertTrue(self.started(self.lock("Darwin", "darwin", 0), "monitor"))
 
     def lock(self, system, platform, age):
         """The default home's inbox.lock, its time `age` seconds ago (a live inbox touches it every 2 s), with the
@@ -944,40 +930,6 @@ class HookFastPath(unittest.TestCase):
         env = self.lock("Darwin", "darwin", 600)
         (self.bin / "find").unlink()
         self.assertTrue(self.started(dict(env, PATH=str(self.bin))))  # /bin has find where /bin is /usr/bin
-
-    def test_the_sleeping_monitor_ends_with_its_session(self):
-        env = self.lock("Darwin", "darwin", 0)  # a live inbox, which once made it Python
-        (self.bin / "sleep").write_text("#!/bin/sh\nexec /bin/sleep 0.1\n")  # a fast loop, so the test is short
-        (self.bin / "sleep").chmod(0o755)
-        # The session lives for a second, so the monitor's sh starts with it as its parent (dash reads $PPID then).
-        p = subprocess.run(["/bin/sh", "-c", '/bin/sh "$0" monitor >/dev/null 2>&1 </dev/null & echo $!; /bin/sleep 1',
-                            str(HOOK_SH)], capture_output=True, env=env, timeout=30)
-        pid, deadline = int(p.stdout), time.monotonic() + 10
-        while True:
-            try:
-                os.kill(pid, 0)
-            except OSError:
-                break
-            if time.monotonic() > deadline:
-                os.kill(pid, 9)
-                self.fail("the sleeping monitor outlived its session")
-            time.sleep(0.2)
-        self.assertFalse(self.mark.exists())
-
-    def test_a_0_4_0_monitor_command_never_exits_while_the_session_lives(self):
-        # The command of the monitor 0.4.0 declared (monitors/monitors.json, gone since): a session started before
-        # an update in place runs it against this plugin folder until it ends.
-        command = ('echo `# >$null <#` >/dev/null; f="${CLAUDE_PLUGIN_ROOT}"/hooks/hook.sh; [ -r "$f" ] && exec sh "$f" '
-                   'monitor; while [ "$OS" = Windows_NT ] || kill -0 $PPID 2>/dev/null; do sleep 60; done #>; '
-                   'while (1) { sleep 60 }')
-        self.uname("Darwin")
-        empty = self.tmp / "no-plugin"
-        empty.mkdir()
-        for root in (str(ROOT / "plugin"), str(empty), ""):  # a plugin folder gone must not exit either
-            # Claude Code puts the plugin's folder into a monitor's command; it is not in the environment.
-            running, out, err = self.monitor(self.env(PATH=str(self.bin) + os.pathsep + "/bin"),
-                                             ["/bin/sh", "-c", command.replace("${CLAUDE_PLUGIN_ROOT}", root)])
-            self.assertEqual((running, out, self.mark.exists()), (True, b"", False), (root, err))
 
 
 @unittest.skipIf(sys.platform == "win32", "the sh launcher is tested on POSIX")
