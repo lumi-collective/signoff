@@ -1293,6 +1293,7 @@ NOT_DIFFS = ["--- a/x\n+++ b/x\n@@ -1,3 +1,3 @@\n a\n-b\n+c\n", "--- a/x\n+++ b/
 # Two diff -u outputs back to back, with no diff line between: the --- line after a full hunk starts the next file.
 CONCAT_DIFF = "--- a\n+++ b\n@@ -1 +1 @@\n-a\n+b\n--- c\n+++ d\n@@ -1 +1 @@\n-x\n+y\n"
 CONCAT_CLASSES = ["file", "file", "hunk", "del", "add"] * 2
+FAR_DIFF = "--- a/lock\n+++ b/lock\n@@ -123456,3 +123456,3 @@\n a\n-b\n+c\n d\n"  # six-digit numbers, as in a lockfile
 # git format-patch output: a mail head, a diffstat, two files and the "-- " trailer. It is a diff, and its blank lines
 # outside a hunk keep their height.
 MAIL_PATCH = ("From 0000000 Mon Sep 17 00:00:00 2001\nSubject: [PATCH] Skip empty exports\n\n---\n export.py | 2 +-\n"
@@ -1337,7 +1338,8 @@ def run_attachment(work):
     for name, body in (("change.diff", DIFF_TEXT), ("plain.patch", PLAIN_PATCH), ("rule.txt", rule["text"]),
                        ("big.diff", BIG_DIFF), ("over.diff", NOT_DIFFS[0]), ("stray.diff", NOT_DIFFS[1]),
                        ("under.diff", NOT_DIFFS[2]), ("mail.patch", MAIL_PATCH), ("long.txt", LONG_TEXT),
-                       ("stray-end.diff", NOT_DIFFS[3]), ("eof.diff", NOT_DIFFS[4]), ("concat.diff", CONCAT_DIFF)):
+                       ("stray-end.diff", NOT_DIFFS[3]), ("eof.diff", NOT_DIFFS[4]), ("concat.diff", CONCAT_DIFF),
+                       ("far.diff", FAR_DIFF)):
         (topic / "notes" / name).write_bytes(body.encode("utf-8"))
     check((topic / "notes" / "big.diff").stat().st_size <= 256 * 1024, "the big diff must stay within the limit")
     data = json.loads((DEMO / "round-03.json").read_text(encoding="utf-8"))
@@ -1349,7 +1351,7 @@ def run_attachment(work):
                                           {"src": "notes/big.diff", "caption": "Everything"}]
                           + [{"src": "notes/" + name, "open": True}
                              for name in ("over.diff", "stray.diff", "under.diff", "mail.patch", "long.txt",
-                                          "stray-end.diff", "eof.diff", "concat.diff")]})
+                                          "stray-end.diff", "eof.diff", "concat.diff", "far.diff")]})
     target = topic / "decisions.json"
     target.write_text(json.dumps(data), encoding="utf-8")
     item = data["items"][0]
@@ -1378,7 +1380,8 @@ def run_attachment(work):
         boxes = '[data-item="change"] details.attach'
         shown = wait_for("the open boxes' rows", lambda: (lambda b: b[-1]["high"] is not None and b)(
             browser.js(ATTACH_BOXES % json.dumps(boxes))))
-        diff, plain, ruled, big, over, stray, under, mail, long_, stray_end, eof, concat = shown
+        diff, plain, ruled, big, over, stray, under, mail, long_, stray_end, eof, concat, far = shown
+        check([r[2] for r in far["rows"]][3:] == ["123456", "123457", "", "123458"], "a far hunk's numbers: %r" % far)
         check(not diff["open"] and diff["rows"] is None and not ruled["open"] and ruled["rows"] is None
               and big["rows"] is None, "a closed box should have no rows until it opens: %r" % [diff, ruled, big])
         for got, want in ((plain, PLAIN_PATCH), (over, NOT_DIFFS[0]), (stray, NOT_DIFFS[1]), (under, NOT_DIFFS[2]),
@@ -1407,6 +1410,12 @@ def run_attachment(work):
             head = browser.js("document.querySelectorAll(%s)[7].querySelector('[role=table] > [role=row]').offsetHeight"
                               % json.dumps(boxes))
             check(head == 0, "at %d px the hidden column names should take no height: %r" % (width, head))
+            # Six-digit numbers beside the file's own line stay on one line: a wrapped number reads as a row.
+            far_high = browser.js("Array.prototype.map.call(document.querySelectorAll(%s)[12].querySelectorAll("
+                                  "'[role=rowgroup] > [role=row]:not(.hunk)'), function (r) { return r.offsetHeight; })"
+                                  % json.dumps(boxes))  # the hunk line's own text may wrap at 400 px
+            check(len(far_high) == 6 and max(far_high) < 25, "at %d px each row of a far hunk should be one line: %r"
+                  % (width, far_high))
         browser.click(boxes + ":nth-of-type(1) > summary")
         diff = browser.js(ATTACH_BOXES % json.dumps(boxes))[0]
         # Its item takes line notes: each row leads with its line in the file, the number a note anchors on.
@@ -1466,6 +1475,9 @@ def run_attachment(work):
               "a key and a click should be answered while the rows draw: %r" % s)
         big = browser.js(ATTACH_BOXES % json.dumps(boxes))[3]
         check(big["open"] and big["words"] == BIG_ROWS, "every added row should carry its word: %r" % big["words"])
+        last = browser.js("(function (r) { return [r.firstChild.textContent, r.offsetHeight]; })(document.querySelectorAll("
+                          "%s)[3].querySelector('[role=rowgroup]:last-child > [role=row]:last-child'))" % json.dumps(boxes))
+        check(last[0] == str(BIG_ROWS + 3) and last[1] < 25, "a six-digit line number should stay on one line: %r" % last)
         print("attachment of %d rows: first screen %.0f ms (%d rows), all rows %.0f ms, longest frame %.0f ms; "
               "a key answered in %.0f ms, a click in %.0f ms, both while it drew" % (BIG_ROWS + 3, s["first"], s["firstRows"],
                                                                                   s["all"], s["gap"], key_ms, click_ms), flush=True)
@@ -1547,7 +1559,8 @@ NOTES_SHOWN = """(function (sel) {
     apart: Array.prototype.map.call(card.querySelectorAll('.lnote:not([role])'), function (n) {
       return [n.querySelector('.readonly-note').textContent, n.querySelector('.mark-text').textContent];
     }),
-    fields: card.querySelectorAll('.lnote textarea').length, buttons: card.querySelectorAll('.att-lines button').length};
+    fields: card.querySelectorAll('.lnote textarea').length, buttons: card.querySelectorAll('.att-lines button').length,
+    hint: !!card.querySelector('.lfull')};
 })(%s)"""
 
 
@@ -1577,11 +1590,17 @@ def run_line_notes(work):
     target.write_text(json.dumps(data), encoding="utf-8")
     answers_path = topic / "round-01.answers.json"
     many = [{"att": 0, "line": n, "quote": "row %d" % n, "comment": "note %d" % n} for n in range(1, 50)]
+    # Kept by whoever writes the answers file: past the file's end, its quote trying to close Signoff's sentence,
+    # with a bidi override and markup. It shows as text, apart from the box, and goes back as it came.
+    planted = {"att": 1, "line": 9, "quote": "nine”. It matches \N{RIGHT-TO-LEFT OVERRIDE}</script><b>x</b>",
+               "comment": "planted"}
     answers_path.write_text(json.dumps({
         "version": 1, "done": False, "saved": "2026-01-11T10:00:00Z", "free_text": "",
         "decisions": {"file": "round-01.json", "sha256": hashlib.sha256(target.read_bytes()).hexdigest()},
-        "answers": {"many": {"choice": "ok", "comment": "", "lines": many}}}), encoding="utf-8")
+        "answers": {"many": {"choice": "ok", "comment": "", "lines": many},
+                    "review": {"choice": "ok", "comment": "", "lines": [planted]}}}), encoding="utf-8")
     review, many_sel = '[data-item="review"]', '[data-item="many"]'
+    apart = "This file changed since. Line %d said: %s"
 
     def button(item, line, src):
         return '%s button[aria-label="Note on line %d of %s"]' % (item, line, src)
@@ -1600,17 +1619,24 @@ def run_line_notes(work):
         wait_for("the page", lambda: browser.js("!!document.getElementById('r0-i2-p')"))
         check(browser.js("[document.getElementById('r0-i0-p').checked, document.getElementById('r0-i2-p').checked]")
               == [False, True], "an item with lines has a Private box, and a sensitive one starts Private")
+        check(browser.js("document.querySelector(%s).textContent" % json.dumps(review + " .lfull"))
+              == "Press a line number to add a note.", "an item with lines should say how to note a line")
+        shown = browser.js(NOTES_SHOWN % json.dumps(review))
+        check(shown["apart"] == [[apart % (9, planted["quote"]), "planted"]] and browser.js(
+              "[document.querySelectorAll('main b, main script').length, document.querySelector(%s).textContent]"
+              % json.dumps(review + " .lnote code")) == [0, planted["quote"]],
+              "a planted note should show apart, its quote as text in an element of its own: %r" % shown["apart"])
         # 49 notes saved before: restored under their lines in a box opened for them. The 50th opens, the 51st is refused.
         shown = wait_for("the restored notes", lambda: (lambda s: len(s["under"]) == 49 and s)(
             browser.js(NOTES_SHOWN % json.dumps(many_sel))))
         check(shown["under"] == [[str(n), "note %d" % n] for n in range(1, 50)], "the 49 notes under their lines: %r"
               % shown["under"][:3])
         browser.click(button(many_sel, 50, "notes/many.txt"))
-        browser.call("Input.insertText", text="fifty")
-        full = browser.js("(function () { var c = document.querySelector(%s); return [c.querySelector('.lfull').hidden, "
+        browser.call("Input.insertText", text="fiftieth")
+        full = browser.js("(function () { var c = document.querySelector(%s); return [c.querySelector('.lfull').textContent, "
                           "Array.prototype.filter.call(c.querySelectorAll('.att-lines button'), function (b) { "
                           "return b.disabled; }).length]; })()" % json.dumps(many_sel))
-        check(full == [False, 10], "past 50 notes the free lines' buttons should be off, with the reason: %r" % full)
+        check(full == ["At most 50 line notes on an item.", 10], "past 50 notes the free lines' buttons should be off, with the reason: %r" % full)
         browser.click(button(many_sel, 51, "notes/many.txt"))
         browser.click(button(many_sel, 3, "notes/many.txt"))  # a noted line still takes a press: its field
         check(browser.js("document.activeElement.value") == "note 3"
@@ -1654,21 +1680,22 @@ def run_line_notes(work):
         browser.click("#r0-i0-p")
         summary = browser.js("(function () { var s = document.getElementById('summary-rows'); return [s.textContent, "
                              "s.querySelectorAll('.summary-private').length]; })()")
-        check("Why not raise" not in summary[0] and "rule 6" not in summary[0] and summary[1] == 8
-              and "Note on line 50 of notes/many.txt: fifty" in summary[0],
+        check("Why not raise" not in summary[0] and "planted" not in summary[0] and summary[1] == 9
+              and "Note on line 50 of notes/many.txt: fiftieth" in summary[0],
               "Private should hide the notes in the Summary: %r" % summary)
         want = [(0, 8, DIFF_ROWS[7][3][:1] + DIFF_ROWS[7][4], "Why not raise?fj"), (1, 2, "two", "two note"),
                 (1, 3, "three", "three note")] + [(2, n, rule["quotes"][n - 1], "rule %d" % n) for n in (1, 2, 3, 5, 6)]
         want = [dict(zip(("att", "line", "quote", "comment"), w)) for w in want]
+        want.insert(3, planted)  # after (1, 3): the list goes out in attachment and line order
         got = wait_for("the notes saved", lambda: (lambda a: a.get("review", {}).get("lines") == want and a)(saved()))
         check(got["review"].get("private") is True and len(got["many"]["lines"]) == 50
-              and got["many"]["lines"][-1]["comment"] == "fifty", "Private and the 50th note saved: %r" % got["many"]["lines"][-1])
+              and got["many"]["lines"][-1]["comment"] == "fiftieth", "Private and the 50th note saved: %r" % got["many"]["lines"][-1])
 
         browser.call("Page.reload")
         shown = wait_for("the notes after a reload", lambda: (lambda s: len(s["under"]) == 8 and s)(
             browser.js(NOTES_SHOWN % json.dumps(review))))
-        check(shown["under"] == [[str(w["line"]), w["comment"]] for w in want] and shown["apart"] == []
-              and browser.js("document.getElementById('r0-i0-p').checked"), "a reload should restore them: %r" % shown)
+        check(shown["under"] == [[str(w["line"]), w["comment"]] for w in want if w is not planted]
+              and shown["apart"] == [[apart % (9, planted["quote"]), "planted"]] and browser.js("document.getElementById('r0-i0-p').checked"), "a reload should restore them: %r" % shown)
     except E2EError:
         sys.stderr.write("--- Signoff stderr ---\n" + "".join(err))
         raise
@@ -1680,35 +1707,40 @@ def run_line_notes(work):
     (topic / "notes" / "todo.txt").write_bytes(b"one\nTWO changed\n")
     server, out, err, browser = serve(target, str(work / "profile-notes-2"))
     try:
-        shown = wait_for("the changed file's notes", lambda: (lambda s: len(s["apart"]) == 2 and s)(
+        shown = wait_for("the changed file's notes", lambda: (lambda s: len(s["apart"]) == 3 and s)(
             browser.js(NOTES_SHOWN % json.dumps(review))))
-        check(shown["apart"] == [["This file changed since: line 2 said “two”", "two note"],
-                                 ["This file changed since: line 3 said “three”", "three note"]]
+        check(shown["apart"] == [[apart % (2, "two"), "two note"], [apart % (3, "three"), "three note"],
+                                 [apart % (9, planted["quote"]), "planted"]]
               and [u[0] for u in shown["under"]] == ["8", "1", "2", "3", "5", "6"], "notes on a changed file: %r" % shown)
+        # A line whose saved note went stale takes a new note; both go out, the old one as it came.
+        browser.click(review + " details.attach:nth-of-type(2) > summary")
+        note(2, "notes/todo.txt", "new two")
+        want.insert(2, {"att": 1, "line": 2, "quote": "TWO changed", "comment": "new two"})
         browser.click(review + " details.attach:nth-of-type(1) .lnote textarea")
         browser.js("(function (t) { t.setSelectionRange(t.value.length, t.value.length); })(document.activeElement)")
         browser.call("Input.insertText", text=" Fine.")
         want[0]["comment"] += " Fine."
         wait_for("a save past the changed file", lambda: saved()["review"]["lines"] == want)
         # Remove: a changed file's note (focus to its item), then one under its line (focus to the number).
-        browser.click(review + " .lnote:not([role]) button")
+        browser.click(review + ' .lnote:not([role]) [aria-label="Remove: Note on line 3 of notes/todo.txt"]')
         check(browser.js("[document.querySelectorAll(%s).length, document.activeElement.dataset.item]"
-                         % json.dumps(review + " .lnote:not([role])")) == [1, "review"],
+                         % json.dumps(review + " .lnote:not([role])")) == [2, "review"],
               "Remove should drop a changed file's note and leave focus on its item")
         browser.click(review + ' .lnote [aria-label="Remove: Note on line 1 of notes/rule.txt"]')
         check(browser.js("document.activeElement.getAttribute('aria-label')") == "Note on line 1 of notes/rule.txt",
               "Remove under a line should leave focus on its number")
-        want = [w for w in want if (w["att"], w["line"]) not in ((1, 2), (2, 1))]
+        want = [w for w in want if (w["att"], w["line"]) not in ((1, 3), (2, 1))]
         wait_for("the removals saved", lambda: saved()["review"]["lines"] == want)
         browser.click("#done")
         check(finished(server, out, err, [answers_path])[0]["answers"]["review"]["lines"] == want,
               "Done should keep the notes")
         # A box first opened after Done draws its numbers with nothing to press.
-        browser.click(review + " details.attach:nth-of-type(2) > summary")
+        later_box = '[data-item="secret"] details.attach'
+        browser.click(later_box + " > summary")
         rows = wait_for("the rows drawn after Done", lambda: browser.js(
-            "document.querySelectorAll(%s).length" % json.dumps(review + " details.attach:nth-of-type(2) [role=rowgroup] > [role=row]")))
-        check(rows == 2 and browser.js("document.querySelectorAll(%s).length" % json.dumps(
-            review + " details.attach:nth-of-type(2) button")) == 0, "after Done a box's numbers take no press")
+            "document.querySelectorAll(%s).length" % json.dumps(later_box + " [role=rowgroup] > [role=row]")))
+        check(rows == 2 and browser.js("document.querySelectorAll(%s).length" % json.dumps(later_box + " button")) == 0,
+              "after Done a box's numbers take no press")
     except E2EError:
         sys.stderr.write("--- Signoff stderr ---\n" + "".join(err))
         raise
@@ -1726,14 +1758,24 @@ def run_line_notes(work):
         try:
             if history:
                 wait_for("the list", lambda: browser.js("!!document.querySelector('#h-list li button, #h-list li a')"))
+                # The search finds a line note's words (not a Private item's: review's are hidden).
+                browser.click("#h-text")
+                for text, n in (("fiftieth", 1), ("planted", 0)):  # no title says "fiftieth"
+                    browser.js("document.getElementById('h-text').value = ''")
+                    browser.call("Input.insertText", text=text)
+                    found = browser.js("Array.prototype.filter.call(document.querySelectorAll('#h-list li'), "
+                                       "function (li) { return !li.hidden; }).length")
+                    check(found == n, "the past-decisions search for %r should find %d: %d" % (text, n, found))
+                browser.js("(function (h) { h.value = ''; h.dispatchEvent(new Event('input')); })(document.getElementById('h-text'))")
                 browser.js("document.querySelector('#h-list li button, #h-list li a').click()")
             else:
                 browser.click("#tab-0")
             sel = '.rp:not([hidden]) ' + review
-            shown = wait_for("the read-only notes", lambda: (lambda s: len(s["under"]) == 5 and s)(
+            shown = wait_for("the read-only notes", lambda: (lambda s: len(s["under"]) == 6 and s)(
                 browser.js(NOTES_SHOWN % json.dumps(sel))))
-            check(shown["fields"] == 0 and shown["buttons"] == 0 and len(shown["apart"]) == 1
-                  and [u[1] for u in shown["under"]] == [w["comment"] for w in want if w["att"] != 1],
+            check(shown["fields"] == 0 and shown["buttons"] == 0 and not shown["hint"] and len(shown["apart"]) == 2
+                  and [u[1] for u in shown["under"]] == [w["comment"] for w in want
+                                                         if w is not planted and w["quote"] != "two"],
                   "%s should show the notes with no button or field: %r" % ("--history" if history else "a done round", shown))
         except E2EError:
             sys.stderr.write("--- Signoff stderr ---\n" + "".join(err))
@@ -1741,6 +1783,49 @@ def run_line_notes(work):
         finally:
             kill(server)
             kill(browser.proc)
+
+    # One round's Done stored while the run goes on (the next round's refused): its numbers and Remove buttons go
+    # off with its fields, and a box opened then draws numbers with nothing to press.
+    two = work / "2026-01-13-two-rounds"
+    (two / "notes").mkdir(parents=True)
+    (two / "notes" / "a.txt").write_text("one\ntwo\n", encoding="utf-8")
+    look = dict(pick, id="look", title="Look at a", lines=True, attachments=[{"src": "notes/a.txt"}, {"src": "notes/a.txt"}])
+    for n in (1, 2):
+        (two / ("round-0%d.json" % n)).write_text(json.dumps({"version": 1, "title": "Round %d" % n, "items": [look]}),
+                                                  encoding="utf-8")
+    (two / "round-01.answers.json").write_text(json.dumps({
+        "version": 1, "done": False, "saved": "2026-01-13T10:00:00Z", "free_text": "",
+        "decisions": {"file": "round-01.json", "sha256": hashlib.sha256((two / "round-01.json").read_bytes()).hexdigest()},
+        "answers": {"look": {"choice": "ok", "comment": "", "lines": [{"att": 0, "line": 1, "quote": "one",
+                                                                      "comment": "kept"}]}}}), encoding="utf-8")
+    server, out, err, browser = serve(two, str(work / "profile-notes-two"))
+    try:
+        wait_for("round 1's note", lambda: browser.js("!!document.querySelector('#panel-0 .lnote textarea')"))
+        browser.click("#accept-0")
+        wait_for("round 2", lambda: browser.js("!document.getElementById('panel-1').hidden"))
+        browser.click("#accept-1")
+        wait_for("Done to be ready", lambda: browser.js("!document.getElementById('done').disabled"))
+        # The server refuses round 2's Done, as it would a file changed on disk; round 1's is stored.
+        browser.js("(function (f) { window.fetch = function (u, o) { return u === 'save/1' && JSON.parse(o.body).done "
+                   "? Promise.resolve(new Response('{}', {status: 409})) : f.apply(this, arguments); }; })(window.fetch)")
+        browser.click("#done")
+        wait_for("round 1 done", lambda: json.loads((two / "round-01.answers.json").read_text(encoding="utf-8"))["done"])
+        off = wait_for("round 1's buttons off", lambda: (lambda s: s[0] and s)(browser.js(
+            "[document.querySelector('#panel-0 [data-line]').disabled, "
+            "document.querySelector('#panel-0 .lnote button').disabled, document.getElementById('done').disabled]")))
+        check(off == [True, True, False], "a round closed by its Done should take its buttons out: %r" % off)
+        browser.click("#tab-0")
+        browser.click("#panel-0 details.attach:nth-of-type(2) > summary")
+        rows = wait_for("the rows drawn after round 1's Done", lambda: browser.js(
+            "document.querySelectorAll('#panel-0 details.attach:nth-of-type(2) [role=rowgroup] > [role=row]').length"))
+        check(rows == 2 and browser.js("document.querySelectorAll('#panel-0 details.attach:nth-of-type(2) button').length")
+              == 0, "a box opened in a round closed by its Done should have nothing to press")
+    except E2EError:
+        sys.stderr.write("--- Signoff stderr ---\n" + "".join(err))
+        raise
+    finally:
+        kill(server)
+        kill(browser.proc)
 
 
 COMMANDS = [{"text": "rm -rf build && make docs\n  echo '<b>done</b>'", "lang": "bash", "caption": "Rebuild the docs"},

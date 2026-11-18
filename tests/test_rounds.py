@@ -872,12 +872,18 @@ class Page(unittest.TestCase):
         self.assertIn(".replace(/[\\r\\v\\f\\x85\\u{2028}\\u{2029}]/gu, '↵')", self.page)
         labels = self.page[self.page.index("var LABELS = {"):self.page.index("var data = JSON.parse")]
         en, hu = labels[:labels.index("hu: {")], labels[labels.index("hu: {"):]
+        # The changed-since line takes no quote: the quote is an element of its own, so a planted one cannot
+        # finish Signoff's sentence.
         self.assertTrue(en.rstrip().endswith("lnNote: 'Note on line {n} of {f}', lnFull: 'At most 50 line notes on an "
-                                             "item.', lnStale: 'This file changed since: "
-                                             "line {n} said “{q}”'},"), en[-300:])
+                                             "item.', lnStale: 'This file changed since. Line {n} said:',\n"
+                                             "      lnHint: 'Press a line number to add a note.'},"), en[-300:])
         self.assertTrue(hu.rstrip().endswith("lnNote: 'Megjegyzés: {f}, {n}. sor', lnFull: 'Egy tételen legfeljebb 50 "
-                                             "sor-megjegyzés lehet.', lnStale: 'A fájl azóta "
-                                             "változott: a {n}. sor ez volt: „{q}”'}\n  };"), hu[-300:])
+                                             "sor-megjegyzés lehet.', lnStale: 'A fájl azóta változott. A {n}. sor "
+                                             "ez volt:',\n      lnHint: 'Egy sorszámot megnyomva megjegyzést írhatsz "
+                                             "a sorhoz.'}\n  };"), hu[-300:])
+        self.assertIn("was.append(' ', el('code', '', vis(x.quote)));", self.page)
+        # A round closed by Done while the run goes on takes its numbers and Remove buttons out with its fields.
+        self.assertIn("querySelectorAll('input, textarea, .mark-tools button, .mark-row button, .n button')", self.page)
 
 
 if __name__ == "__main__":

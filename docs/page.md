@@ -68,19 +68,21 @@
   than its `@@` counts or a stray line inside, or when a `+`, `-` or space line comes straight after a full hunk or
   its `\ No newline` line (a line starting with `+++ `, `--- ` or `-- ` aside). A line is what the answers file
   counts as one: the text split at each line feed. A carriage return, vertical tab, form feed, next line (U+0085), line
-  or paragraph separator inside a line shows as `↵`, so each row is one line. The rows are drawn when the box first opens (an open box: when its
+  or paragraph separator inside a line shows as `↵`, so you can see it, and a line's number never wraps. The rows are drawn when the box first opens (an open box: when its
   round is first shown), the first screen at once and the rest after it, so even a 256 KiB file leaves the page
   answering.
 - **Line notes.** On an item whose lines take notes (`lines`), each row of its attachments leads with the line's
-  number in the file (in a diff, before the old and new numbers, which come from the diff's own headers). Press it
-  (Tab to it, then Enter or Space) and a field opens under that line, with **Remove**; a second press goes back to
-  the field, and Esc in the field goes back to the number. A field left empty saves nothing. An item takes up to 50
-  notes; past that the numbers of the other lines are off, with a line saying why. The notes save with the round,
-  each with the start of its line, and a box that holds one starts open. When the file has changed since a note was
-  saved (its line is gone, or no longer says what it did), the note shows under the box, read only, below "This
-  file changed since: line N said …", and goes back to the agent as it was; Remove drops it. **Private** covers the
-  notes, the Summary lists each under its item (file, line and comment), and a done round and the past-decisions
-  page show them without the numbers to press or the fields.
+  number in the file (in a diff, before the old and new numbers, which come from the diff's own headers); a line
+  above the attachments says so. Press it (Tab to it, then Enter or Space) and a field opens under that line, with
+  **Remove**; a second press goes back to the field, and Esc in the field goes back to the number. A field left
+  empty saves nothing. An item takes up to 50 notes; past that the numbers of the other lines are off, and the line
+  above the attachments says why. The notes save with the round, each with its line's first 300 characters, and a
+  box that holds one starts open. When the file has changed since a note was saved (its line is gone, or its first
+  300 characters are no longer the same), the note shows under the box, read only, below "This file changed since.
+  Line N said:" and the saved text, and goes back to the agent as it was; Remove drops it, and the line's number
+  takes a new note. **Private** covers the notes, the Summary lists each under its item (file, line and comment),
+  the past-decisions search finds their comments, and a done round and the past-decisions page show them without
+  the numbers to press or the fields.
 - **Commands.** A command the agent asks you to run before you decide shows under the item's text as a code
   block, as in the inbox: its language, a **Copy** button that copies it exactly, and a hint under one that
   deletes with a relative path, whatever its language. A long line wraps, a command is at most 4000 characters
