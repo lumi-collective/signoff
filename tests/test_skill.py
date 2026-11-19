@@ -74,8 +74,8 @@ class SkillTest(unittest.TestCase):
         skill = " ".join((SKILL / "SKILL.md").read_text(encoding="utf-8").split())
         self.assertIn("`attachments`, `lines`, `commands`", skill)
         fields = " ".join((SKILL / "fields.md").read_text(encoding="utf-8").split())
-        for words in ("`.diff`", "`.patch`", '"open": true', '"lines": true'):
-            self.assertIn(words, fields)
+        for words in ("`.diff`", "`.patch`", '"open": true', '"lines": true', "`git diff >", "never typed out"):
+            self.assertIn(words, fields)  # the shell writes the diff: a typed one costs tokens and can drift
         answers = " ".join((SKILL / "answers.md").read_text(encoding="utf-8").split())
         for words in ("`lines`", "`att`", "`quote`"):
             self.assertIn(words, answers)
