@@ -3648,7 +3648,7 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
       return words.filter(Boolean);
     }
     var choose = function (ri) {
-      Array.prototype.forEach.call(panels.children, function (p) { showPanel(p, false); });
+      Array.prototype.forEach.call(panels.children, function (p) { if (p.id !== 'panel-' + ri) showPanel(p, false); });
       renderPanel(ri);
       showPanel(byId('panel-' + ri), true);
       items.forEach(function (b, i) { if (i === ri) b.setAttribute('aria-current', 'true'); else b.removeAttribute('aria-current'); });

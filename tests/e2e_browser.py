@@ -1867,6 +1867,16 @@ def run_line_notes(work):
                 again = wait_for("the notes drawn again", lambda: (lambda s: len(s["under"]) == 6 and s)(
                     browser.js(NOTES_SHOWN % json.dumps(sel))))
                 check(again == shown, "a past round shown again should draw its notes as before: %r" % again)
+                # The round shown, chosen again: its boxes stay as they are, scrolled where they were.
+                same = browser.js("""(function () {
+                  var all = Array.prototype.slice.call(document.querySelectorAll('.rp:not([hidden]) .att-lines'));
+                  var m = document.querySelector('.rp:not([hidden]) [data-item="many"] .att-lines');
+                  m.scrollTop = 200;
+                  var top = m.scrollTop;
+                  window.back.click();
+                  return [top > 0, all.every(function (e) { return e.isConnected; }), m.scrollTop === top];
+                })()""")
+                check(same == [True, True, True], "the past round shown, chosen again, should keep its boxes: %r" % same)
         except E2EError:
             sys.stderr.write("--- Signoff stderr ---\n" + "".join(err))
             raise
