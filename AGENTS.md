@@ -641,7 +641,9 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   tricks, not every one: the user reads a command before running it. The key bar holds the save state, why Done waits, and the open round's Accept this round; the header keeps
   the progress, Focus, Accept all recommendations and Done. The Summary is the sign-off sheet. f is Focus (one
   item at a time; the round's tail after its last item), Esc leaves it or closes the drawer (in a line note's field,
-  Esc first goes back to the line's number); a page loaded at
+  Esc first goes back to the line's number). A box's line numbers are one Tab stop (roving `tabIndex`, kept as a
+  line, never an element, and never on a disabled number; the box's table is then out of the Tab order): Up, Down,
+  Page Up, Page Down, Home and End move between the enabled ones, and the page's single keys wait there; a page loaded at
   760 px or less opens in Focus. A `#focus=<round>/<item>` hash opens that round's item in Focus; one that names
   no round and item of the page is ignored. The header's project line also says when the open round was asked
   (`opened` in each round of the page data: its round file's time, read with its hash at load, `null` when not
