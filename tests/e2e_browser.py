@@ -1599,27 +1599,17 @@ def run_open_rounds(work):
         # Drawn whole again, so a field kept from the page's notes would hold the whole box once it is left.
         wait_for("the third round's rows drawn again", lambda: browser.js(rows3) == 2 * feeds, timeout=180)
         browser.js("document.querySelector('#panel-2 .lnote button').click()")  # Remove line 1's note
-        # Round 3 left, its rows dropped: its notes still save, the typed one with them. End while round 2's rows
-        # draw stops at the last number drawn so far.
-        first2 = "document.querySelector('#panel-1 [data-line=\"1\"]')"
-        browser.js("document.querySelectorAll('[role=tab]')[1].click(); %s.focus()" % first2)
-        press(browser, "End", "End", 35)
-        check(browser.js("+document.activeElement.dataset.line > 1"), "End while rows draw should land on a drawn number")
+        # Round 3 left, its rows dropped: its notes still save, the typed one with them.
+        browser.js("document.querySelectorAll('[role=tab]')[1].click()")
         want = [{"att": 0, "line": n, "quote": "", "comment": "n%d" % n} for n in range(2, 50)]
         want.append({"att": 0, "line": 50, "quote": "", "comment": "typed, not saved"})
         wait_for("round 3's notes saved from round 2", lambda: json.loads(third.read_text(encoding="utf-8"))
                  ["answers"]["pick"].get("lines") == want, timeout=15)
         wait_for("the second round drawn again", lambda: browser.js(rows) == 2 * feeds, timeout=180)
-        browser.js(first2 + ".focus()")
-        t = time.monotonic()
-        press(browser, "End", "End", 35)
-        end_ms = (time.monotonic() - t) * 1000
-        check(browser.js("document.activeElement.dataset.line") == str(feeds), "End should land on the last number")
         two = wait_for("the nodes after both rounds", lambda: (lambda n: n < 1.25 * one and n)(nodes()), timeout=30)
         check(browser.js("document.querySelectorAll('#panel-2 [role=row]').length") == 0,
               "a round left should hold no rows")
-        print("a round of %d rows: %d DOM nodes, %d after the next round and back; End on a box of %d numbers took "
-              "%.0f ms" % (2 * feeds, one, two, feeds, end_ms), flush=True)
+        print("a round of %d rows: %d DOM nodes, %d after the next round and back" % (2 * feeds, one, two), flush=True)
     except E2EError:
         sys.stderr.write("--- Signoff stderr ---\n" + "".join(err))
         raise
@@ -1725,15 +1715,6 @@ def run_line_notes(work):
         browser.click(button(many_sel, 3, "notes/many.txt"))  # a noted line still takes a press: its field
         check(browser.js("document.activeElement.value") == "note 3"
               and browser.js(NOTES_SHOWN % json.dumps(many_sel))["fields"] == 50, "the 51st press should be refused")
-        # At the cap the arrows skip the numbers that are off, and the Tab stop is never one of them.
-        browser.js("document.querySelector(%s).focus()" % json.dumps(button(many_sel, 50, "notes/many.txt")))
-        capped = []
-        for key, code, vk in (("ArrowDown", "ArrowDown", 40), ("End", "End", 35), ("ArrowUp", "ArrowUp", 38)):
-            press(browser, key, code, vk)
-            capped.append(browser.js("document.activeElement.dataset.line"))
-        capped.append(browser.js("Array.prototype.map.call(document.querySelectorAll(%s), function (b) { return b.disabled; })"
-                                 % json.dumps(many_sel + " [data-line][tabindex='0']")))
-        check(capped == ["50", "50", "49", [False]], "at the cap the keys should skip the numbers that are off: %r" % capped)
 
         # Notes made out of order go back in attachment and line order, the awkward lines of the fixture included.
         browser.click(review + " details.attach:nth-of-type(3) > summary")
@@ -1758,36 +1739,17 @@ def run_line_notes(work):
         press(browser, "Escape", "Escape", 27)
         check(browser.js("[document.activeElement.tagName, document.activeElement.getAttribute('aria-label')]")
               == ["BUTTON", "Note on line 8 of notes/change.diff"], "Esc in a note should go back to its line's number")
-        # By key: Enter on a number goes to its field, Esc back; Down reaches the next number, and Space there opens
-        # that line's field (left empty: it saves nothing).
+        # By key: Enter on a number goes to its field; Tab past the field and its Remove reaches the next number,
+        # and Space there opens that line's field (left empty: it saves nothing).
         press(browser, "Enter", "Enter", 13, text="\r")
         check(browser.js("document.activeElement.value") == "Why not raise?fj", "Enter on a number should go to its note")
-        press(browser, "Escape", "Escape", 27)
-        press(browser, "ArrowDown", "ArrowDown", 40)
+        press(browser, "Tab", "Tab", 9)
+        press(browser, "Tab", "Tab", 9)
         press(browser, " ", "Space", 32, text=" ")
         check(browser.js("[document.activeElement.tagName, document.activeElement.value, "
                          "document.activeElement.getAttribute('aria-label')]")
               == ["TEXTAREA", "", "Note on line 9 of notes/change.diff"], "Space on the next number should open its field: %r"
               % browser.js("document.activeElement.outerHTML.slice(0, 200)"))
-        # A box's numbers are one Tab stop, the one last focused: the keys move it, single keys wait, Tab leaves.
-        box = review + " details.attach:nth-of-type(1)"
-        where = ("(function (b) { var n = Array.prototype.slice.call(b.querySelectorAll('[data-line]')); return "
-                 "[n.indexOf(document.activeElement), n.length, b.querySelectorAll('[data-line][tabindex=\"0\"]').length]; "
-                 "})(document.querySelector(%s))" % json.dumps(box))
-        press(browser, "Escape", "Escape", 27)
-        moves = []
-        for key, code, vk, mods, text in (("j", "KeyJ", 74, 0, "j"), ("End", "End", 35, 0, ""), ("Home", "Home", 36, 0, ""),
-                                          ("ArrowDown", "ArrowDown", 40, 0, ""), ("PageDown", "PageDown", 34, 0, ""),
-                                          ("PageUp", "PageUp", 33, 0, ""), ("Tab", "Tab", 9, 0, ""), ("Tab", "Tab", 9, 8, "")):
-            press(browser, key, code, vk, mods, text)
-            moves.append(browser.js(where)[0])
-        n = browser.js(where)[1]
-        up = max(0, min(16, n - 1) - 15)
-        check(moves == [8, n - 1, 0, 1, min(16, n - 1), up, -1, up] and browser.js(where)[2] == 1,
-              "a box's numbers should move by key as one Tab stop: %r of %d" % (moves, n))
-        browser.js("document.querySelector(%s).focus()" % json.dumps(box + " > summary"))
-        press(browser, "Tab", "Tab", 9)
-        check(browser.js(where)[0] == up, "Tab into a box should land on its number last focused")
         # Private hides the notes in the Summary; another item's notes show.
         browser.click("#r0-i0-p")
         summary = browser.js("(function () { var s = document.getElementById('summary-rows'); return [s.textContent, "
@@ -1939,17 +1901,6 @@ def run_line_notes(work):
     server, out, err, browser = serve(two, str(work / "profile-notes-two"))
     try:
         wait_for("round 1's note", lambda: browser.js("!!document.querySelector('#panel-0 .lnote textarea')"))
-        # The Tab stop is kept as a line through a redraw: back from round 2, Tab into the box lands on line 2.
-        second = "#panel-0 details.attach:nth-of-type(2)"
-        browser.click(second + " > summary")
-        browser.js("document.querySelector(%s).focus()" % json.dumps(second + " [data-line='2']"))
-        browser.js("(function (t) { t[1].click(); t[0].click(); })(document.querySelectorAll('[role=tab]'))")
-        browser.js("document.querySelector(%s).focus()" % json.dumps(second + " > summary"))
-        press(browser, "Tab", "Tab", 9)
-        check(browser.js("document.activeElement.getAttribute('aria-label')") == "Note on line 2 of notes/a.txt",
-              "Tab into a redrawn box should land on the line last focused: %r"
-              % browser.js("document.activeElement.outerHTML.slice(0, 120)"))
-        browser.click(second + " > summary")  # closed again, as the steps below expect
         browser.click("#accept-0")
         wait_for("round 2", lambda: browser.js("!document.getElementById('panel-1').hidden"))
         browser.click("#accept-1")

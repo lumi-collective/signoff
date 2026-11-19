@@ -76,9 +76,7 @@
 - **Line notes.** On an item whose lines take notes (`lines`), each row of its attachments leads with the line's
   number in the file (in a diff, before the old and new numbers, which come from the diff's own headers; on a
   phone those two are left out, so the text has room); a line
-  above the attachments says so. A box's numbers are one Tab stop, the number last focused (else the first); Up and
-  Down, Page Up and Page Down, Home and End move between them, skipping those that are off. Press one (Enter or
-  Space) and a field opens under that line, with
+  above the attachments says so. Press it (Tab to it, then Enter or Space) and a field opens under that line, with
   **Remove**; a second press goes back to the field, and Esc in the field goes back to the number. A field left
   empty saves nothing. An item takes up to 50 notes; past that the numbers of the other lines are off, and the line
   above the attachments says why. The notes save with the round, each with its line's first 300 characters, and a
@@ -156,7 +154,6 @@ buttons, Space ticks a checkbox. On top of that:
 | `j`, `k` | moves to the next or previous item |
 | Up, Down, Home, End | on the rounds in the sidebar: switches rounds (Left and Right too) |
 | arrow keys, Shift+arrow keys | on a mark: moves it, resizes it |
-| Up, Down, Page Up, Page Down, Home, End | on a line's number: moves to another line's number (the other keys here wait) |
 | Ctrl+Enter (Cmd+Enter on a Mac) | accepts the open round; with a single round, Done |
 | `f` | Focus: one item at a time, with Previous and Next |
 | Esc | leaves Focus, or closes the sidebar's drawer |

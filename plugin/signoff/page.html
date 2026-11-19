@@ -830,7 +830,7 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
       already: 'This round is already done.', doneBanner: 'Done. Your answers are saved and the agent has them; you can close this tab.',
       readonly: 'This round is done; its answers are shown read only.', rounds: 'Rounds',
       keys: 'Keyboard shortcuts', close: 'Close', kPick: 'pick option 1 to 9 of the current item (Other and Skip come last)',
-      kMove: 'next or previous item', kTabs: 'on the rounds: the previous or next round', kMark: 'on a mark: move it; with Shift, resize it', kLine: 'on a line number: another line',
+      kMove: 'next or previous item', kTabs: 'on the rounds: the previous or next round', kMark: 'on a mark: move it; with Shift, resize it',
       kHelp: 'show this list',
       stale: 'Changed in another tab or window, so this tab can no longer save. Copy any text you have not saved yet, then reload to see the latest answers.',
       acceptRound: 'Accept this round', accepted: 'accepted', acceptedNote: 'Accepted. If you change anything, accept it again.',
@@ -948,7 +948,7 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
       already: 'Ez a kör már lezárult.', doneBanner: 'Kész. A válaszaid mentve vannak, és az ágens megkapta őket; ezt a lapot bezárhatod.',
       readonly: 'Ez a kör lezárult; a válaszai csak olvashatók.', rounds: 'Körök',
       keys: 'Billentyűparancsok', close: 'Bezárás', kPick: 'az aktuális tétel 1–9. lehetősége (az Egyéb és a Kihagyom a végén)',
-      kMove: 'következő vagy előző tétel', kTabs: 'a körökön: előző vagy következő kör', kMark: 'jelölésen: mozgatás; Shifttel átméretezés', kLine: 'sorszámon: másik sor',
+      kMove: 'következő vagy előző tétel', kTabs: 'a körökön: előző vagy következő kör', kMark: 'jelölésen: mozgatás; Shifttel átméretezés',
       kHelp: 'a lista megjelenítése',
       stale: 'Egy másik lapon vagy ablakban módosult. Töltsd újra az oldalt a legfrissebb válaszokért; ez a lap már nem tud menteni. Az újratöltés előtt másold ki a még nem mentett szövegedet.',
       acceptRound: 'Kör elfogadása', accepted: 'elfogadva', acceptedNote: 'Elfogadva. Ha bármit módosítasz, újra el kell fogadni.',
@@ -3208,9 +3208,9 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
       var box = el('details', 'attach'), sum = el('summary', '', att.caption || att.src);
       var lines = atts[ai], n = lines.length;
       var meta = [att.caption ? att.src : '', n ? (n === 1 ? L.line : fmt(L.lines, {n: n})) : ''];
-      var diff = /\.(diff|patch)$/i.test(att.src), stop = 1, seek;
+      var diff = /\.(diff|patch)$/i.test(att.src);
       function view(e) {
-        e.tabIndex = item.lines && !shut() ? -1 : 0;  // it scrolls, so the keyboard must reach it
+        e.tabIndex = 0;  // it scrolls, so the keyboard must reach it
         e.setAttribute('aria-label', fmt(L.attachText, {r: att.caption || att.src}));
         box.append(e);
       }
@@ -3224,7 +3224,6 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
           b.dataset.line = at;
           b.setAttribute('aria-label', fmt(L.lnNote, {n: at, f: att.src}));
           b.disabled = notes.length >= MAX_LINE_NOTES && !find(ai, at);
-          b.tabIndex = (seek = !i || seek) && at >= stop && !b.disabled ? (seek = 0) : -1;
         }
         tr.firstChild.append(b);
         notes.forEach(function (x) {
@@ -3250,15 +3249,6 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
             limit();
           }
           tr.nextSibling.querySelector('textarea').focus();
-        });
-        box.addEventListener('focusin', function (e) {  // a line, not an element: rows are dropped
-          var b = e.target;
-          if (b.dataset.line) (b.closest('.att-lines').querySelector('[tabindex="0"]') || b).tabIndex = -1, b.tabIndex = 0, stop = +b.dataset.line;
-        });
-        box.addEventListener('keydown', function (e) {
-          var b = e.target, n = {ArrowUp: -1, ArrowDown: 1, PageUp: -15, PageDown: 15, Home: -1e9, End: 1e9}[e.key];
-          var a = n && b.dataset.line && b.closest('.att-lines').querySelectorAll('[data-line]:not(:disabled)');
-          if (a) e.preventDefault(), a[Math.max(0, Math.min(a.length - 1, [].indexOf.call(a, b) + n))].focus();
         });
       } else {
         view(el('pre', '', att.text));
@@ -4212,7 +4202,7 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
   // Keyboard shortcuts. They never act while a text field has focus or a modifier key is held, so typing,
   // browser shortcuts and screen reader commands keep working.
   var help = byId('help');
-  [[['1–9'], L.kPick], [['j', 'k'], L.kMove], [['↑', '↓'], L.kTabs], [['←', '↑', '→', '↓'], L.kMark], [['↑', '↓', 'PgUp', 'PgDn', 'Home', 'End'], L.kLine],
+  [[['1–9'], L.kPick], [['j', 'k'], L.kMove], [['↑', '↓'], L.kTabs], [['←', '↑', '→', '↓'], L.kMark],
     [['Ctrl', 'Enter'], L.kAccept], [['f'], L.kFocus], [shortcut, L.kTheme], [['?'], L.kHelp],
     [['Esc'], L.kLeave]].forEach(function (row) {
     if (historyMode && (row[1] === L.kAccept || row[1] === L.kFocus)) return;  // read only, and no Focus
@@ -4255,7 +4245,7 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
       e.preventDefault();
       return;
     }
-    if (typing(e.target) || e.target.dataset.line) return;
+    if (typing(e.target)) return;
     if (e.key === '?') {
       e.preventDefault();
       openHelp();
