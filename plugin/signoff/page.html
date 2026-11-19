@@ -1183,6 +1183,7 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
     preview(l);
     picker.close();
     if (opener && opener.focus) opener.focus();
+    opener = null;  // it may sit in rows a round switch drops
   }
   function cancelPicker() {
     setDensity(keptDensity);
@@ -3202,7 +3203,7 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
       return row;
     }
     if (item.lines && !ro) fs.append(full), limit();
-    // The agent's text files, never rendered: a diff or noted lines as rows when first opened.
+    // The agent's text files, never rendered: a diff or noted lines as rows while open and shown.
     (item.attachments || []).forEach(function (att, ai) {
       var box = el('details', 'attach'), sum = el('summary', '', att.caption || att.src);
       var lines = atts[ai], n = lines.length;
@@ -3647,9 +3648,9 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
       return words.filter(Boolean);
     }
     var choose = function (ri) {
-      Array.prototype.forEach.call(panels.children, function (p) { p.hidden = true; });
+      Array.prototype.forEach.call(panels.children, function (p) { showPanel(p, false); });
       renderPanel(ri);
-      byId('panel-' + ri).hidden = false;
+      showPanel(byId('panel-' + ri), true);
       items.forEach(function (b, i) { if (i === ri) b.setAttribute('aria-current', 'true'); else b.removeAttribute('aria-current'); });
       active = ri;
       mainEl.scrollTop = 0;
@@ -3801,17 +3802,19 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
   // Tabs: the WAI-ARIA tabs pattern with automatic activation.
   var tabButtons = Array.prototype.slice.call(tabs.querySelectorAll('[role=tab]'));
   var SUMMARY = rounds.length;
+  // A panel hidden drops its rows; shown, its open boxes draw them again through their toggle.
+  function showPanel(p, on) {
+    p.hidden = !on;
+    p.querySelectorAll(on ? '.attach[open]' : '.att-lines').forEach(function (e) { if (on) e.dispatchEvent(new Event('toggle')); else e.remove(); });
+  }
   function showRound(ri) {
     active = ri;
     tabButtons.forEach(function (t, i) {
-      var p = byId('panel-' + i);
-      p.hidden = i !== ri;
-      if (p.hidden) p.querySelectorAll('.att-lines').forEach(function (e) { e.remove(); });  // the toggle below redraws
+      showPanel(byId('panel-' + i), i === ri);
       t.setAttribute('aria-selected', i === ri ? 'true' : 'false');
       t.tabIndex = i === ri ? 0 : -1;
     });
-    if (!tabButtons.length) byId('panel-0').hidden = false;
-    byId('panel-' + ri).querySelectorAll('.attach[open]').forEach(function (b) { b.dispatchEvent(new Event('toggle')); });
+    if (!tabButtons.length) showPanel(byId('panel-0'), true);
     place();
     drawOutline();
     acceptShown();

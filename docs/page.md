@@ -68,10 +68,11 @@
   than its `@@` counts or a stray line inside, or when a `+`, `-` or space line comes straight after a full hunk or
   its `\ No newline` line (a line starting with `+++ `, `--- ` or `-- ` aside). A line is what the answers file
   counts as one: the text split at each line feed. A carriage return, vertical tab, form feed, next line (U+0085), line
-  or paragraph separator inside a line shows as `↵`, so you can see it, and a line's number never wraps. The rows are drawn when the box first opens (an open box: when its
-  round is first shown), the first screen at once and the rest after it, so even a 256 KiB file leaves the page
-  answering. A round you leave lets go of its rows, and its open boxes draw them again when you come back, with
-  every note, one typed and not yet saved too.
+  or paragraph separator inside a line shows as `↵`, so you can see it, and a line's number never wraps. The rows are drawn when the box opens (an open box: when its
+  round is shown), the first screen at once and the rest after it, so even a 256 KiB file leaves the page
+  answering. A round you leave, here or on the past-decisions page, lets go of its rows, and its open boxes draw
+  them again when you come back, with every note, one typed and not yet saved too; a box comes back from its top,
+  and a note field's undo history is not kept.
 - **Line notes.** On an item whose lines take notes (`lines`), each row of its attachments leads with the line's
   number in the file (in a diff, before the old and new numbers, which come from the diff's own headers; on a
   phone those two are left out, so the text has room); a line

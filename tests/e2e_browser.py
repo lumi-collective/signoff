@@ -1505,8 +1505,8 @@ def run_attachment(work):
 def run_open_rounds(work):
     """Two open boxes of line feeds only, the most rows a file can make, in the second round: the page answers at load
     without drawing them, and they draw when their round is shown, the page answering while they do. A third such
-    round holds 49 notes: leaving a round drops its rows, and coming back draws them anew with a note typed and not
-    yet saved; a round left still saves its notes; after both big rounds the page holds about one round's nodes."""
+    round holds 49 notes: leaving a round drops its rows (a box still drawing stops), and coming back draws them anew
+    with a note typed and not yet saved; a round left still saves its notes; after both big rounds the page holds about one round's nodes."""
     topic = work / "2026-01-10-feeds"
     (topic / "notes").mkdir(parents=True)
     feeds = 256 * 1024  # one row per byte
@@ -1566,6 +1566,18 @@ def run_open_rounds(work):
               "first rows %.0f ms (%d rows), all rows %.0f ms, longest frame %.0f ms, a key answered in %.0f ms while they "
               "drew" % (feeds, load_ms, s["first"], s["firstRows"], s["all"], s["gap"], key_ms), flush=True)
         one = wait_for("one round's nodes", lambda: nodes() or None)
+        # A round left while its rows draw stops drawing them.
+        drop = browser.js("""(function () {
+          var tabs = document.querySelectorAll('[role=tab]');
+          tabs[2].click();
+          window.left = document.querySelector('#panel-2 .att-lines');
+          tabs[1].click();
+          return window.left.querySelectorAll('[role=row]').length;
+        })()""")
+        time.sleep(1)
+        rows_later = browser.js("window.left.querySelectorAll('[role=row]').length")
+        browser.js("window.left = null")
+        check(rows_later == drop, "a box dropped while it drew should stop drawing: %d rows, then %d" % (drop, rows_later))
 
         browser.js("document.querySelectorAll('[role=tab]')[2].click()")
         wait_for("the third round's rows", lambda: browser.js(rows3) == 2 * feeds, timeout=180)
@@ -1629,7 +1641,8 @@ def run_line_notes(work):
     """Line notes: a press on a line's number opens a field under it, saved with the round in attachment and line
     order, its quote cut by code point as the server cuts it (the fixture's awkward lines too); at most 50 an item;
     Private hides them in the Summary; a reload restores them; a file changed since shows its notes apart, read
-    only, and a save still passes; a done round and the past-decisions page show them with no button or field."""
+    only, and a save still passes; a done round and the past-decisions page show them with no button or field, and
+    there a round left holds no rows and draws them again on return."""
     root = work / "notes-proj"
     topic = root / ".signoff" / "2026-01-11-review"
     (topic / "notes").mkdir(parents=True)
@@ -1813,6 +1826,10 @@ def run_line_notes(work):
     pair = work / "2026-01-12-done-notes"
     shutil.copytree(str(topic), str(pair))
     (pair / "round-02.json").write_text(json.dumps(dict(data, items=[data["items"][1]])), encoding="utf-8")
+    older = root / ".signoff" / "2026-01-01-older"  # a second past round to switch to
+    older.mkdir()
+    (older / "round-01.json").write_text(json.dumps({"version": 1, "title": "Older", "items": [dict(pick, id="old", title="Old")]}),
+                                         encoding="utf-8")
     for history in (False, True):
         server, out, err, browser = serve(root if history else pair, str(work / ("profile-notes-ro%d" % history)),
                                           history=history)
@@ -1838,6 +1855,18 @@ def run_line_notes(work):
                   and [u[1] for u in shown["under"]] == [w["comment"] for w in want
                                                          if w is not planted and w["quote"] != "two"],
                   "%s should show the notes with no button or field: %r" % ("--history" if history else "a done round", shown))
+            if history:  # another past round, then this one again: the one left holds no rows; back, they draw again
+                left = browser.js("""(function () {
+                  var p = document.querySelector('.rp:not([hidden])'), b = document.querySelectorAll('#h-list li button');
+                  window.back = document.querySelector('#h-list li button[aria-current]');
+                  (b[0] === window.back ? b[1] : b[0]).click();
+                  return [p.hidden, p.querySelectorAll('.att-lines').length];
+                })()""")
+                check(left == [True, 0], "a past round left should hold no rows: %r" % left)
+                browser.js("window.back.click()")
+                again = wait_for("the notes drawn again", lambda: (lambda s: len(s["under"]) == 6 and s)(
+                    browser.js(NOTES_SHOWN % json.dumps(sel))))
+                check(again == shown, "a past round shown again should draw its notes as before: %r" % again)
         except E2EError:
             sys.stderr.write("--- Signoff stderr ---\n" + "".join(err))
             raise
