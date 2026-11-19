@@ -1504,7 +1504,9 @@ def run_attachment(work):
 
 def run_open_rounds(work):
     """Two open boxes of line feeds only, the most rows a file can make, in the second round: the page answers at load
-    without drawing them, and they draw when their round is shown, the page answering while they do."""
+    without drawing them, and they draw when their round is shown, the page answering while they do. A third such
+    round holds 49 notes: leaving a round drops its rows, and coming back draws them anew with a note typed and not
+    yet saved; a round left still saves its notes; after both big rounds the page holds about one round's nodes."""
     topic = work / "2026-01-10-feeds"
     (topic / "notes").mkdir(parents=True)
     feeds = 256 * 1024  # one row per byte
@@ -1512,10 +1514,25 @@ def run_open_rounds(work):
         (topic / "notes" / name).write_bytes(b"\n" * feeds)
     item = {"id": "pick", "title": "Pick one", "select": "one", "options": [{"id": "a", "label": "A"}, {"id": "b", "label": "B"}]}
     (topic / "round-01.json").write_text(json.dumps({"version": 1, "title": "First", "items": [item]}), encoding="utf-8")
-    (topic / "round-02.json").write_text(json.dumps({"version": 1, "title": "Feeds", "items": [dict(item, lines=True, attachments=[
-        {"src": "notes/a.txt", "open": True}, {"src": "notes/b.txt", "open": True}])]}), encoding="utf-8")
+    for n in (2, 3):
+        (topic / ("round-0%d.json" % n)).write_text(json.dumps({"version": 1, "title": "Feeds %d" % n, "items": [dict(
+            item, lines=True, attachments=[{"src": "notes/a.txt", "open": True}, {"src": "notes/b.txt", "open": True}])]}),
+            encoding="utf-8")
+    third = topic / "round-03.answers.json"
+    third.write_text(json.dumps({
+        "version": 1, "done": False, "saved": "2026-01-10T10:00:00Z", "free_text": "",
+        "decisions": {"file": "round-03.json", "sha256": hashlib.sha256((topic / "round-03.json").read_bytes()).hexdigest()},
+        "answers": {"pick": {"choice": "a", "comment": "", "lines": [
+            {"att": 0, "line": n, "quote": "", "comment": "n%d" % n} for n in range(1, 50)]}}}), encoding="utf-8")
     rows = ("Array.prototype.reduce.call(document.querySelectorAll('#panel-1 [role=rowgroup]'), "
             "function (n, g) { return n + g.childElementCount; }, 0)")
+    rows3 = ("Array.prototype.reduce.call(document.querySelectorAll('#panel-2 [role=rowgroup]'), "
+             "function (n, g) { return n + g.querySelectorAll(':scope > [role=row]:not(.lnote)').length; }, 0)")
+    line50 = "document.querySelector('#panel-2 [data-att=\"0\"][data-line=\"50\"]')"
+
+    def nodes():
+        browser.call("HeapProfiler.collectGarbage")
+        return browser.call("Memory.getDOMCounters")["nodes"]
     server, out, err, browser = serve(topic, str(work / "profile-feeds"))
     try:
         wait_for("the first round", lambda: browser.js("!!document.querySelector('#panel-0:not([hidden]) .item')"))
@@ -1548,6 +1565,39 @@ def run_open_rounds(work):
         print("two open boxes of %d rows in a hidden round: a key at load answered in %.0f ms with none drawn; shown, "
               "first rows %.0f ms (%d rows), all rows %.0f ms, longest frame %.0f ms, a key answered in %.0f ms while they "
               "drew" % (feeds, load_ms, s["first"], s["firstRows"], s["all"], s["gap"], key_ms), flush=True)
+        one = wait_for("one round's nodes", lambda: nodes() or None)
+
+        browser.js("document.querySelectorAll('[role=tab]')[2].click()")
+        wait_for("the third round's rows", lambda: browser.js(rows3) == 2 * feeds, timeout=180)
+        browser.js(line50 + ".click()")
+        check(browser.js("document.activeElement.tagName === 'TEXTAREA' && document.querySelectorAll('#panel-2 .lnote')"
+                         ".length === 50"), "the 50th press should open its field")
+        browser.call("Input.insertText", text="typed, not saved")
+        # Away and back in one task, before any save could go: the rows are drawn anew, the typed text under its line.
+        back = browser.js("""(function () {
+          document.activeElement.dataset.old = '1';
+          var tabs = document.querySelectorAll('[role=tab]');
+          tabs[1].click();
+          tabs[2].click();
+          var t = %s.closest('[role=row]').nextElementSibling.querySelector('textarea');
+          return [t.value, t.dataset.old === undefined, document.querySelectorAll('#panel-2 .lnote').length];
+        })()""" % line50)
+        check(back == ["typed, not saved", True, 50], "a round shown again should draw its rows anew, the note typed "
+              "and not yet saved under its line: %r" % back)
+        # Drawn whole again, so a field kept from the page's notes would hold the whole box once it is left.
+        wait_for("the third round's rows drawn again", lambda: browser.js(rows3) == 2 * feeds, timeout=180)
+        browser.js("document.querySelector('#panel-2 .lnote button').click()")  # Remove line 1's note
+        # Round 3 left, its rows dropped: its notes still save, the typed one with them.
+        browser.js("document.querySelectorAll('[role=tab]')[1].click()")
+        want = [{"att": 0, "line": n, "quote": "", "comment": "n%d" % n} for n in range(2, 50)]
+        want.append({"att": 0, "line": 50, "quote": "", "comment": "typed, not saved"})
+        wait_for("round 3's notes saved from round 2", lambda: json.loads(third.read_text(encoding="utf-8"))
+                 ["answers"]["pick"].get("lines") == want, timeout=15)
+        wait_for("the second round drawn again", lambda: browser.js(rows) == 2 * feeds, timeout=180)
+        two = wait_for("the nodes after both rounds", lambda: (lambda n: n < 1.25 * one and n)(nodes()), timeout=30)
+        check(browser.js("document.querySelectorAll('#panel-2 [role=row]').length") == 0,
+              "a round left should hold no rows")
+        print("a round of %d rows: %d DOM nodes, %d after the next round and back" % (2 * feeds, one, two), flush=True)
     except E2EError:
         sys.stderr.write("--- Signoff stderr ---\n" + "".join(err))
         raise
@@ -1819,6 +1869,7 @@ def run_line_notes(work):
         # The server refuses round 2's Done, as it would a file changed on disk; round 1's is stored.
         browser.js("(function (f) { window.fetch = function (u, o) { return u === 'save/1' && JSON.parse(o.body).done "
                    "? Promise.resolve(new Response('{}', {status: 409})) : f.apply(this, arguments); }; })(window.fetch)")
+        browser.click("#tab-0")  # its rows drawn again: a round left holds none
         browser.click("#done")
         wait_for("round 1 done", lambda: json.loads((two / "round-01.answers.json").read_text(encoding="utf-8"))["done"])
         off = wait_for("round 1's buttons off", lambda: (lambda s: s[0] and s)(browser.js(

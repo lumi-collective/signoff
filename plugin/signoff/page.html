@@ -3016,7 +3016,7 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
       }
       g.style.containIntrinsicSize = 'auto ' + 1.5 * g.children.length + 'em';  // undrawn, as tall as its rows
       box.append(g);
-      if (i < rows.length) setTimeout(chunk);
+      if (i < rows.length) setTimeout(function () { if (box.isConnected) chunk(); });
     })();
     return box;
   }
@@ -3177,7 +3177,7 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
       if (off || x.stale) {
         cell.append(el('p', 'mark-text', x.comment));
       } else {
-        var ta = x.ta = el('textarea');
+        var ta = el('textarea');  // not kept on x: it would hold a dropped box
         ta.value = x.comment;
         ta.maxLength = MAX_TEXT;
         ta.dataset.round = ri;
@@ -3240,14 +3240,14 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
           if (box.open && !box.children[1] && !box.closest('[hidden]')) view(lineBox(lines, diff && diffRows(lines), item.lines && pin));
         });
         box.addEventListener('click', function (e) {  // one listener: a box may hold 131k numbers
-          var b = e.target.closest('[data-line]'), at = b && +b.dataset.line, x = b && find(ai, at);
+          var b = e.target.closest('[data-line]'), at = b && +b.dataset.line, x = b && find(ai, at), tr = b && b.closest('[role=row]');
           if (!b || shut()) return;
           if (!x) {
             notes.push(x = {att: ai, line: at, quote: cut(lines[at - 1]), comment: ''});
-            b.closest('[role=row]').after(noteRow(x, b));
+            tr.after(noteRow(x, b));
             limit();
           }
-          x.ta.focus();
+          tr.nextSibling.querySelector('textarea').focus();
         });
       } else {
         view(el('pre', '', att.text));
@@ -3804,7 +3804,9 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
   function showRound(ri) {
     active = ri;
     tabButtons.forEach(function (t, i) {
-      byId('panel-' + i).hidden = i !== ri;
+      var p = byId('panel-' + i);
+      p.hidden = i !== ri;
+      if (p.hidden) p.querySelectorAll('.att-lines').forEach(function (e) { e.remove(); });  // the toggle below redraws
       t.setAttribute('aria-selected', i === ri ? 'true' : 'false');
       t.tabIndex = i === ri ? 0 : -1;
     });
