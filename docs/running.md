@@ -131,11 +131,14 @@ with the same plan and Claude Code's own dialog asks; after anything else it rea
 stopped the agent with Esc meanwhile, a notice says your answer is saved: send any message and the agent gets it.
 
 A plan you approve in Claude Code's own dialog instead (the inbox had stopped, say) ends the review. So do
-`/clear` and `/resume`: the round then stays in the inbox and no longer approves anything. A review that could not
+`/clear` and `/resume`: the round then stays in the inbox and no longer approves anything. When you answer it
+then, the answer reaches the project's sessions as a message from the inbox and approves nothing. An approval is
+good for one call: rejected in Claude Code's own dialog, or interrupted, it is used up. A review that could not
 run says so to the agent, and plans then get Claude Code's own dialog until the mod loads again or the inbox
 restarts. Claude Code's own dialog is also what you get with no inbox, in a folder that is no project, for a
-subagent's plan, for a plan over 256 KiB, with `claude -p`, on Windows, and with the Plan review setting in
-`/config` set to off (the default is inbox).
+subagent's plan, for a plan over 256 KiB, with `claude -p`, on Windows, when the session's folder or the decisions
+folder setting holds an invisible format or control character (a zero-width non-joiner, as in some Persian
+names), and with the Plan review setting in `/config` set to off (the default is inbox).
 
 The command the mod runs for it:
 

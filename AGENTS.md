@@ -334,7 +334,8 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   first drawing (a reload after an options change may fire no `session.start`; the desktop app and the VS Code
   extension send it with `isInteractive` false, tried on 2026-11-15, so there the band starts it). With `claude -p`
   (the mod loads there, but `session.start` says `isInteractive` false and no band is drawn) and on Windows (`OS`
-  is `Windows_NT`) it looks at nothing; with `hint` `off` it shows nothing and looks only for requests (the mod's
+  is `Windows_NT`) it looks at nothing but for the plan review's state (a native success reads it, a `/clear` or a
+  `/resume` writes it: see below); with `hint` `off` it shows nothing and looks only for requests (the mod's
   hand-over rule), but for the plan-review check at an `ExitPlanMode` call (not with `claude -p` or on
   Windows) and that review's toast. Only a live count (an inbox that lives,
   a project found) moves Hide (cleared by any other live count) and the toast (once a session, after a live 0 and
@@ -363,18 +364,28 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   there. A test gives `inbox open` and `inbox rows` a link on stderr and terminal escapes in the titles, and
   checks every text the mod shows.
 
-  Plan review (AD-29): its only tool hook is `tool.call` on `ExitPlanMode`, whose `.catch` is `next(e)`. It takes a
+  Plan review (AD-29): its only tool hook is `tool.call` on `ExitPlanMode`, whose `.catch` is `next(e)` and, after a
+  main-loop success, the end of the plan state, not awaited (past the hook's 10 seconds it is the only one that
+  sees that success). It takes a
   call over only when the `plan` option is not `off`, it has armed, not on Windows, the inbox is live and the
   session's project found (checked at the call, also with `hint` `off`; a call during the load's first
-  `inbox home` run waits for it), the session id's first 8 characters are letters, digits or hyphens, the call is
-  not interrupted before the spawn, and the call is in the main loop and carries a plan (`e.plan`, not empty once
+  `inbox home` run waits for it; a run that this call's own interrupt killed is asked again at the next need, any
+  other failure is asked once per load), the session id's first 8 characters are letters, digits or hyphens, the
+  session root and the `folder` setting hold no control, format or separator character (the answers path would be
+  refused there), the call is not interrupted before the spawn, and the call is in the main loop and carries a plan (`e.plan`, not empty once
   `trimEnd()` cut it) of at most `MAX_ATTACHMENT` in UTF-8; else `next(e)`, also with a review open. It then denies
-  with fixed text (no path), keeps `{topic, text, phase, wake}` in `$.state` (`plan`), the topic
-  `<local date>-plan-<those 8>` from the session's first take-over, and starts `signoff plan` in that session root
-  with the plan on stdin and never in argv. The decisions, a child's end and a respawn run one at a time. While the
+  with fixed text (no path), keeps `{topic, text, phase, wake}` in `$.state` (`plan`), in review also `since` (the
+  clock at the take-over, before the child) and `root` (that session root), both as they were through every
+  respawn, the topic `<local date>-plan-<those 8>` from the session's first take-over, and starts `signoff plan`
+  in that root, as every respawn does, with the plan on stdin and never in argv. The decisions, a child's end and a respawn run one at a time. While the
   child runs, any call gets the deny and that a review is already open, with no new round; with a review and no
   child in this load it starts `signoff plan --resume` with the kept text, as it does at a load while that review
-  waits and an inbox lives (with `plan` `off` at that load the review ends instead, and nothing is sent).
+  waits and an inbox lives (with `plan` `off` at that load the review ends instead, and nothing is sent). A respawn
+  and a pass need a topic that ends with this session id's first 8 characters. `--resume` takes the newest round,
+  an older review's when this one's round was not written yet: so an old answer never answers a later review. A
+  resumed child's answers file older than `since` (or with no `since`) is no answer, no failure and no message, and
+  the review starts once more without `--resume`, with the held text and topic, in its root. A child without
+  `--resume` always writes a new round and is never checked, so a slow file clock refuses no normal answer.
   On exit 0 its stdout must be one line, an absolute path ending `/<topic>/round-NN.answers.json` with no control,
   format or separator character, at most 4096 characters; stderr is never kept. Of that file (at most 4 MiB, what
   `$.fs.read` takes) it uses only `done` and the `plan` item's `choice` and `source`: `done`, `approve` and `user`
@@ -382,26 +393,40 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   which is no failure either. An `answer` request never moves the phase.
   It sends `$.prompt.submit` (never `asUser`) with fixed text that names Signoff as its sender and the user in the
   third person, and that path only, as a JSON string: never the user's text or the plan's. That wake is in
-  `$.state` before its first submit and until a submit of it resolves without a drop (its own turn starts then).
+  `$.state` before its first submit and until it entered. One submit of this mod is out at a time, as prompts of
+  one plugin queued behind one turn become one turn and only the last submit's promise settles, the others never
+  (measured on 2.1.323 and 2.1.330; another plugin's and the user's own do not merge with them; task
+  notifications, peers and schedules were not measured): the hand-over waits, before it clears the turn's note or
+  marks, while a wake is out, a wake waits while a hand-over runs or another wake is out, and the one that settles
+  starts the other, with its checks again. So in a live load the promise is the only release: with one out, nothing
+  that is measured to merge can join it. A wake's `isOut` is written before each submit and cleared when that was
+  refused. A load that finds it set (the engine may still hold that prompt) sends no copy at its first main turn,
+  and a main turn whose `text` holds that wake's text means it entered.
   Refused, it stays: one fixed toast with no path (a second text for did-not-run, which saved no answer), and one
   submit at each next main turn, which never waits for it; no timer, no other channel. With none kept, a turn
   costs the plan review no `$` call. While a wake is kept, the answered plan's text opens no second review (a
   fixed deny after revise and after any other answer that is no approval); another text is a new review and drops
-  the wake. An approved plan's exact text goes through once (`await next(e)`; the wake is dropped, and the state
-  clears when that settles, rejected too).
+  the wake. An approval lets that exact text through once: the state is made idle and the wake dropped before
+  `await next(e)`, so two calls or a reload during the dialog get no second pass, and a rejected pass ends and
+  stops nothing else (a review begun meanwhile stays).
   Any native success of a main-loop `ExitPlanMode` (no `deny`, not `isError`) is the user's later word and ends
   the whole plan state: the child stopped, nothing sent, nothing written back by a submit that settles later. A
   rejection and a subagent's call change nothing. A `/clear` and a `/resume` (`session.end`) stop the child, clear
-  the state and forget the topic. Both hold armed or not, so also with `claude -p` such a success reads `$.state`
-  once and such an end writes it once. A child the mod stopped is no failure. An unload is none: the first `$` call
+  the state and forget the topic. Both hold armed or not, so also with `claude -p` and on Windows such a success
+  reads `$.state` once and such an end writes it once. A child the mod stopped is no failure. An unload is none: the first `$` call
   at a child's end is the state's read, which an unloaded module's `$` refuses (measured on 2.1.323 and 2.1.330),
   so it writes and sends nothing.
   Any other end (a non-zero exit, a signal, a failed start, another stdout) sends the fixed did-not-run message,
   ends the review, and takes no plan over for the rest of the load or until `inbox.json`'s `server_id` changes.
   It writes no file and shows no link. Known limits: a submit the engine already holds cannot be taken back (so
   a message may follow a plan that went through, a `/clear` or a new review); the hook's 10 seconds include its
-  wait for another call's decision, and past them the call takes Claude Code's own path; whoever can write the
-  answers file can approve (plan mode itself asks before a write).
+  wait for another call's decision, and past them the call takes Claude Code's own path; an interrupt after the
+  approval was used up loses it, as it is never restored (one seen before that write uses nothing up); a second
+  call at the same time as a pass opens a round, which that pass's success leaves in the inbox; Claude Code's exit
+  ends the child before `session.end`, so there it counts as did-not-run, whose message and toast reach no
+  session; whoever can write the answers or plan file, or get a start link of the inbox, can approve (in plan mode
+  Claude Code asks before a Write or Edit, but a Bash command the user allowed by a rule, or auto mode, may write
+  without asking).
 - **The inbox writes a round only while it holds its lock.** It takes `<round file>.lock` for the open rounds
   of each live run in `runs/` (no `ended`, the pid alive, the file not older than `RUNS_MAX_AGE`), each file once
   however many runs wait on it (flock is per open file); when another process holds one, that run's rounds are
@@ -555,7 +580,8 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   older Python's table misses a few format characters), so it holds up no other line; a later session start with
   no other live session of the project hands it over, as it is not done. It marks the reply's ids handed over first, then sends the lines, one per line, as one
   `$.prompt.submit` (framed as the plugin's, never `asUser`), which Claude Code runs as a turn of its own once
-  the session is idle; a submit that did not enter (a `drop`, or an error) unmarks them, as a failure, and this
+  the session is idle, as this mod has one submit out at a time (the mod rule's plan review: while a wake is out
+  the hand-over waits, and the wake's end starts it); a submit that did not enter (a `drop`, or an error) unmarks them, as a failure, and this
   load keeps those checked lines, the last batch refused: after an Esc Claude Code drops every plugin prompt until
   the user sends input, which may be long after the last retry. At the next main turn (`turn.start` without
   `agentId`), also with the retries used up, it looks at once without the turn waiting for it, or at the look right

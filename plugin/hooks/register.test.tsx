@@ -25,7 +25,14 @@ type Child = {
   isStopped: boolean
   end: (stdout?: string, code?: number | null, signal?: string | null) => void
 }
-type Plan = { topic: string; text: string; phase: 'review' | 'approved' | 'revise' | 'answered' | null; wake: { text: string; isToasted: boolean } | null } | null
+type Plan = {
+  topic: string
+  text: string
+  phase: 'review' | 'approved' | 'revise' | 'answered' | null
+  wake: { text: string; isToasted: boolean; isOut?: boolean } | null
+  since?: number
+  root?: string
+} | null
 type Ran = { stdout: string; exitCode: number; isStdoutTruncated?: boolean }
 type Marks = { since: number; sent: string[]; project?: string; projects?: Record<string, number> } | null
 type World = {
@@ -62,6 +69,8 @@ type World = {
   planSetGate: Promise<void> | undefined
   idGate: Promise<void> | undefined
   homeGate: Promise<void> | undefined
+  /** While set, the session's root waits for it. */
+  rootGate: Promise<void> | undefined
   sessionId: string
   spawns: Child[]
   spawnFails: boolean
@@ -161,6 +170,7 @@ function world(
     planSetGate: undefined,
     idGate: undefined,
     homeGate: undefined,
+    rootGate: undefined,
     sessionId: '0a1b2c3d-4e5f-6789-abcd-ef0123456789',
     spawns: [],
     spawnFails: false,
@@ -321,7 +331,10 @@ function world(
   })
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('session.cwd', () => ({ value: w.cwd }))
-  on('session.root', () => ({ value: w.root }))
+  on('session.root', async () => {
+    await w.rootGate
+    return { value: w.root }
+  })
   on('session.id', async () => {
     await w.idGate
     return { value: w.sessionId }
@@ -1959,11 +1972,12 @@ const exitPlan = ($: Engine, input: Record<string, unknown> = { plan: PLAN }) =>
 const planArgv = (...more: string[]) => [SIGNOFF, 'plan', '--topic', TOPIC, '--folder', '.signoff', ...more]
 const answered = (choice: unknown, source: unknown = 'user', done: unknown = true) =>
   JSON.stringify({ version: 1, done, saved: '2026-11-10T09:00:00Z', answers: { plan: { choice, comment: USER_WORDS, source } }, free_text: USER_WORDS })
-const held = (phase: NonNullable<Plan>['phase'], wake: string | null = null, text = PLAN, isToasted = false): Plan => ({
+const held = (phase: NonNullable<Plan>['phase'], wake: string | null = null, text = PLAN, isToasted = false, isOut = false): NonNullable<Plan> => ({
   topic: TOPIC,
   text,
   phase,
-  wake: wake === null ? null : { text: wake, isToasted },
+  wake: wake === null ? null : { text: wake, isToasted, isOut },
+  ...(phase === 'review' && { since: NOW, root: `${ROOT}/src` }), // as a take-over at NOW keeps it
 })
 const idle: Plan = { topic: TOPIC, text: '', phase: null, wake: null }
 const planCost = (w: World) => [...spent(w), w.planReads, w.order.length, w.spawns.length]
@@ -2150,7 +2164,7 @@ test('an approval: phase and wake are kept before the submit, whose text is fixe
   await answerPlan(w, after, answered('approve'))
   expect(w.reads).toContain(ANSWERS)
   expect(w.submits).toEqual([{ text: approvedText(), asUser: undefined, sent: [] }])
-  expect(w.planAtSubmit).toEqual([held('approved', approvedText())])
+  expect(w.planAtSubmit).toEqual([held('approved', approvedText(), PLAN, false, true)])
   expect(w.plan).toEqual(held('approved')) // it entered: the wake is let go, the approval stays
   expect(w.submits[0]?.text.startsWith(FRAME)).toBe(true)
   expect([...w.submits.map(s => s.text), ...w.toasts, ...w.logs].join('\n')).not.toMatch(/rename it|hello\.txt|127\.0\.0\.1/)
@@ -2180,7 +2194,7 @@ for (const c of OTHERS) {
     if (c.isUnreadable) w.readFails.add(ANSWERS)
     await answerPlan(w, after, c.text, c.size)
     expect(w.submits.map(s => [s.text, s.asUser])).toEqual([[c.said, undefined]])
-    expect(w.planAtSubmit).toEqual([held(c.phase, c.said)])
+    expect(w.planAtSubmit).toEqual([held(c.phase, c.said, PLAN, false, true)])
     expect(w.plan).toEqual(idle) // after the window: no phase and no text
     if (c.size) expect(w.reads).not.toContain(ANSWERS)
     expect([...w.submits.map(s => s.text), ...w.toasts, ...w.logs].join('\n')).not.toContain('rename it')
@@ -2343,7 +2357,7 @@ test('a wake behind a running turn: the window holds, its own turn.start sends n
   let release = () => {}
   w.submitGate = new Promise(resolve => (release = resolve))
   await answerPlan(w, after, answered('revise'))
-  expect(w.plan).toEqual(held('revise', notApprovedText))
+  expect(w.plan).toEqual(held('revise', notApprovedText, PLAN, false, true))
   expect(await exitPlan($)).toEqual({ deny: REVISE_DENY })
   expect(await turn($)).toEqual({ turnId: 'engine t1' })
   await after(1000)
@@ -2378,7 +2392,7 @@ test('in the window an approved plan of the same text goes through once, and its
   w.nativeGate = new Promise(resolve => (release = resolve))
   const calling = exitPlan($, { plan: `${PLAN}\n` })
   await after(1000)
-  expect([w.native, w.plan]).toEqual([[`${PLAN}\n`], held('approved')]) // the approval stands until the tool settles
+  expect([w.native, w.plan]).toEqual([[`${PLAN}\n`], idle]) // used up before the pass, not when the dialog settles
   await turn($)
   await after(1000)
   expect(w.submits).toHaveLength(1)
@@ -2414,7 +2428,7 @@ test('an approval is for its text only: another text is a new review, and the ke
   await answerPlan(w, after, answered('approve'))
   expect(await exitPlan($, { plan: OTHER_PLAN })).toEqual({ deny: DENY })
   await after(1000)
-  expect([w.native, w.plan, w.spawns.at(-1)?.input]).toEqual([[], held('review', null, OTHER_PLAN), OTHER_PLAN])
+  expect([w.native, w.plan, w.spawns.at(-1)?.input]).toEqual([[], { ...held('review', null, OTHER_PLAN), since: NOW + 2000 }, OTHER_PLAN])
   await turn($)
   await after(1000)
   expect(w.submits).toHaveLength(1)
@@ -2436,7 +2450,7 @@ for (const [name, text, deny] of [
     expect([w.spawns.length, w.native]).toEqual([1, []])
     expect(await exitPlan($, { plan: OTHER_PLAN })).toEqual({ deny: DENY })
     await after(1000)
-    expect(w.plan).toEqual(held('review', null, OTHER_PLAN))
+    expect(w.plan).toEqual({ ...held('review', null, OTHER_PLAN), since: NOW + 3000 })
     await turn($)
     await after(1000)
     expect(w.submits).toHaveLength(1) // the kept wake went with the new review
@@ -2453,7 +2467,7 @@ test('a did-not-run message is no window: with the inbox restarted the same text
   w.files[`${SO}/inbox.json`] = { text: '{"server_id": "bbbb"}', mtimeMs: NOW }
   expect(await exitPlan($)).toEqual({ deny: DENY })
   await after(1000)
-  expect(w.plan).toEqual(held('review'))
+  expect(w.plan).toEqual({ ...held('review'), since: NOW + 2000 })
 })
 
 type Elsewhere = { name: string; input?: Record<string, unknown>; answer?: Record<string, unknown>; keeps?: true }
@@ -2735,4 +2749,613 @@ test('another tool never meets the plan review: no call of the mod', async ($, o
   const before = planCost(w)
   await $.tool.call({ tool: 'Read', file_path: '/work/demo/a.md', plan: PLAN } as never)
   expect(planCost(w)).toEqual(before)
+})
+
+// One submit of this mod out at a time: two of them queued behind one turn would merge, and the first never settle.
+const turnOf = ($: Engine, text: string) => $.turn.start({ text, turnId: 't2' })
+const OTHER_ID = 'ffffffff-0000-4000-8000-000000000000'
+const texts = (w: World) => w.submits.map(s => s.text)
+
+test('a message and an answer behind one running turn: the answer waits, both settle, and a later message arrives', async ($, on) => {
+  const { w, after, clock } = world(on)
+  await reviewing($, w, after)
+  await after(4000)
+  let release = () => {}
+  w.submitGate = new Promise(resolve => (release = resolve)) // a turn runs
+  request(w, 1, clock.now())
+  await after(5000)
+  expect(w.submits).toHaveLength(1)
+  await answerPlan(w, after, answered('revise'))
+  expect([w.submits.length, w.plan?.wake?.text, !!w.plan?.wake?.isOut]).toEqual([1, notApprovedText, false])
+  w.submitGate = undefined
+  release() // the turn ended: the message's own turn starts
+  await after(1000)
+  expect([texts(w), w.plan]).toEqual([[lineOf(R(1), 'message 1'), notApprovedText], idle])
+  request(w, 2, clock.now())
+  await after(15_000)
+  expect(texts(w).slice(2)).toEqual([lineOf(R(2), 'message 2')])
+})
+
+test('a message and an answer refused after an Esc: at the next turn both arrive, once each, and the window closes', async ($, on) => {
+  const { w, after, clock } = world(on)
+  await reviewing($, w, after)
+  await after(4000)
+  w.drop = STOP
+  request(w, 1, clock.now())
+  await after(5000)
+  await answerPlan(w, after, answered('revise'))
+  expect(w.submits).toHaveLength(2)
+  w.drop = undefined
+  let release = () => {}
+  w.submitGate = new Promise(resolve => (release = resolve)) // the user's turn runs
+  await turn($)
+  await after(5000)
+  expect([texts(w).slice(2), w.marks?.sent]).toEqual([[notApprovedText], []]) // the message waits, not marked
+  w.submitGate = undefined
+  release()
+  await after(1000)
+  expect([texts(w).slice(2), requestRuns(w)]).toEqual([[notApprovedText, lineOf(R(1), 'message 1')], [asked(1)]]) // with no process
+  expect(w.plan).toEqual(idle)
+  await turn($)
+  await after(120_000)
+  expect([w.submits.length, w.marks?.sent]).toEqual([4, [R(1)]])
+  expect(await exitPlan($)).toEqual({ deny: DENY }) // no REVISE_DENY after the wake entered
+})
+
+for (const isRefused of [false, true]) {
+  test(`a message that comes while the wake is out waits unmarked, with no process, and goes as it settles (${isRefused ? 'refused' : 'entered'})`, async ($, on) => {
+    const { w, after, clock } = world(on)
+    await reviewing($, w, after)
+    await after(4000)
+    let release = () => {}
+    w.submitGate = new Promise(resolve => (release = resolve))
+    await answerPlan(w, after, answered('approve'))
+    request(w, 1, clock.now())
+    await after(10_000)
+    expect([w.submits.length, requestRuns(w), w.marks?.sent]).toEqual([1, [], []])
+    if (isRefused) w.drop = STOP
+    w.submitGate = undefined
+    release()
+    await after(1000) // no look is due: the wake's end starts it
+    expect([texts(w), requestRuns(w)]).toEqual([[approvedText(), lineOf(R(1), 'message 1')], [asked(1)]])
+  })
+}
+
+test('an answer that comes during inbox requests waits for that hand-over', { plugins: [slowRequests] }, async ($, on) => {
+  const { w, after, clock } = world(on)
+  await reviewing($, w, after)
+  await after(4000)
+  request(w, 1, clock.now())
+  await after(5000) // the command runs
+  await answerPlan(w, after, answered('approve'))
+  expect(w.submits).toEqual([])
+  await after(3000)
+  expect(texts(w)).toEqual([lineOf(R(1), 'message 1'), approvedText()])
+})
+
+test('a turn during a hand-over: the kept wake goes when that ends', { plugins: [slowRequests] }, async ($, on) => {
+  const { w, after, clock } = world(on)
+  w.drop = STOP
+  await reviewing($, w, after)
+  await answerPlan(w, after, answered('approve'))
+  await after(3000)
+  w.drop = undefined
+  request(w, 1, clock.now())
+  await after(5000) // the command runs
+  await turn($)
+  await after(1000)
+  expect(w.submits).toHaveLength(1)
+  await after(2000)
+  expect(texts(w).slice(1)).toEqual([lineOf(R(1), 'message 1'), approvedText()])
+})
+
+test('a second answer waits for the first wake the engine still holds', async ($, on) => {
+  const { w, after } = world(on)
+  await reviewing($, w, after)
+  let release = () => {}
+  w.submitGate = new Promise(resolve => (release = resolve))
+  await answerPlan(w, after, answered('approve'))
+  expect(await exitPlan($, { plan: OTHER_PLAN })).toEqual({ deny: DENY })
+  await after(1000)
+  await answerPlan(w, after, answered('revise'))
+  expect(texts(w)).toEqual([approvedText()])
+  w.submitGate = undefined
+  release()
+  await after(1000)
+  expect([texts(w), w.plan]).toEqual([[approvedText(), notApprovedText], idle])
+})
+
+test('a /clear while the wake is being written as out: it is not submitted', async ($, on) => {
+  const { w, after } = world(on)
+  w.plan = held('approved', approvedText(), PLAN, true)
+  await start($)
+  let release = () => {}
+  w.planSetGate = new Promise(resolve => (release = resolve))
+  await turn($)
+  await after(1000)
+  const ending = $.session.end({ reason: 'clear', sessionId: w.sessionId, resume: { id: w.sessionId } })
+  await after(1000)
+  release()
+  await ending
+  await after(1000)
+  expect([w.submits, w.plan]).toEqual([[], null])
+})
+
+// A reload while the engine holds the wake: that prompt still runs, and only its turn's text says so.
+test('the wake is written as out before its submit, and as not out when it was refused', async ($, on) => {
+  const { w, after } = world(on)
+  w.drop = STOP
+  await reviewing($, w, after)
+  await answerPlan(w, after, answered('approve'))
+  expect(w.planAtSubmit[0]?.wake).toEqual({ text: approvedText(), isToasted: false, isOut: true })
+  expect(w.plan?.wake).toEqual({ text: approvedText(), isToasted: true, isOut: false })
+  await turn($) // refused again
+  await after(1000)
+  expect([w.planAtSubmit[1]?.wake?.isOut, w.plan?.wake?.isOut]).toEqual([true, false])
+})
+
+const leftOut = (): Plan => ({ topic: TOPIC, text: PLAN, phase: 'approved', wake: { text: approvedText(), isToasted: false, isOut: true } })
+const merged = () => `The signoff plugin sent a message: ${approvedText()}\n${lineOf(R(1), 'message 1')}`
+
+test('a reload while the engine holds the wake: its own turn lets it go, with no copy', async ($, on) => {
+  const { w, after } = world(on)
+  w.plan = leftOut()
+  await start($)
+  await turnOf($, merged())
+  await after(1000)
+  expect([w.submits, w.plan]).toEqual([[], { topic: TOPIC, text: PLAN, phase: 'approved', wake: null }])
+  await turn($)
+  await after(1000)
+  expect(w.submits).toEqual([])
+})
+
+test('a reload while the engine holds the wake: no copy at the first turn, and its turn after that lets it go', async ($, on) => {
+  const { w, after } = world(on)
+  w.plan = leftOut()
+  await start($)
+  await turn($) // the user's, queued before it
+  await after(1000)
+  expect(w.submits).toEqual([])
+  await turnOf($, merged())
+  await after(1000)
+  expect([w.submits, w.plan?.wake]).toEqual([[], null])
+})
+
+test('a wake left out that never shows goes at the second turn', async ($, on) => {
+  const { w, after } = world(on)
+  w.plan = leftOut()
+  await start($)
+  await turn($)
+  await after(1000)
+  expect(w.submits).toEqual([])
+  await turn($)
+  await after(1000)
+  expect([texts(w), w.plan?.wake]).toEqual([[approvedText()], null])
+})
+
+// An old answer never answers a later review.
+for (const [how, choice, native] of [
+  ['an approval used by a success', 'approve', { result: { plan: 'shown', isAgent: false } }],
+  ['an approval used by a rejection', 'approve', { result: 'User rejected the plan', isError: true }],
+  ['a revise', 'revise', undefined],
+] as const) {
+  test(`${how} never answers a later review killed before its round: one new round, no message`, async ($, on) => {
+    const { w, after } = world(on)
+    await reviewing($, w, after)
+    await answerPlan(w, after, answered(choice))
+    if (native) {
+      w.nativeAnswer = native as never
+      await exitPlan($) // used up
+      await after(1000)
+    }
+    const [submits, natives] = [w.submits.length, w.native.length]
+    expect(await exitPlan($)).toEqual({ deny: DENY }) // the same text: a new review, whose round is not written yet
+    await after(1000)
+    w.isStateDead = true // a reload kills its child
+    w.spawns[1]?.end('', null, 'SIGTERM')
+    await after(1000)
+    w.isStateDead = false
+    expect(await exitPlan($)).toEqual({ deny: DENY })
+    await after(1000)
+    expect(w.spawns[2]?.argv).toEqual(planArgv('--resume'))
+    w.spawns[2]?.end(`${ANSWERS}\n`) // the newest round is the old one, done, the same bytes
+    await after(1000)
+    expect([w.submits.length, w.toasts, w.plan?.phase]).toEqual([submits, [], 'review'])
+    expect(w.spawns.slice(3).map(s => [s.argv, s.cwd, s.input])).toEqual([[planArgv(), `${ROOT}/src`, PLAN]])
+    expect(await exitPlan($)).toEqual({ deny: OPEN })
+    expect(w.native).toHaveLength(natives)
+  })
+}
+
+test('a first child whose file clock is 5 seconds behind still approves, with one round', async ($, on) => {
+  const { w, after } = world(on)
+  await reviewing($, w, after)
+  w.files[ANSWERS] = { text: answered('approve'), mtimeMs: NOW - 5000 }
+  w.spawns[0]?.end(`${ANSWERS}\n`)
+  await after(1000)
+  expect([texts(w), w.spawns.length]).toEqual([[approvedText()], 1])
+})
+
+test('the round started again is a first child: an old file time does not start a third', async ($, on) => {
+  const { w, after } = world(on)
+  w.plan = { ...held('review')!, since: NOW }
+  await start($)
+  await after(1000)
+  w.files[ANSWERS] = { text: answered('approve'), mtimeMs: NOW - 5000 }
+  w.spawns[0]?.end(`${ANSWERS}\n`)
+  await after(1000)
+  expect(w.spawns).toHaveLength(2)
+  w.spawns[1]?.end(`${ANSWERS}\n`)
+  await after(1000)
+  expect([texts(w), w.spawns.length]).toEqual([[approvedText()], 2])
+})
+
+for (const [when, offset] of [['as the review began', 0], ['after it began', 3000]] as const) {
+  test(`a resumed child's answer written ${when} is that review's answer, with one round`, async ($, on) => {
+    const { w, after } = world(on)
+    w.plan = { ...held('review')!, since: NOW }
+    await start($)
+    await after(1000)
+    expect(w.spawns.map(s => s.argv)).toEqual([planArgv('--resume')])
+    w.files[ANSWERS] = { text: answered('approve'), mtimeMs: NOW + offset }
+    w.spawns[0]?.end(`${ANSWERS}\n`)
+    await after(1000)
+    expect([texts(w), w.spawns.length]).toEqual([[approvedText()], 1])
+  })
+}
+
+for (const since of [undefined, 'yesterday'] as const) {
+  test(`a resumed child with no usable since (${since}) takes no answer`, async ($, on) => {
+    const { w, after } = world(on)
+    w.plan = { ...held('review')!, since: since as never }
+    await start($)
+    await after(1000)
+    await answerPlan(w, after, answered('approve'))
+    expect([w.submits, w.spawns.map(s => s.argv)]).toEqual([[], [planArgv('--resume'), planArgv()]])
+  })
+}
+
+test('a respawn keeps the time the review began', async ($, on) => {
+  const { w, after } = world(on, { lock: false })
+  w.plan = { ...held('review')!, since: NOW - 60_000 }
+  await start($)
+  await after(5000)
+  w.files[`${SO}/inbox.lock`] = { text: '', mtimeMs: NOW + 5000 }
+  expect(await exitPlan($)).toEqual({ deny: DENY })
+  await after(1000)
+  expect(w.plan?.since).toBe(NOW - 60_000)
+})
+
+// The review's root: a move of the session's root does not move a review to another project's folder.
+test('a review keeps its root, and every respawn runs there', async ($, on) => {
+  const { w, after } = world(on)
+  w.plan = { ...held('review')!, since: NOW, root: `${ROOT}/src` }
+  w.root = '/work' // a /cd, then a reload
+  await start($)
+  await after(1000)
+  expect(w.spawns.map(s => s.cwd)).toEqual([`${ROOT}/src`])
+})
+
+test('a take-over keeps the root, and a resume by a later call runs there', async ($, on) => {
+  const { w, after } = world(on)
+  await reviewing($, w, after)
+  expect([w.plan?.root, w.plan?.since]).toEqual([`${ROOT}/src`, NOW])
+  w.isStateDead = true
+  w.spawns[0]?.end('', null, 'SIGTERM')
+  await after(1000)
+  w.isStateDead = false
+  w.root = '/work'
+  expect(await exitPlan($)).toEqual({ deny: DENY })
+  await after(1000)
+  expect(w.spawns[1]?.cwd).toBe(`${ROOT}/src`)
+  w.files[ANSWERS] = { text: answered('approve'), mtimeMs: NOW - 5000 }
+  w.spawns[1]?.end(`${ANSWERS}\n`)
+  await after(1000)
+  expect(w.spawns[2]?.cwd).toBe(`${ROOT}/src`)
+})
+
+// An approval is used up before the pass.
+test('two calls of the approved text at the same time give one pass', async ($, on) => {
+  const { w, after } = world(on)
+  w.plan = held('approved')
+  await start($)
+  let release = () => {}
+  w.nativeGate = new Promise(resolve => (release = resolve))
+  const calls = [exitPlan($), exitPlan($)]
+  await after(1000)
+  const passes = w.native.length
+  release()
+  await Promise.all(calls)
+  expect(passes).toBe(1)
+})
+
+test('a rejected pass leaves a newer review alone', async ($, on) => {
+  const { w, after } = world(on)
+  w.plan = held('approved')
+  await start($)
+  let release = () => {}
+  w.nativeGate = new Promise(resolve => (release = resolve))
+  w.nativeAnswer = { result: 'User rejected the plan', isError: true }
+  const pass = exitPlan($)
+  await after(1000)
+  expect(await exitPlan($, { plan: OTHER_PLAN })).toEqual({ deny: DENY })
+  release()
+  await pass
+  await after(1000)
+  expect([w.spawns[0]?.isStopped, w.plan?.phase]).toEqual([false, 'review'])
+})
+
+test('a pass that succeeds still ends a newer review', async ($, on) => {
+  const { w, after } = world(on)
+  w.plan = held('approved')
+  await start($)
+  let release = () => {}
+  w.nativeGate = new Promise(resolve => (release = resolve))
+  const pass = exitPlan($)
+  await after(1000)
+  expect(await exitPlan($, { plan: OTHER_PLAN })).toEqual({ deny: DENY })
+  release()
+  await pass
+  await after(1000)
+  expect([w.spawns[0]?.isStopped, w.plan]).toEqual([true, idle])
+})
+
+test('an interrupt after the use-up loses the approval: it is never restored', { plugins: [interrupts] }, async ($, on) => {
+  const { w, after } = world(on)
+  w.plan = held('approved', approvedText(), PLAN, true)
+  await start($)
+  let release = () => {}
+  w.planSetGate = new Promise(resolve => (release = resolve))
+  const calling = exitPlan($)
+  await after(1000)
+  expect(await calling).toEqual({ deny: 'interrupted' })
+  release()
+  await after(1000)
+  await turn($)
+  await after(1000)
+  expect([w.plan, w.submits]).toEqual([idle, []])
+})
+
+test('an interrupted call never restores a wake that entered meanwhile', { plugins: [interrupts] }, async ($, on) => {
+  const { w, after } = world(on)
+  w.plan = held('revise', notApprovedText, PLAN, true)
+  await start($)
+  let releaseSubmit = () => {}
+  w.submitGate = new Promise(resolve => (releaseSubmit = resolve))
+  await turn($)
+  await after(1000)
+  let release = () => {}
+  w.planSetGate = new Promise(resolve => (release = resolve))
+  const calling = exitPlan($, { plan: OTHER_PLAN })
+  await after(1000)
+  releaseSubmit() // the wake entered
+  await after(1000)
+  expect(await calling).toEqual({ deny: 'interrupted' })
+  release()
+  await after(1000)
+  await turn($)
+  await after(1000)
+  expect([w.submits.length, w.plan]).toEqual([1, idle])
+})
+
+// The approval and the respawn are this session's.
+test('an approval of another session id does not pass: a new review with a topic of this session', async ($, on) => {
+  const { w, after } = world(on)
+  w.plan = held('approved')
+  w.sessionId = OTHER_ID
+  await start($)
+  expect(await exitPlan($)).toEqual({ deny: DENY })
+  await after(1000)
+  expect([w.native, w.spawns.map(s => s.argv[3])]).toEqual([[], [TOPIC.replace('0a1b2c3d', 'ffffffff')]])
+})
+
+test('a review of another session id is not respawned, at a load or by a call', async ($, on) => {
+  const { w, after } = world(on)
+  w.plan = held('review')
+  w.sessionId = OTHER_ID
+  await start($)
+  await after(1000)
+  expect(w.spawns).toEqual([])
+  expect(await exitPlan($)).toEqual({ deny: DENY })
+  await after(1000)
+  const argv = planArgv()
+  argv[3] = TOPIC.replace('0a1b2c3d', 'ffffffff')
+  expect(w.spawns.map(s => s.argv)).toEqual([argv])
+})
+
+test('a /clear while the load reads the kept wake sends it no more', async ($, on) => {
+  const { w, after } = world(on)
+  w.plan = held('approved', approvedText())
+  let release = () => {}
+  w.planGetGate = new Promise(resolve => (release = resolve))
+  const starting = start($)
+  await after(1000)
+  const ending = $.session.end({ reason: 'clear', sessionId: w.sessionId, resume: { id: w.sessionId } })
+  await after(1000)
+  release()
+  await starting
+  await ending
+  w.sessionId = OTHER_ID
+  await turn($)
+  await after(1000)
+  expect([w.submits, w.plan]).toEqual([[], null])
+})
+
+// The load's one inbox home run.
+test('an interrupted first inbox home is asked again at the next need', { plugins: [interrupts] }, async ($, on) => {
+  const { w, after } = world(on)
+  await start($)
+  let release = () => {}
+  w.homeGate = new Promise(resolve => (release = resolve))
+  const calling = exitPlan($)
+  await after(1000)
+  await calling
+  w.homeGate = undefined
+  release()
+  await after(10_000)
+  const homes = w.ran.filter(a => a[2] === 'home').length
+  expect([w.spawns.length, homes, w.looked.some(p => p.includes('/requests'))]).toEqual([0, 2, true])
+})
+
+test('an interrupted wait for the timer run asks nothing again', { plugins: [interrupts] }, async ($, on) => {
+  const { w, after } = world(on)
+  let release = () => {}
+  w.homeGate = new Promise(resolve => (release = resolve))
+  await start($)
+  await after(5000) // the timer's run
+  const calling = exitPlan($)
+  await after(1000)
+  await calling
+  release()
+  await after(10_000)
+  expect([w.ran.filter(a => a[2] === 'home').length, w.spawns]).toEqual([1, []])
+})
+
+const homeFailsOnce = {
+  name: 'homefails',
+  tier: 'prepend' as const,
+  register(on: On) {
+    let runs = 0
+    on('process.run', async ($, e, next) => {
+      if (e.argv[2] !== 'home') return next(e)
+      runs += 1
+      $.ui.log(`test: home run ${runs}`, { to: 'debug' })
+      return runs === 1 ? { deny: 'ENOENT' } : next(e)
+    })
+  },
+}
+test('another failure of inbox home is still asked once per load', { plugins: [homeFailsOnce] }, async ($, on) => {
+  const { w, after } = world(on)
+  await start($)
+  await exitPlan($) // not interrupted
+  await after(30_000)
+  expect(w.logs.filter(l => l.startsWith('test: home run'))).toEqual(['test: home run 1'])
+})
+
+for (const [what, cwd, options] of [
+  ['a root with a zero-width non-joiner', `${ROOT}/mi‌ravad`, {}],
+  ['a folder setting with a joiner', `${ROOT}/src`, { folder: 'fam‍ily' }],
+] as const) {
+  test(`${what} goes to Claude Code's own path, and no answer is lost`, { options }, async ($, on) => {
+    const { w, after } = world(on, { cwd })
+    await start($, { cwd })
+    expect(await exitPlan($)).toEqual(w.nativeAnswer)
+    await after(1000)
+    expect([w.spawns, w.submits]).toEqual([[], []])
+  })
+}
+
+// The general review's race tests.
+test('a /clear during the write of the answer', async ($, on) => {
+  const { w, after } = world(on)
+  await reviewing($, w, after)
+  let release = () => {}
+  w.planSetGate = new Promise(resolve => (release = resolve))
+  await answerPlan(w, after, answered('approve'))
+  // A decision queued between that write and the /clear's own, so the clear's second stop comes too late to cover it.
+  let releaseId = () => {}
+  w.idGate = new Promise(resolve => (releaseId = resolve))
+  const calling = exitPlan($, { plan: OTHER_PLAN })
+  await after(1000)
+  const ending = $.session.end({ reason: 'clear', sessionId: w.sessionId, resume: { id: w.sessionId } })
+  await after(1000)
+  release()
+  await after(1000)
+  expect(w.submits).toEqual([])
+  releaseId()
+  await calling
+  await ending
+  await after(1000)
+  expect([w.plan, w.submits]).toEqual([null, []])
+})
+
+test('a call before the respawn timer starts the one child', async ($, on) => {
+  const { w, after } = world(on)
+  w.plan = held('review')
+  await start($)
+  expect(await exitPlan($)).toEqual({ deny: DENY })
+  await after(1000)
+  expect(w.spawns).toHaveLength(1)
+})
+
+test('a child started by a decision queued before a native success ends with the plan', async ($, on) => {
+  const { w, after } = world(on)
+  await start($)
+  let releaseNative = () => {}
+  w.nativeGate = new Promise(resolve => (releaseNative = resolve))
+  const native = exitPlan($, { plan: 'x'.repeat(BIG + 1) })
+  await after(1000)
+  let releaseId = () => {}
+  w.idGate = new Promise(resolve => (releaseId = resolve))
+  const taken = exitPlan($)
+  await after(1000)
+  releaseNative()
+  await after(1000)
+  releaseId()
+  await taken
+  await native
+  await after(1000)
+  expect([w.spawns.map(s => s.isStopped), w.plan]).toEqual([[true], idle])
+})
+
+test('an answer being taken in while a native success ends the plan', async ($, on) => {
+  const { w, after } = world(on)
+  await reviewing($, w, after)
+  let releaseNative = () => {}
+  w.nativeGate = new Promise(resolve => (releaseNative = resolve))
+  const native = exitPlan($, { plan: 'x'.repeat(BIG + 1) })
+  await after(1000)
+  let release = () => {}
+  w.planGetGate = new Promise(resolve => (release = resolve))
+  await answerPlan(w, after, answered('approve'))
+  // A decision queued before that success, so endPlan's second stop comes too late to cover it.
+  let releaseId = () => {}
+  w.idGate = new Promise(resolve => (releaseId = resolve))
+  const calling = exitPlan($, { plan: OTHER_PLAN })
+  await after(1000)
+  releaseNative()
+  await after(1000)
+  release()
+  await after(1000)
+  expect(w.submits).toEqual([])
+  releaseId()
+  await calling
+  await native
+  await after(1000)
+  expect([w.plan, w.submits]).toEqual([idle, []])
+})
+
+test('a turn while the wake is out, then refused: no copy until the turn after', async ($, on) => {
+  const { w, after } = world(on)
+  await reviewing($, w, after)
+  let release = () => {}
+  w.submitGate = new Promise(resolve => (release = resolve))
+  await answerPlan(w, after, answered('approve'))
+  await turn($)
+  await after(1000)
+  w.drop = STOP
+  w.submitGate = undefined
+  release()
+  await after(10_000)
+  expect(w.submits).toHaveLength(1)
+  w.drop = undefined
+  await turn($)
+  await after(1000)
+  expect(w.submits).toHaveLength(2)
+})
+
+test('a call interrupted while it looks for the project starts no child of a resume', { plugins: [interrupts] }, async ($, on) => {
+  const { w, after } = world(on, { lock: false })
+  w.plan = held('review')
+  await start($)
+  await after(1000)
+  w.files[`${SO}/inbox.lock`] = { text: '', mtimeMs: NOW + 1000 }
+  let release = () => {}
+  w.rootGate = new Promise(resolve => (release = resolve))
+  const calling = exitPlan($)
+  await after(1000)
+  expect(await calling).toEqual({ deny: 'interrupted' })
+  release()
+  await after(1000)
+  expect([w.spawns, w.plan]).toEqual([[], held('review')])
 })
