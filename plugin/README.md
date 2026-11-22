@@ -79,7 +79,9 @@ none, and stays up for a second look.
 
 The messages you send this project from the inbox, and the inbox's notes on rounds you finished after their run had
 ended, reach the session through the mod. At each look it also checks the time of the project's request folder in
-the inbox's folder, and lists that folder only when the time changed. Only for a message it has not handed over yet
+the inbox's folder, and lists that folder when the time changed. After you stop the agent with Esc, Claude Code
+takes no message from a plugin until you send something: at your next turn the mod lists the folder again and sends
+what Claude Code refused, with no command run for that. Only for a message it has not handed over yet
 does it run the signoff command's inbox requests, which prints each message as one line for the agent (at most ten
 at once); the mod hands those lines to the session as one message from the plugin, which Claude Code runs as a turn
 of its own once the session is idle. It never reads what the command prints on its error stream. It keeps which

@@ -133,7 +133,9 @@ Signoff inbox: the user sent you a message on the todo item "Ship the release": 
 
 A session open in the project gets it from the plugin's mod (`plugin/hooks/register.tsx`), within seconds when the
 session is idle, else as a turn of its own after the one that runs; with several sessions open there, each one gets
-it. The mod does not look with `claude -p`: such a session gets it only at a
+it. After you stop the agent with Esc, Claude Code takes no message from a plugin until you send something: the
+message then goes at your next turn, as a turn of its own.
+The mod does not look with `claude -p`: such a session gets it only at a
 later session start with no other live session of the project. The mod's project is the session's root (where it
 started, or where `/cd` or a worktree move took it; a shell `cd` does not move it); a project the root moves into
 gets its older messages at such a later session start too. With no session of the project open, the next session

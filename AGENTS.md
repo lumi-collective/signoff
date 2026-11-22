@@ -490,7 +490,7 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   the session's project is found, also with `hint` `off`, it reads the time of `requests/<project>/` in the home
   through `$.fs` (no folder: no request). Only when it changed since its last listing, when that listing was
   less than 2 seconds after that time (a coarse clock gives a write right after it the same time), while a batch
-  it cut waits, or at a retry, it lists the folder through `$.fs`. A request is new when its `<id>.json` (16 hex
+  it cut waits, at a retry, or at a turn's resend (below), it lists the folder through `$.fs`. A request is new when its `<id>.json` (16 hex
   digits, a regular file, not a link) has a time at or after the session's mark, has no `<id>.done` beside it,
   and is not among the ids it handed over (an id leaves them only when a listing shows its `<id>.done`: one not in
   the folder may be another project's, handed over before a `/cd`; past 1000 the oldest is dropped, which can
@@ -512,7 +512,17 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   older Python's table misses a few format characters), so it holds up no other line; a later session start with
   no other live session of the project hands it over, as it is not done. It marks the reply's ids handed over first, then sends the lines, one per line, as one
   `$.prompt.submit` (framed as the plugin's, never `asUser`), which Claude Code runs as a turn of its own once
-  the session is idle; a `drop` unmarks them, as a failure. `gone` ids (done, unreadable, or of a kind this
+  the session is idle; a submit that did not enter (a `drop`, or an error) unmarks them, as a failure, and this
+  load keeps those checked lines, the last batch refused: after an Esc Claude Code drops every plugin prompt until
+  the user sends input, which may be long after the last retry. At the next main turn (`turn.start` without
+  `agentId`), also with the retries used up, it looks at once without the turn waiting for it, or at the look right
+  after it (a look or a hand-over ran; the inbox not live: its first live look): one listing, then the kept lines,
+  less those done or gone since, go as the first time, marked first, with no process; what else is new goes at the
+  next look. Refused again is a failure again, and they stay for the turn after. With none kept, a turn costs no
+  process, `$.fs` call or submit. A `/clear` and a project change forget the kept lines, and a submit refused after
+  either keeps none (after a `/clear` it writes no mark back); a reload loses them, and the normal look fetches
+  them again. It never works around the Stop: no `asUser`, no tighter timer, no other channel. `gone` ids (done,
+  unreadable, or of a kind this
   plugin does not know) are marked and never sent; what the command cut at `MAX_HANDOVER_TEXT` goes at the next
   look. Every live session of the project gets each request. Nothing else goes into the prompt: no path, token,
   link or other project's request; it writes no file. Known limits: a session whose mod does not look

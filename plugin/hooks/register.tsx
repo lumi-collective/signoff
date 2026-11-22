@@ -11,6 +11,7 @@ import type { PanelRows } from '../types'
 
 type Engine = EngineInterface
 type DrawInput = RenderInput<'Pane'> | RenderInput<'AbovePrompt'>
+type Line = { id: string; line: string } // a request's line, as checkReply took it
 
 const COMMAND = 'signoff:open' // commands/open.md: a mod cannot register a name with a colon
 const PANE = 'signoff'
@@ -68,6 +69,9 @@ const look = {
   isCut: false, // a batch left new requests for the next look
   failures: 0, // failed batches in a row
   retryAt: 0, // when a failed batch is tried again; 0: not by time
+  // After an Esc, Claude Code drops a plugin's prompt until the user sends input, so retries by time are not enough.
+  dropped: [] as Line[], // the checked lines of the last dropped submit, for the next main turn
+  isTurned: false, // a main turn started since the last hand-over began
 }
 
 const hint = () => (look.options.hint === 'status' || look.options.hint === 'off' ? look.options.hint : 'band')
@@ -125,7 +129,7 @@ async function findProject($: Engine, home: string): Promise<string | undefined>
     }
   }
   // The notes on the requests folder were the other project's, as at a /clear.
-  if (project !== look.project) Object.assign(look, { listedAt: -1, isCut: false, failures: 0, retryAt: 0 })
+  if (project !== look.project) Object.assign(look, { listedAt: -1, isCut: false, failures: 0, retryAt: 0, dropped: [] })
   look.project = project
   look.root = session
   look.projectsAt = at // only after a whole listing: a failed one is tried again at the next look
@@ -196,7 +200,7 @@ type Ran = { exitCode: number; stdout: string; isStdoutTruncated: boolean }
 // its frame with its own id that is not one line by this engine's Unicode table (an older Python's misses a few
 // format characters): marked, not sent, so it holds up no later request; a later session start with no other live
 // session of the project hands it over.
-function checkReply($: Engine, ran: Ran, asked: string[]): { lines: string[]; sentIds: string[]; named: string[] } | undefined {
+function checkReply($: Engine, ran: Ran, asked: string[]): { lines: Line[]; named: string[] } | undefined {
   if (ran.exitCode !== 0 || ran.isStdoutTruncated) return undefined
   let got: { requests?: unknown; gone?: unknown }
   try {
@@ -206,8 +210,7 @@ function checkReply($: Engine, ran: Ran, asked: string[]): { lines: string[]; se
   }
   if (!Array.isArray(got?.requests) || !Array.isArray(got.gone)) return undefined
   const named: string[] = []
-  const lines: string[] = []
-  const sentIds: string[] = []
+  const lines: Line[] = []
   const isNew = (id: unknown): id is string => typeof id === 'string' && asked.includes(id) && !named.includes(id)
   for (const r of got.requests as { id?: unknown; line?: unknown }[]) {
     const { id, line } = r ?? {}
@@ -218,15 +221,14 @@ function checkReply($: Engine, ran: Ran, asked: string[]): { lines: string[]; se
       $.ui.log('signoff: a request line was not one line; a later session start with no other live session of the project hands it over', { to: 'debug' })
       continue
     }
-    sentIds.push(id)
-    lines.push(line)
+    lines.push({ id, line })
   }
   for (const id of got.gone) {
     if (!isNew(id)) return undefined
     named.push(id)
   }
   // The command always fits the first one, so a reply naming none is no answer.
-  return named.length ? { lines, sentIds, named } : undefined
+  return named.length ? { lines, named } : undefined
 }
 
 function failed($: Engine, now: number) {
@@ -237,10 +239,13 @@ function failed($: Engine, now: number) {
 }
 
 // The requests the user sent this project from the inbox: listed through $.fs only when the folder changed (or a
-// batch was cut, or a retry is due), and a process only for ids it has not handed over.
+// batch was cut, a retry is due, or a turn started while a dropped batch waits), and a process only for ids it has
+// not handed over, never to send a dropped batch again at a turn.
 async function deliver($: Engine, home: string, project: string, root: string) {
-  if (look.isDelivering) return
+  if (look.isDelivering) return // a turn meanwhile stays noted, for the next look
   look.isDelivering = true
+  const isResend = look.isTurned && look.dropped.length > 0
+  look.isTurned = false
   try {
     const now = await $.clock.now()
     const held = await read($, requestsA)
@@ -264,7 +269,7 @@ async function deliver($: Engine, home: string, project: string, root: string) {
     const isRetry = look.retryAt > 0 && now >= look.retryAt
     // A listing within 2 s of the folder's time may share its tick with a later write (HFS+ 1 s, FAT 2 s): once more,
     // unless a failed batch waits for its retry.
-    if (at === look.listedAt && (look.listedNow - at >= 2_000 || look.retryAt > 0) && !look.isCut && !isRetry) return
+    if (at === look.listedAt && (look.listedNow - at >= 2_000 || look.retryAt > 0) && !look.isCut && !isRetry && !isResend) return
     look.listedAt = at // before the listing: a write during it changes the time again, for the next look
     look.listedNow = now
     look.isCut = false
@@ -287,24 +292,36 @@ async function deliver($: Engine, home: string, project: string, root: string) {
     // Each write keeps the mark and its project as $.state holds them.
     const keep = (ids: string[]) => update($, requestsA, old => ({ since: old?.since ?? mark.since, sent: ids, project: old?.project ?? project }))
     if (sent.length !== mark.sent.length) await keep(sent)
+    look.dropped = look.dropped.filter(d => fresh.some(e => e.name === `${d.id}.json`)) // less what is done since
     if (!asked.length) return
-    // The session root too: the command checks it is in this project (a nested one the hooks have not noted is not).
-    const ran = await $.process
-      .run([`${$.plugin.root}/bin/signoff`, 'inbox', 'requests', root, project, ...asked], { timeoutMs: 10_000 })
-      .catch(() => undefined)
-    const reply = ran && checkReply($, ran, asked) // its stderr is never read
+    let reply: ReturnType<typeof checkReply>
+    if (isResend && look.dropped.length) reply = { lines: look.dropped, named: look.dropped.map(d => d.id) }
+    else {
+      // The session root too: the command checks it is in this project (a nested one the hooks have not noted is not).
+      const ran = await $.process
+        .run([`${$.plugin.root}/bin/signoff`, 'inbox', 'requests', root, project, ...asked], { timeoutMs: 10_000 })
+        .catch(() => undefined)
+      reply = ran && checkReply($, ran, asked) // its stderr is never read
+    }
     if (!reply) return failed($, now)
-    // What the command cut at MAX_HANDOVER_TEXT, and what did not fit MAX_IDS, goes at the next look.
-    look.isCut = fresh.length > asked.length || reply.named.length < asked.length
+    const { lines, named } = reply
+    // What the command cut at MAX_HANDOVER_TEXT, what did not fit MAX_IDS, and what a resend did not hold go at the
+    // next look.
+    look.isCut = fresh.length > named.length
     // Marked before it goes, so a reload while the engine holds the submit does not send it again.
-    const marked = [...sent, ...reply.named].slice(-MAX_SENT)
+    const marked = [...sent, ...named].slice(-MAX_SENT)
     await keep(marked)
-    if (reply.lines.length && !(await submit($, reply.lines.join('\n')))) {
-      await keep(marked.filter(id => !reply.sentIds.includes(id)))
+    if (lines.length && !(await submit($, lines.map(l => l.line).join('\n')))) {
+      // A /clear while the engine held the submit: writing the mark back would bring its batch into the new conversation.
+      if ((await read($, requestsA)) === null) return
+      await keep(marked.filter(id => !lines.some(l => l.id === id)))
+      if (look.project === project) look.dropped = lines // a project change meanwhile forgot them
       return failed($, now)
     }
     look.failures = 0
+    look.dropped = []
   } catch (err) {
+    look.isTurned ||= isResend // the next look tries the resend, with no process
     $.ui.log(`signoff: requests look failed (${err instanceof Error ? err.name : typeof err})`, { to: 'debug' })
   } finally {
     look.isDelivering = false
@@ -547,8 +564,18 @@ async function onSessionStart($: Engine, e: Args<'session.start'>, next: Next<'s
 // A /clear ends the conversation and empties $.state but keeps this module: this load's notes on the requests go too,
 // so the new mark is looked at from a fresh listing.
 async function onSessionEnd(_$: Engine, e: Args<'session.end'>, next: Next<'session.end'>) {
-  if (e.reason === 'clear') Object.assign(look, { listedAt: -1, isCut: false, failures: 0, retryAt: 0 })
+  if (e.reason === 'clear') Object.assign(look, { listedAt: -1, isCut: false, failures: 0, retryAt: 0, dropped: [] })
   return next(e)
+}
+
+// The user went on, so a Stop no longer stands: what was dropped goes with a look now, or with the next one when a
+// look or a hand-over runs. The turn never waits for it, and with nothing dropped it costs a note in memory.
+async function onTurnStart($: Engine, e: Args<'turn.start'>, next: Next<'turn.start'>) {
+  const started = await next(e)
+  if (e.agentId !== undefined) return started
+  look.isTurned = true
+  if (look.dropped.length) void poll($).catch(() => undefined)
+  return started
 }
 
 // Typed at the prompt it opens the panel and says nothing: the command's output row would go into the conversation.
@@ -615,6 +642,7 @@ export const register: Register = (on, options) => {
   look.options = options
   on('session.start', onSessionStart)
   on('session.end', onSessionEnd)
+  on('turn.start', onTurnStart)
   on('command.run', { command: COMMAND }, onCommandRun)
   on('ui.close', onClose)
   on('ui.render', { component: 'AbovePrompt' }, onBand)

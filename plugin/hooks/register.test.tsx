@@ -210,6 +210,7 @@ function world(
     return w.drop === undefined ? { text: e.text } : { drop: w.drop }
   })
   on('session.end', (_, e) => ({ sessionId: e.sessionId }))
+  on('turn.start', (_, e) => ({ turnId: `engine ${e.turnId}` })) // so a hook's own answer shows
   on('ui.open', (_, e) => {
     w.opened.push({ id: e.id, focus: e.focus })
     w.order.push('open')
@@ -1243,6 +1244,336 @@ test('a dropped submit is unmarked and tried again; the log says it was dropped,
   expect(w.marks?.sent).toEqual([R(1)])
   expect(w.logs.some(l => l.startsWith('signoff:'))).toBe(true)
   expect(w.logs.join('\n')).not.toMatch(/private words|Stop hook/)
+})
+
+// After an Esc, Claude Code drops a plugin's prompt until the user sends input: that input's turn.start.
+const STOP = 'the session was stopped and nobody has sent input since'
+const turn = ($: Engine, agentId?: string) => $.turn.start({ text: 'go on', turnId: 't1', ...(agentId && { agentId }) })
+const spent = (w: World) => [w.fsCalls, w.ran.length, w.submits.length]
+
+/** A request on its way while a Stop stands, its submit dropped at this look. */
+async function dropOne(w: World, after: (ms: number) => Promise<void>, now: () => number) {
+  w.drop = STOP
+  await after(5000)
+  request(w, 1, now(), 'private words')
+  await after(5000)
+  expect([w.submits.length, w.marks?.sent]).toEqual([1, []])
+}
+
+test('a request dropped after an Esc goes when the user goes on four minutes later, its retries used up, with no process', async ($, on) => {
+  const { w, after, clock } = world(on)
+  await start($)
+  await dropOne(w, after, clock.now)
+  await after(240_000)
+  expect(requestRuns(w)).toHaveLength(4) // one and its three retries: no more by time
+  w.drop = undefined // the user typed: no Stop stands
+  expect(await turn($)).toEqual({ turnId: 'engine t1' })
+  await after(1000) // no look is due yet: the turn itself sends
+  expect(requestRuns(w)).toHaveLength(4)
+  expect(w.submits).toHaveLength(5)
+  expect(w.submits.at(-1)).toEqual({ text: lineOf(R(1), 'private words'), asUser: undefined, sent: [R(1)] }) // marked first
+  await after(600_000)
+  await turn($)
+  await after(5000)
+  expect([requestRuns(w).length, w.submits.length, w.marks?.sent]).toEqual([4, 5, [R(1)]])
+})
+
+test('a turn with nothing held costs nothing: none waits, a request went, or one failed without a drop', async ($, on) => {
+  const { w, after, clock } = world(on)
+  await start($)
+  await after(5000)
+  const free = async () => {
+    const before = [...spent(w), w.order.length]
+    expect(await turn($)).toEqual({ turnId: 'engine t1' })
+    await after(1000)
+    expect([...spent(w), w.order.length]).toEqual(before)
+    await after(4000)
+  }
+  await free()
+  request(w, 1, clock.now())
+  await after(5000)
+  await free()
+  w.requestsOut = () => ({ stdout: '', exitCode: 1 })
+  request(w, 2, clock.now())
+  await after(5000)
+  await free() // a failed command keeps its rule: the retry after 60 s, not the turn
+  expect(requestRuns(w)).toEqual([asked(1), asked(2)])
+  // A request dropped and then delivered by its retry leaves nothing held.
+  w.requestsOut = undefined
+  w.drop = STOP
+  request(w, 3, clock.now())
+  await after(5000)
+  w.drop = undefined
+  await after(60_000)
+  await free()
+  expect(w.submits).toHaveLength(3)
+})
+
+test('a turn before the drop is not the next one: the dropped request waits for its retry', async ($, on) => {
+  const { w, after, clock } = world(on)
+  await start($)
+  await after(5000)
+  await turn($)
+  w.drop = STOP
+  request(w, 1, clock.now())
+  await after(30_000)
+  expect(w.submits).toHaveLength(1)
+})
+
+test('a subagent turn never sends what is held: no call at it, and none at the look after it', async ($, on) => {
+  const { w, after, clock } = world(on)
+  await start($)
+  await dropOne(w, after, clock.now)
+  const before = spent(w)
+  expect(await turn($, 'agent-1')).toEqual({ turnId: 'engine t1' })
+  await after(1000)
+  expect(spent(w)).toEqual(before)
+  await after(9000)
+  expect(w.submits).toHaveLength(1)
+})
+
+test('dropped again at the turn it stays, with no process, and is delivered at the turn after', async ($, on) => {
+  const { w, after, clock } = world(on)
+  await start($)
+  await dropOne(w, after, clock.now)
+  await after(240_000)
+  for (const n of [5, 6, 7]) {
+    await turn($) // a plugin above that always drops
+    await after(10_000)
+    expect([requestRuns(w).length, w.submits.length, w.marks?.sent]).toEqual([4, n, []])
+  }
+  await after(300_000) // no timer of its own
+  expect([requestRuns(w).length, w.submits.length]).toEqual([4, 7])
+  w.drop = undefined
+  await turn($)
+  await after(1000)
+  expect([requestRuns(w).length, w.submits.length, w.marks?.sent]).toEqual([4, 8, [R(1)]])
+  expect(w.submits.map(s => s.asUser).filter(Boolean)).toEqual([])
+  expect([...w.toasts, ...w.logs].join('\n')).not.toMatch(/private words|stopped and nobody/)
+})
+
+test('a turn just before the retry is due: the request goes once, with no process', async ($, on) => {
+  const { w, after, clock } = world(on)
+  await start($)
+  await dropOne(w, after, clock.now)
+  await after(59_000)
+  w.drop = undefined
+  await turn($)
+  await after(120_000)
+  expect([requestRuns(w), w.submits.length, w.marks?.sent]).toEqual([[asked(1)], 2, [R(1)]])
+})
+
+test('a turn while the retry waits on the engine: no second copy, and the turn does not wait for it', async ($, on) => {
+  const { w, after, clock } = world(on)
+  await start($)
+  await dropOne(w, after, clock.now)
+  let release = () => {}
+  w.submitGate = new Promise(resolve => (release = resolve))
+  await after(60_000)
+  expect(await turn($)).toEqual({ turnId: 'engine t1' })
+  await after(10_000)
+  expect(w.submits).toHaveLength(2)
+  w.drop = undefined
+  release()
+  await after(120_000)
+  expect([requestRuns(w).length, w.submits.length, w.marks?.sent]).toEqual([2, 2, [R(1)]])
+})
+
+test('a turn while the retry is on its way to a drop: the look right after sends it, with no process', async ($, on) => {
+  const { w, after, clock } = world(on)
+  await start($)
+  await dropOne(w, after, clock.now)
+  let release = () => {}
+  w.submitGate = new Promise(resolve => (release = resolve))
+  await after(60_000)
+  await turn($)
+  await after(1000) // the turn's own look found the retry on its way
+  release() // still dropped: it was refused before the user's input
+  await after(1000)
+  expect(w.submits).toHaveLength(2)
+  w.drop = undefined
+  await after(3000)
+  expect([requestRuns(w).length, w.submits.length, w.marks?.sent]).toEqual([2, 3, [R(1)]])
+})
+
+test('a turn while the first submit is on its way to a drop: the look right after sends it', async ($, on) => {
+  const { w, after, clock } = world(on)
+  let release = () => {}
+  w.submitGate = new Promise(resolve => (release = resolve))
+  w.drop = STOP
+  await start($)
+  await after(5000)
+  request(w, 1, clock.now())
+  await after(5000)
+  await turn($) // nothing is known dropped yet
+  release()
+  await after(1000)
+  w.drop = undefined
+  await after(4000)
+  expect([requestRuns(w).length, w.submits.length, w.marks?.sent]).toEqual([1, 2, [R(1)]])
+})
+
+test('a request written since the drop: the held one at the turn, the new one at the next look', async ($, on) => {
+  const { w, after, clock } = world(on)
+  await start($)
+  await dropOne(w, after, clock.now)
+  await after(20_000)
+  request(w, 2, clock.now())
+  await after(3000) // past the clock tick's 2 s, before any look
+  w.drop = undefined
+  await turn($)
+  await after(1000)
+  expect([requestRuns(w), w.submits.at(-1)?.text]).toEqual([[asked(1)], lineOf(R(1), 'private words')])
+  await after(1000)
+  expect([requestRuns(w), w.submits.at(-1)?.text]).toEqual([[asked(1), asked(2)], lineOf(R(2), 'message 2')])
+})
+
+test('the turn does not wait for the resend, and a reload during it finds the request marked', async ($, on) => {
+  const { w, after, clock } = world(on)
+  await start($)
+  await dropOne(w, after, clock.now)
+  let release = () => {}
+  w.submitGate = new Promise(resolve => (release = resolve))
+  w.drop = undefined
+  expect(await turn($)).toEqual({ turnId: 'engine t1' })
+  await after(1000)
+  expect([w.submits.length, w.marks?.sent]).toEqual([2, [R(1)]]) // $.state, all that a reload keeps
+  await turn($)
+  await after(10_000)
+  expect(w.submits).toHaveLength(2)
+  release()
+  await after(5000)
+  expect(w.submits).toHaveLength(2)
+})
+
+test('what was marked done since the drop is left out at the turn; with all done, a turn then costs nothing', async ($, on) => {
+  const { w, after, clock } = world(on)
+  w.drop = STOP
+  await start($)
+  await after(5000)
+  for (const k of [1, 2, 3]) request(w, k, clock.now() + k)
+  await after(5000)
+  done(w, 2, clock.now())
+  await turn($)
+  await after(1000)
+  expect(w.submits.at(-1)?.text).toBe(`${lineOf(R(1), 'message 1')}\n${lineOf(R(3), 'message 3')}`)
+  expect(requestRuns(w)).toEqual([asked(1, 2, 3)])
+  for (const k of [1, 3]) done(w, k, clock.now())
+  await turn($)
+  await after(4000)
+  const before = spent(w)
+  expect(before[2]).toBe(2) // nothing left to send
+  await turn($)
+  await after(1000)
+  expect(spent(w)).toEqual(before)
+})
+
+test('more dropped than a batch holds: the held ten at the turn, then the rest at the next look', async ($, on) => {
+  const { w, after, clock } = world(on)
+  w.drop = STOP
+  await start($)
+  await after(5000)
+  const at = clock.now()
+  for (let k = 1; k <= 12; k++) request(w, k, at + k)
+  await after(240_000)
+  const runs = requestRuns(w).length
+  w.drop = undefined
+  await turn($)
+  await after(1000)
+  expect(requestRuns(w)).toHaveLength(runs)
+  expect(w.submits.at(-1)?.text.split('\n')).toHaveLength(10)
+  await after(4000)
+  expect(requestRuns(w).slice(runs)).toEqual([asked(11, 12)])
+  expect(w.marks?.sent).toHaveLength(12)
+})
+
+test('a turn with a dead inbox or a failed listing still returns, and the look after it sends with no process', async ($, on) => {
+  const { w, after, clock } = world(on)
+  await start($)
+  await dropOne(w, after, clock.now)
+  await after(240_000)
+  await after(20_000, { isAlive: false })
+  w.drop = undefined
+  expect(await turn($)).toEqual({ turnId: 'engine t1' })
+  await after(1000, { isAlive: false })
+  expect(w.submits).toHaveLength(4)
+  w.listFailures = 1
+  await after(4000)
+  expect(w.submits).toHaveLength(4)
+  await after(5000)
+  expect([requestRuns(w).length, w.submits.length]).toEqual([4, 5])
+})
+
+test('a /clear forgets what was held', async ($, on) => {
+  const { w, after, clock } = world(on)
+  await start($)
+  await dropOne(w, after, clock.now)
+  await $.session.end({ reason: 'clear', sessionId: 's1', resume: { id: 's1' } })
+  w.marks = null as Marks
+  w.drop = undefined
+  const before = spent(w)
+  await turn($)
+  await after(1000)
+  expect(spent(w)).toEqual(before)
+  await after(4000) // the new mark's margin takes it in again: from the command, not from what was held
+  expect(requestRuns(w)).toEqual([asked(1), asked(1)])
+})
+
+test('a project change forgets what was held', async ($, on) => {
+  const { w, after, clock } = world(on)
+  await start($)
+  await dropOne(w, after, clock.now)
+  w.root = '/work'
+  await after(5000)
+  w.drop = undefined
+  const before = spent(w)
+  await turn($)
+  await after(1000)
+  expect(spent(w)).toEqual(before)
+  await after(120_000)
+  expect(w.submits).toHaveLength(1)
+})
+
+test('a /clear while the engine holds the submit: its drop holds nothing for the new conversation', async ($, on) => {
+  const { w, after, clock } = world(on)
+  let release = () => {}
+  w.submitGate = new Promise(resolve => (release = resolve))
+  w.drop = STOP
+  await start($)
+  await after(5000)
+  request(w, 1, clock.now())
+  await after(5000)
+  await after(20_000)
+  await $.session.end({ reason: 'clear', sessionId: 's1', resume: { id: 's1' } })
+  w.marks = null as Marks
+  release()
+  await after(1000)
+  const before = spent(w)
+  await turn($)
+  await after(1000)
+  expect([spent(w), w.marks]).toEqual([before, null])
+  w.drop = undefined
+  await after(70_000)
+  expect([requestRuns(w).length, w.submits.length]).toEqual([1, 1]) // older than the new mark
+})
+
+test('a /cd while the engine holds the submit: its drop holds nothing for the new project', async ($, on) => {
+  const { w, after, clock } = world(on)
+  let release = () => {}
+  w.submitGate = new Promise(resolve => (release = resolve))
+  w.drop = STOP
+  await start($)
+  await after(5000)
+  request(w, 1, clock.now())
+  await after(5000)
+  w.root = '/work'
+  await after(5000)
+  release()
+  await after(1000)
+  const before = spent(w)
+  await turn($)
+  await after(1000)
+  expect(spent(w)).toEqual(before)
 })
 
 test('more new requests than a batch holds: the oldest ten, then the rest at the next look', async ($, on) => {
