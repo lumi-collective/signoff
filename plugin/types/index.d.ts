@@ -13,7 +13,20 @@ export type PanelRows = {
   isFailed: boolean
 }
 
-// The hooks module's session values (hooks/register.tsx): numbers, and the panel's one-line titles.
+/**
+ * This session's plan review. topic: its topic folder's name, set at the first take-over and kept until a /clear or
+ * a /resume. text: the plan as sent on stdin ('' once the review is over). phase: review while the user's answer is
+ * awaited; approved until that plan went through; revise or answered (no approval) only while their wake is held.
+ * wake: the fixed message to the model, held until a submit of it entered (isToasted: the user had the toast).
+ */
+export type PlanReview = {
+  topic: string
+  text: string
+  phase: 'review' | 'approved' | 'revise' | 'answered' | null
+  wake: { text: string; isToasted: boolean } | null
+}
+
+// The hooks module's session values (hooks/register.tsx): numbers, the panel's one-line titles and the plan review.
 declare module 'claude-code' {
   interface PluginState {
     signoff: {
@@ -36,6 +49,8 @@ declare module 'claude-code' {
        * oldest dropped). Null until then.
        */
       requests: { since: number; sent: string[]; project?: string } | null
+      /** The plan review (a reload keeps it, with its wake). Null until a first take-over. */
+      plan: PlanReview | null
     }
   }
 }

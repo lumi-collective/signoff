@@ -4764,6 +4764,9 @@ def _plan(argv):
     path = topic / ("round-%02d.json" % n)
     try:
         topic.mkdir(parents=True, exist_ok=True)
+    except OSError as e:  # a read-only decisions folder, say: no link
+        return say("cannot write in %s (%s)" % (topic, e.strerror or e))
+    try:
         fd = _open_folder(topic)  # the folder written in is this one, with no link swapped in since the check
     except OSError as e:
         return say("cannot open %s as a folder of its own, not a link (%s)" % (topic, e.strerror or e))

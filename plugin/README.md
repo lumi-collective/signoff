@@ -87,6 +87,17 @@ at once); the mod hands those lines to the session as one message from the plugi
 of its own once the session is idle. It never reads what the command prints on its error stream. It keeps which
 messages it handed over in Claude Code's session state, so a reload of the mod sends none twice.
 
+While the inbox runs, the mod also takes a plan over when Claude leaves plan mode in the main conversation: it
+refuses that call with a fixed text and starts the signoff command's plan, with the plan on that command's standard
+input. That command writes the plan and a Plan review round into your decisions folder and waits until you answer
+in the inbox; after a reload of the mod, the mod starts it again on the same round. Of your answers file the mod
+reads only whether it is done and whether you approved, and sends the session one message from the plugin, with
+fixed text and that file's path, none of your words. The agent reads your comment and line notes from the file.
+After an approval the same plan goes on once, to Claude Code's own dialog. After an Esc, the message waits for your
+next turn, and a notice says so. The mod stops that command at /clear, at /resume and when you approve a plan in
+Claude Code's own dialog. It keeps the plan's text in Claude Code's session state while the review runs. The Plan
+review setting in /config turns this off (off); the default is inbox.
+
 Open and the /signoff:open command open a panel beside the chat. They run the signoff command's inbox rows once,
 which asks the running inbox for this project's open rounds and their open questions (numbers and one-line titles;
 it never starts the inbox). The panel lists them, with a row for all projects in the inbox (Open the inbox, when no

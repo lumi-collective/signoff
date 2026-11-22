@@ -21,7 +21,7 @@ exception is the hand-over of messages from the inbox at a session's start, desc
 run in `sh`: on Windows that is Git Bash, which Claude Code uses for hooks when it is installed; without it Claude
 Code uses PowerShell, where each command does nothing (Claude Code then says once per session that a hook ran in
 PowerShell; for Signoff's hooks you can ignore it, or install Git for Windows). The plugin keeps no
-background process in a session. The plugin's mod
+background process in a session but a plan review's waiter while that review is open (below). The plugin's mod
 (`plugin/hooks/register.tsx`, in a Claude Code
 that runs plugin mods, interactive sessions, not on Windows) runs inside Claude Code and starts no process of its own
 to look. Every five seconds it checks for `inbox.lock` in the default homes. Once one is there, it runs
@@ -36,6 +36,16 @@ as one prompt from the plugin (a line in that frame that holds a control, format
 or is too long, is not sent; a later session
 start with no other live session of the project hands it over). Whoever can write the home's `requests/` folder
 can put such a line before the agent; that folder is the user's own, in the 0700 home, as before.
+
+For a plan review (the `plan` setting, on by default while an inbox lives) the mod refuses the `ExitPlanMode` call
+with fixed text and runs `signoff plan --topic <date>-plan-<session> --folder <folder> [--resume]` in the session's
+root, with the plan on stdin and never in an argument. That process waits until you answer (at a reload of the mod
+it is started again with `--resume`) and is stopped by `/clear`, `/resume` or an approval in Claude Code's own
+dialog. The mod takes from it one line, the answers path, checked to be one line in that topic folder, and reads
+only `done` and the plan item's `choice` and `source` from that file (4 MiB at most; a larger or unreadable one is
+no approval). To the session it sends fixed text and that path, never your words. An approval lets that exact plan
+text through once, to Claude Code's own dialog. Whoever can write the answers file can approve; in plan mode the
+agent cannot write one unless you allow that write.
 
 Its Open button and `/signoff:open` open a panel. They run `signoff inbox rows <session root>` once. That asks
 the running inbox's control socket for the project's open rounds and their open questions (run and item numbers and

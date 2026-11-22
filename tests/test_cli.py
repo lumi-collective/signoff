@@ -1420,7 +1420,17 @@ class CliPlan(unittest.TestCase):
         with mock.patch.object(Path, "mkdir", linked_in), mock.patch.object(signoff, "_run", return_value=0):
             code, err = self.in_process(self.argv(folder=str(self.project / ".signoff")))
         self.assertEqual((code, err.count("\n")), (1, 1), err)
+        self.assertIn("cannot open", err)
         self.assertEqual(os.listdir(str(elsewhere)), [])
+
+    def test_a_topic_folder_it_cannot_make_says_it_cannot_write(self):
+        self.live()
+        denied = PermissionError(errno.EACCES, "Permission denied")
+        with mock.patch.object(Path, "mkdir", side_effect=denied), mock.patch.object(signoff, "_run", return_value=0):
+            code, err = self.in_process(self.argv(folder=str(self.project / ".signoff")))
+        self.assertEqual((code, err.count("\n")), (1, 1), err)
+        self.assertIn("cannot write in", err)
+        self.assertNotIn("not a link", err)  # a read-only decisions folder is no link; its path may hold the word
 
     @unittest.skipIf(sys.platform == "win32", "the folder is opened as a descriptor on POSIX only")
     def test_a_file_that_appears_at_the_new_name_is_never_written_over(self):

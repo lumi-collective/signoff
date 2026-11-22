@@ -123,6 +123,22 @@ before you use it too: that run refuses the new `source`.
 
 ## Plan review
 
+While the inbox runs, when Claude is about to leave plan mode, the plugin's mod holds the plan back and puts it on
+a Plan review round in the inbox. The agent is told the plan waits and ends its turn; Claude Code shows that as a
+refused ExitPlanMode. You approve it there, or ask for changes with a comment and line notes, and press Done. The
+agent then gets a message that says it comes from the Signoff plugin: after an approval it calls ExitPlanMode again
+with the same plan and Claude Code's own dialog asks; after anything else it reads your notes and revises. If you
+stopped the agent with Esc meanwhile, a notice says your answer is saved: send any message and the agent gets it.
+
+A plan you approve in Claude Code's own dialog instead (the inbox had stopped, say) ends the review. So do
+`/clear` and `/resume`: the round then stays in the inbox and no longer approves anything. A review that could not
+run says so to the agent, and plans then get Claude Code's own dialog until the mod loads again or the inbox
+restarts. Claude Code's own dialog is also what you get with no inbox, in a folder that is no project, for a
+subagent's plan, for a plan over 256 KiB, with `claude -p`, on Windows, and with the Plan review setting in
+`/config` set to off (the default is inbox).
+
+The command the mod runs for it:
+
 ```
 signoff plan --topic <YYYY-MM-DD-plan-id> --folder <decisions folder> [--resume] < plan.md
 ```
@@ -150,7 +166,9 @@ stderr and nothing written for a usage error, a plan that is not UTF-8, empty or
 folder outside any project, a topic folder that is a link or a file, no running inbox, or an older open round of
 the topic that another live run still waits on. When the running inbox is older than this Signoff and does not
 take the round in, it closes the round ("not shown: the inbox is older than this plugin; restart it") and exits 1
-with a line that says to restart the inbox. When another program creates a file at the new round's name in the
+with a line that says to restart the inbox. When it cannot make the topic folder (a read-only decisions folder,
+say) or open it as a folder of its own, it exits 1 and writes no file, but a folder it made on the way can stay
+behind, empty. When another program creates a file at the new round's name in the
 moment between its look and its write, it exits 1; the older rounds are closed by then, and `plan-MM.md` may be
 there.
 

@@ -31,13 +31,14 @@ Instructions for coding agents working on Signoff. The README says what it does 
   Code's `/restart` refuses while one runs).
 - `plugin/hooks/register.tsx`: the plugin's mod, the hooks module `hooks.json` names under `modules` (its test runs in
   CI on Claude Code's stable and latest channels). The band (`Signoff: N waiting`, Open, Hide),
-  the toast, the status line entry, the hand-over of the inbox's requests (`$.prompt.submit`), the panel (the
+  the toast, the status line entry, the hand-over of the inbox's requests (`$.prompt.submit`), the plan review
+  (the `tool.call` hook on `ExitPlanMode`, see the mod rule), the panel (the
   `signoff` pane) and the answer to `/signoff:open`
   (`plugin/commands/open.md`: a mod cannot
   register a name with a colon, so the file declares it and the mod's `command.run` hook answers it; its body is
   the prompt the model gets when no mod runs). Its session values are declared in `plugin/types/index.d.ts`
-  (`types` in `plugin.json`); the `hint` option in `plugin.json` lists `band`, `status` and `off`,
-  and `chat` lists `0` to `4`, under `options`, the values the mod and the skill accept (a test checks).
+  (`types` in `plugin.json`); the `hint` option in `plugin.json` lists `band`, `status` and `off`, `plan`
+  lists `inbox` and `off`, and `chat` lists `0` to `4`, under `options`, the values the mod and the skill accept (a test checks).
   `plugin/hooks/register.test.tsx` is its test, run by `claude plugin test plugin`.
 - `plugin/commands/demo.md`: `/signoff:demo`, typed only (`disable-model-invocation: true`); its body asks the model
   to write one synthetic round in a `mktemp -d` folder, run Signoff on it, and give the user the `rm -r` command
@@ -318,7 +319,7 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   `STATE_EVERY` seconds, and a stopped, killed or stuck inbox does not.
 - **The mod costs a session nothing and shows no link.** It runs in every interactive session of everyone who
   installs the plugin, so it starts no process to look (the one it starts for a request it found new is the
-  mod's hand-over rule's): every `EVERY` (5) seconds it checks `inbox.lock` in the
+  mod's hand-over rule's, and `signoff plan` is the plan review's, below): every `EVERY` (5) seconds it checks `inbox.lock` in the
   homes `hook.sh` mirrors (or `SIGNOFF_INBOX_HOME`; no test keeps this copy in step, and a wrong one only keeps
   the band empty) through `$.fs`, and only once one is there it runs
   `${$.plugin.root}/bin/signoff inbox home`, once per load of the mod (its module state: a reload asks again).
@@ -328,12 +329,14 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   never a Bash `cd`, as the monitor kept its project) and `state.json` (again only when its time or size changed; `schema` 1, a whole
   `waiting` for its project id, files over 64 KiB skipped). Any failure shows nothing. It shows that number,
   fixed text and the panel's titles, nothing else; it writes no file; to the model it sends only the request lines
-  (the mod's hand-over rule). It starts looking once per load, from `session.start` or the band's
+  (the mod's hand-over rule) and the plan review's fixed denies and messages, each message with the answers path
+  at most. It starts looking once per load, from `session.start` or the band's
   first drawing (a reload after an options change may fire no `session.start`; the desktop app and the VS Code
   extension send it with `isInteractive` false, tried on 2026-11-15, so there the band starts it). With `claude -p`
   (the mod loads there, but `session.start` says `isInteractive` false and no band is drawn) and on Windows (`OS`
   is `Windows_NT`) it looks at nothing; with `hint` `off` it shows nothing and looks only for requests (the mod's
-  hand-over rule). Only a live count (an inbox that lives,
+  hand-over rule), but for the plan-review check at an `ExitPlanMode` call (not with `claude -p` or on
+  Windows) and that review's toast. Only a live count (an inbox that lives,
   a project found) moves Hide (cleared by any other live count) and the toast (once a session, after a live 0 and
   two live counts above it in a row). Open and `/signoff:open` (typed at the prompt, also with `hint` `off`) open
   the panel: `$.ui.open` of the `signoff` pane before anything else is awaited (so it is the person's own press
@@ -359,6 +362,46 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   `claude -p`, the command opens the inbox and its line is the output; on Windows it says the inbox does not run
   there. A test gives `inbox open` and `inbox rows` a link on stderr and terminal escapes in the titles, and
   checks every text the mod shows.
+
+  Plan review (AD-29): its only tool hook is `tool.call` on `ExitPlanMode`, whose `.catch` is `next(e)`. It takes a
+  call over only when the `plan` option is not `off`, it has armed, not on Windows, the inbox is live and the
+  session's project found (checked at the call, also with `hint` `off`; a call during the load's first
+  `inbox home` run waits for it), the session id's first 8 characters are letters, digits or hyphens, the call is
+  not interrupted before the spawn, and the call is in the main loop and carries a plan (`e.plan`, not empty once
+  `trimEnd()` cut it) of at most `MAX_ATTACHMENT` in UTF-8; else `next(e)`, also with a review open. It then denies
+  with fixed text (no path), keeps `{topic, text, phase, wake}` in `$.state` (`plan`), the topic
+  `<local date>-plan-<those 8>` from the session's first take-over, and starts `signoff plan` in that session root
+  with the plan on stdin and never in argv. The decisions, a child's end and a respawn run one at a time. While the
+  child runs, any call gets the deny and that a review is already open, with no new round; with a review and no
+  child in this load it starts `signoff plan --resume` with the kept text, as it does at a load while that review
+  waits and an inbox lives (with `plan` `off` at that load the review ends instead, and nothing is sent).
+  On exit 0 its stdout must be one line, an absolute path ending `/<topic>/round-NN.answers.json` with no control,
+  format or separator character, at most 4096 characters; stderr is never kept. Of that file (at most 4 MiB, what
+  `$.fs.read` takes) it uses only `done` and the `plan` item's `choice` and `source`: `done`, `approve` and `user`
+  are an approval, and anything else is none (revise, another source, a file too large, not done or unreadable),
+  which is no failure either. An `answer` request never moves the phase.
+  It sends `$.prompt.submit` (never `asUser`) with fixed text that names Signoff as its sender and the user in the
+  third person, and that path only, as a JSON string: never the user's text or the plan's. That wake is in
+  `$.state` before its first submit and until a submit of it resolves without a drop (its own turn starts then).
+  Refused, it stays: one fixed toast with no path (a second text for did-not-run, which saved no answer), and one
+  submit at each next main turn, which never waits for it; no timer, no other channel. With none kept, a turn
+  costs the plan review no `$` call. While a wake is kept, the answered plan's text opens no second review (a
+  fixed deny after revise and after any other answer that is no approval); another text is a new review and drops
+  the wake. An approved plan's exact text goes through once (`await next(e)`; the wake is dropped, and the state
+  clears when that settles, rejected too).
+  Any native success of a main-loop `ExitPlanMode` (no `deny`, not `isError`) is the user's later word and ends
+  the whole plan state: the child stopped, nothing sent, nothing written back by a submit that settles later. A
+  rejection and a subagent's call change nothing. A `/clear` and a `/resume` (`session.end`) stop the child, clear
+  the state and forget the topic. Both hold armed or not, so also with `claude -p` such a success reads `$.state`
+  once and such an end writes it once. A child the mod stopped is no failure. An unload is none: the first `$` call
+  at a child's end is the state's read, which an unloaded module's `$` refuses (measured on 2.1.323 and 2.1.330),
+  so it writes and sends nothing.
+  Any other end (a non-zero exit, a signal, a failed start, another stdout) sends the fixed did-not-run message,
+  ends the review, and takes no plan over for the rest of the load or until `inbox.json`'s `server_id` changes.
+  It writes no file and shows no link. Known limits: a submit the engine already holds cannot be taken back (so
+  a message may follow a plan that went through, a `/clear` or a new review); the hook's 10 seconds include its
+  wait for another call's decision, and past them the call takes Claude Code's own path; whoever can write the
+  answers file can approve (plan mode itself asks before a write).
 - **The inbox writes a round only while it holds its lock.** It takes `<round file>.lock` for the open rounds
   of each live run in `runs/` (no `ended`, the pid alive, the file not older than `RUNS_MAX_AGE`), each file once
   however many runs wait on it (flock is per open file); when another process holds one, that run's rounds are
@@ -518,8 +561,8 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   `agentId`), also with the retries used up, it looks at once without the turn waiting for it, or at the look right
   after it (a look or a hand-over ran; the inbox not live: its first live look): one listing, then the kept lines,
   less those done or gone since, go as the first time, marked first, with no process; what else is new goes at the
-  next look. Refused again is a failure again, and they stay for the turn after. With none kept, a turn costs no
-  process, `$.fs` call or submit. A `/clear` and a project change forget the kept lines, and a submit refused after
+  next look. Refused again is a failure again, and they stay for the turn after. With none kept, a turn costs the
+  hand-over no process, `$.fs` call or submit. A `/clear` and a project change forget the kept lines, and a submit refused after
   either keeps none (after a `/clear` it writes no mark back); a reload loses them, and the normal look fetches
   them again. It never works around the Stop: no `asUser`, no tighter timer, no other channel. `gone` ids (done,
   unreadable, or of a kind this
@@ -797,8 +840,10 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   `inbox_alive`), a topic folder that is no link or file, and no older open round of the topic a live run waits on
   (a recent `runs/` entry with no `ended`, its pid alive, its folder the same folder by `os.path.samefile`: "a plan
   review is still open in another process") come before the first write; any refusal is exit 1, one stderr line,
-  nothing written. Then it makes the topic folder as `mkdir -p` does and opens it with `O_DIRECTORY | O_NOFOLLOW`
-  (a link swapped in since the check: exit 1), and through that descriptor (`dir_fd`; on Windows by path) creates,
+  nothing written. Then it makes the topic folder as `mkdir -p` does (one it cannot make: exit 1, "cannot write
+  in") and opens it with `O_DIRECTORY | O_NOFOLLOW`
+  (a link swapped in since the check: exit 1; either exit writes no file, but folders the `mkdir` made can stay
+  behind, empty), and through that descriptor (`dir_fd`; on Windows by path) creates,
   each `O_EXCL | O_NOFOLLOW`: for every older open round (no outcome file, no answers file that says done)
   `round-NN.outcome.json` `{log: "signoff plan", line: "replaced by round-MM", date}`, then `plan-MM.md` (the cut
   bytes) and `round-MM.json` (`plan_round`: every text a `PLAN_*` constant; one item `plan`, Approve and Ask for
@@ -964,8 +1009,9 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   `--resume` whose round is done), and 1 for bad input (a usage error, stdin not UTF-8, empty or over
   `MAX_ATTACHMENT` once cut, a `--topic` off its pattern, a relative `--folder` outside any project, a topic folder
   that is a link or a file), when no inbox is live, or when a live run waits on an older open round of the topic,
-  each with one stderr line and nothing written; 1 when the topic folder cannot be opened as a folder of its own
-  (a link swapped in), with nothing written; 1 when a file it creates is already there (another writer since its
+  each with one stderr line and nothing written; 1 when the topic folder cannot be made (a read-only decisions
+  folder, say) or opened as a folder of its own (a link swapped in, say), with no file written, though an empty
+  folder the `mkdir` made can stay behind; 1 when a file it creates is already there (another writer since its
   look), leaving the older rounds' outcome files and, when the round file was the one there, `plan-MM.md`; and 1
   when the inbox does not take its round in, which it then closes with an outcome file.
 - **Done waits for acceptance.** With several rounds open, a Done save is refused (409) until every other open

@@ -16,7 +16,16 @@ const SURFACES = ['terminal', 'desktop'] as const
 const LINK = 'http://127.0.0.1:50123/b/3f9a1c7e5b2d4f6a8c0e1b3d5f7a9c2e/'
 const ok = (stdout: string, stderr = '', exitCode = 0) => ({ exitCode, stdout, stderr, isStdoutTruncated: false, isStderrTruncated: false })
 
-type File = { text: string; mtimeMs: number; kind?: 'file' | 'dir'; isLink?: boolean }
+type File = { text: string; mtimeMs: number; kind?: 'file' | 'dir'; isLink?: boolean; size?: number }
+/** A child of $.process.spawn: the test ends it, or the mod stops it (the stream's return). */
+type Child = {
+  argv: string[]
+  cwd: string | undefined
+  input: string | undefined
+  isStopped: boolean
+  end: (stdout?: string, code?: number | null, signal?: string | null) => void
+}
+type Plan = { topic: string; text: string; phase: 'review' | 'approved' | 'revise' | 'answered' | null; wake: { text: string; isToasted: boolean } | null } | null
 type Ran = { stdout: string; exitCode: number; isStdoutTruncated?: boolean }
 type Marks = { since: number; sent: string[]; project?: string; projects?: Record<string, number> } | null
 type World = {
@@ -42,6 +51,27 @@ type World = {
   submitGate: Promise<void> | undefined
   /** $.state's `requests` as the engine keeps it: a test seeds it (a reload) or empties it (a /clear). */
   marks: Marks
+  /** $.state's `plan` as the engine keeps it, as marks; and how it stood at each submit. */
+  plan: Plan
+  planAtSubmit: Plan[]
+  planReads: number
+  /** While set, the plan's state refuses, as every $ call of an unloaded module does. */
+  isStateDead: boolean
+  /** While set, a read or a write of the plan's state, the session id or the load's `inbox home` waits for it. */
+  planGetGate: Promise<void> | undefined
+  planSetGate: Promise<void> | undefined
+  idGate: Promise<void> | undefined
+  homeGate: Promise<void> | undefined
+  sessionId: string
+  spawns: Child[]
+  spawnFails: boolean
+  /** The paths the mod read, in order; a path in readFails refuses. */
+  reads: string[]
+  readFails: Set<string>
+  /** The ExitPlanMode calls that reached Claude Code's own path, and what that path answers. */
+  native: unknown[]
+  nativeAnswer: Record<string, unknown>
+  nativeGate: Promise<void> | undefined
   opened: { id: string; focus?: boolean }[]
   /** What happened, in order: `open` (ui.open), `set:<key>` (a state write), `run:<subcommand>`. */
   order: string[]
@@ -120,6 +150,22 @@ function world(
     drop: undefined,
     submitGate: undefined,
     marks: null,
+    plan: null,
+    planAtSubmit: [],
+    planReads: 0,
+    isStateDead: false,
+    planGetGate: undefined,
+    planSetGate: undefined,
+    idGate: undefined,
+    homeGate: undefined,
+    sessionId: '0a1b2c3d-4e5f-6789-abcd-ef0123456789',
+    spawns: [],
+    spawnFails: false,
+    reads: [],
+    readFails: new Set(),
+    native: [],
+    nativeAnswer: { result: { plan: 'shown', isAgent: false } },
+    nativeGate: undefined,
     opened: [],
     order: [],
     isPaneOpen: false,
@@ -154,10 +200,12 @@ function world(
     if (!file && !isDir) return missing
     const mtimeMs = file ? file.mtimeMs : Math.max(0, ...dirOf(e.path).map(f => w.files[f]?.mtimeMs ?? 0))
     const realPath = links[e.path] ?? e.path
-    return { value: { kind: file ? 'file' : 'dir', size: file ? file.text.length : 0, mtimeMs, isLink: e.path in links, ...(e.resolve ? { realPath } : {}) } }
+    return { value: { kind: file ? 'file' : 'dir', size: file ? (file.size ?? file.text.length) : 0, mtimeMs, isLink: e.path in links, ...(e.resolve ? { realPath } : {}) } }
   })
   on('fs.read', (_, e) => {
     w.fsCalls++
+    w.reads.push(e.path)
+    if (w.readFails.has(e.path)) return { deny: 'EACCES: permission denied' }
     const file = w.files[e.path]
     return file ? { value: file.text } : missing
   })
@@ -175,7 +223,10 @@ function world(
     const argv = [...e.argv]
     w.ran.push(argv)
     w.order.push(`run:${argv[2]}`)
-    if (argv.slice(1).join(' ') === 'inbox home') return { value: ok(`${home}\n`) }
+    if (argv.slice(1).join(' ') === 'inbox home') {
+      await w.homeGate
+      return { value: ok(`${home}\n`) }
+    }
     if (argv.slice(1, 3).join(' ') === 'inbox requests') {
       // The session folder, then the project: as signoff.py, it refuses a folder that is not in that project.
       const folder = links[argv[3] ?? ''] ?? argv[3] ?? ''
@@ -195,10 +246,26 @@ function world(
   })
   // `requests` is kept here, as the engine would, so a test can seed it (a reload keeps $.state) or empty it (a /clear).
   let version = 0
-  on('state.get', (_, e, next) => ((e as { key?: string }).key === 'requests' ? { value: { value: w.marks, version } } : next(e)))
-  on('state.set', (_, e, next) => {
+  let planVersion = 0
+  const dead = { deny: "state: the plugin's environment is unloaded" }
+  on('state.get', async (_, e, next) => {
+    const key = (e as { key?: string }).key
+    if (key === 'requests') return { value: { value: w.marks, version } }
+    if (key !== 'plan') return next(e)
+    w.planReads++
+    await w.planGetGate
+    return w.isStateDead ? dead : { value: { value: w.plan, version: planVersion } }
+  })
+  on('state.set', async (_, e, next) => {
     const write = e as { key?: string; value?: unknown; ifVersion?: number }
     w.order.push(`set:${write.key}`)
+    if (write.key === 'plan') {
+      await w.planSetGate
+      if (w.isStateDead) return dead
+      if (write.ifVersion !== undefined && write.ifVersion !== planVersion) return { value: { isSet: false as const, version: planVersion } }
+      w.plan = write.value as Plan
+      return { value: { isSet: true as const, version: ++planVersion } }
+    }
     if (write.key !== 'requests') return next(e)
     if (write.ifVersion !== undefined && write.ifVersion !== version) return { value: { isSet: false as const, version } }
     w.marks = write.value as Marks
@@ -206,6 +273,7 @@ function world(
   })
   on('prompt.submit', async (_, e) => {
     w.submits.push({ text: e.text, asUser: e.origin?.kind === 'plugin' ? e.origin.asUser : undefined, sent: [...(w.marks?.sent ?? [])] })
+    w.planAtSubmit.push(w.plan)
     await w.submitGate
     return w.drop === undefined ? { text: e.text } : { drop: w.drop }
   })
@@ -227,6 +295,43 @@ function world(
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('session.cwd', () => ({ value: w.cwd }))
   on('session.root', () => ({ value: w.root }))
+  on('session.id', async () => {
+    await w.idGate
+    return { value: w.sessionId }
+  })
+  on('process.spawn', async function* (_, e, next) {
+    type End = { stdout: string; code: number | null; signal: string | null }
+    let settle = (_end: End) => {}
+    const ended = new Promise<End>(resolve => (settle = resolve))
+    const child: Child = {
+      argv: [...e.argv],
+      cwd: e.cwd,
+      input: e.input,
+      isStopped: false,
+      end: (stdout = '', code = 0, signal = null) => settle({ stdout, code, signal }),
+    }
+    // The mod closing the stream kills the child, as the engine does (measured).
+    const stopped = () => {
+      child.isStopped = true
+      child.end('', null, 'SIGTERM')
+    }
+    if (next.signal.aborted) stopped() // closed before its first pull got here
+    next.signal.addEventListener('abort', stopped)
+    w.spawns.push(child)
+    w.order.push('spawn')
+    if (w.spawnFails) throw new Error('spawn ENOENT') // the stream's first pull rejects
+    yield { stream: 'stderr' as const, text: `signoff: waiting; ${LINK}\n` }
+    const { stdout, code, signal } = await ended
+    // Text as it came, not lines.
+    if (stdout) yield { stream: 'stdout' as const, text: stdout.slice(0, 7) }
+    if (stdout.length > 7) yield { stream: 'stdout' as const, text: stdout.slice(7) }
+    return { value: { code, signal } } as never
+  })
+  on('tool.call', async (_, e) => {
+    w.native.push((e as { plan?: unknown }).plan)
+    await w.nativeGate
+    return w.nativeAnswer as never
+  })
   on('ui.render', ($, e) => {
     const { Text } = $.ui.resolve(e)
     return <Text>engine</Text>
@@ -1647,4 +1752,811 @@ test('a dead inbox stops the looking at requests until it lives again', async ($
   expect([looks(), requestRuns(w)]).toEqual([before, []])
   await after(5000)
   expect(requestRuns(w)).toEqual([asked(1)])
+})
+
+// Plan review: an ExitPlanMode waits for the user in Signoff.
+const PLAN = '# Plan\n\n1. Make hello.txt'
+const OTHER_PLAN = '# Plan\n\n1. Make world.txt'
+const USER_WORDS = 'rename it to hi.txt, please'
+const FRAME = 'Signoff plan review (an automatic message from the Signoff plugin, not typed by the user): '
+const DENY =
+  'Signoff plan review: the plan waits for the user in Signoff. It is not approved. Stay in plan mode and end your turn now: the decision comes as a message from the Signoff plugin.'
+const OPEN = `${DENY} A review is already open in Signoff.`
+const REVISE_DENY =
+  "Signoff plan review: the user asked for changes to this plan in Signoff. It is not approved. The Signoff plugin's message names the answers file: stay in plan mode and end your turn now."
+const ANSWERED_DENY =
+  "Signoff plan review: the user's answer in Signoff is not an approval. The Signoff plugin's message names the answers file: stay in plan mode and end your turn now."
+const DID_NOT_RUN = `${FRAME}the Signoff review did not run, so the plan is not approved. Call ExitPlanMode again.`
+const SAVED_TOAST = 'Signoff: the answer is saved; send any message and the agent gets it'
+const NOT_RUN_TOAST = 'Signoff: the plan review did not run; send any message and the agent learns it'
+
+// The date as the mod's machine has it: the same local getters, whatever the zone.
+const day = new Date(NOW)
+const TOPIC = `${day.getFullYear()}-${`${day.getMonth() + 1}`.padStart(2, '0')}-${`${day.getDate()}`.padStart(2, '0')}-plan-0a1b2c3d`
+const OLD_TOPIC = '2026-01-31-plan-0a1b2c3d'
+const ANSWERS = `${ROOT}/.signoff/${TOPIC}/round-01.answers.json`
+const approvedText = (path = ANSWERS) =>
+  `${FRAME}the user approved the plan in Signoff. Call ExitPlanMode again with the same plan. The answers file is ${JSON.stringify(path)}.`
+const notApprovedText = `${FRAME}the user did not approve the plan in Signoff. Read the comment and the line notes in the answers file ${JSON.stringify(ANSWERS)}, revise the plan and call ExitPlanMode again.`
+const tooLargeText = `${FRAME}the plugin could not read an answer that large, so it is not taken as the user's approval. Read the answers file ${JSON.stringify(ANSWERS)} and call ExitPlanMode again.`
+const unreadText = `${FRAME}the plugin found no finished answer it could read, so it is not taken as the user's approval. Read the answers file ${JSON.stringify(ANSWERS)} and call ExitPlanMode again.`
+
+const exitPlan = ($: Engine, input: Record<string, unknown> = { plan: PLAN }) => $.tool.call({ tool: 'ExitPlanMode', ...input } as never)
+const planArgv = (...more: string[]) => [SIGNOFF, 'plan', '--topic', TOPIC, '--folder', '.signoff', ...more]
+const answered = (choice: unknown, source: unknown = 'user', done: unknown = true) =>
+  JSON.stringify({ version: 1, done, saved: '2026-11-10T09:00:00Z', answers: { plan: { choice, comment: USER_WORDS, source } }, free_text: USER_WORDS })
+const held = (phase: NonNullable<Plan>['phase'], wake: string | null = null, text = PLAN, isToasted = false): Plan => ({
+  topic: TOPIC,
+  text,
+  phase,
+  wake: wake === null ? null : { text: wake, isToasted },
+})
+const idle: Plan = { topic: TOPIC, text: '', phase: null, wake: null }
+const planCost = (w: World) => [...spent(w), w.planReads, w.order.length, w.spawns.length]
+
+/** A review taken over in this load: its child runs. */
+async function reviewing($: Engine, w: World, after: (ms: number) => Promise<void>) {
+  await start($)
+  expect(await exitPlan($)).toEqual({ deny: DENY })
+  await after(1000)
+  expect(w.spawns).toHaveLength(1)
+}
+
+/** The last child ends with exit 0 and the path of the answers file, which holds this text. */
+async function answerPlan(w: World, after: (ms: number) => Promise<void>, text: string | undefined, size?: number) {
+  if (text !== undefined) w.files[ANSWERS] = { text, mtimeMs: NOW, size }
+  w.spawns.at(-1)?.end(`${ANSWERS}\n`)
+  await after(1000)
+}
+
+test('ExitPlanMode is taken over: the fixed deny, the review kept, then signoff plan with the plan on stdin only', async ($, on) => {
+  const { w, after } = world(on)
+  await start($)
+  expect(await exitPlan($, { plan: `${PLAN} \n\t \n` })).toEqual({ deny: DENY })
+  await after(1000)
+  expect(w.spawns.map(s => [s.argv, s.cwd, s.input])).toEqual([[planArgv(), `${ROOT}/src`, PLAN]])
+  expect(w.spawns[0]?.argv.join(' ')).not.toContain('hello')
+  expect(w.plan).toEqual(held('review'))
+  expect(w.order.indexOf('set:plan')).toBeLessThan(w.order.indexOf('spawn'))
+  expect([w.native, w.submits, w.toasts]).toEqual([[], [], []])
+  expect(DENY).not.toMatch(/\/|http/)
+})
+
+test('signoff plan runs in the session root after a Bash cd, with the folder setting, with hint off too', { options: { folder: '/decisions', hint: 'off' } }, async ($, on) => {
+  const { w, after } = world(on)
+  await start($)
+  w.cwd = '/work' // a Bash cd
+  expect(await exitPlan($)).toEqual({ deny: DENY })
+  await after(1000)
+  expect(w.spawns.map(s => [s.argv, s.cwd])).toEqual([[[SIGNOFF, 'plan', '--topic', TOPIC, '--folder', '/decisions'], `${ROOT}/src`]])
+})
+
+const BIG = 256 * 1024
+type Pass = {
+  name: string
+  options?: Record<string, string>
+  world?: Parameters<typeof world>[1]
+  isArmed?: false
+  before?: (w: World) => void
+  input?: Record<string, unknown>
+  /** The mod decides it by itself: no file and no process. */
+  isFree?: true
+}
+const PASSES: Pass[] = [
+  { name: 'the setting off', options: { plan: 'off' }, isFree: true },
+  { name: 'not armed (claude -p, the SDK)', isArmed: false, isFree: true },
+  { name: 'Windows', world: { env: { HOME, OS: 'Windows_NT' } }, isFree: true },
+  { name: 'a subagent', input: { plan: PLAN, agentId: 'agent-1' }, isFree: true },
+  { name: 'no plan', input: {}, isFree: true },
+  { name: 'a plan that is no text', input: { plan: 7 }, isFree: true },
+  { name: 'an empty plan', input: { plan: '' }, isFree: true },
+  { name: 'a plan of white space', input: { plan: ' \n\t' }, isFree: true },
+  { name: 'over 256 KiB', input: { plan: 'x'.repeat(BIG + 1) }, isFree: true },
+  { name: 'over 256 KiB of UTF-8, not of characters', input: { plan: 'é'.repeat(BIG / 2 + 1) }, isFree: true },
+  { name: 'no inbox', world: { lock: false } },
+  { name: 'a dead inbox', before: w => void (w.files[`${SO}/inbox.lock`] = { text: '', mtimeMs: NOW - 60_000 }) },
+  { name: 'no project', world: { cwd: '/else', links: { '/else': '/else' } } },
+  { name: 'a session id with another character', before: w => void (w.sessionId = '0a1b/../4e5f') },
+  { name: 'an empty session id', before: w => void (w.sessionId = '') },
+]
+for (const c of PASSES) {
+  test(`plan review passes to Claude Code's own path: ${c.name}`, { options: c.options ?? {} }, async ($, on) => {
+    const { w, after } = world(on, c.world)
+    if (c.isArmed !== false) await start($, { cwd: c.world?.cwd })
+    c.before?.(w)
+    if (c.isFree) w.nativeAnswer = { result: 'User rejected the plan', isError: true } // a success reads the state, to end a review
+    const before = [w.fsCalls, w.ran.length, w.planReads]
+    expect(await exitPlan($, c.input ?? { plan: PLAN })).toEqual(w.nativeAnswer)
+    if (c.isFree) expect([w.fsCalls, w.ran.length, w.planReads]).toEqual(before)
+    await after(1000)
+    expect([w.native.length, w.spawns, w.submits, w.plan, w.order.includes('set:plan')]).toEqual([1, [], [], null, false])
+  })
+}
+
+test('a plan of exactly 256 KiB is taken over, whatever white space follows it', async ($, on) => {
+  const { w, after } = world(on)
+  await start($)
+  expect(await exitPlan($, { plan: `${'x'.repeat(BIG)}\n\n` })).toEqual({ deny: DENY })
+  await after(1000)
+  expect(w.spawns[0]?.input).toHaveLength(BIG)
+})
+
+test('a call during the first inbox home run waits for that home: one process, not the native path', async ($, on) => {
+  const { w, after } = world(on)
+  let release = () => {}
+  w.homeGate = new Promise(resolve => (release = resolve))
+  await start($)
+  await after(5000) // the look's run is on its way
+  expect(w.ran).toHaveLength(1)
+  const calling = exitPlan($)
+  await after(1000)
+  release()
+  expect(await calling).toEqual({ deny: DENY })
+  expect([w.ran.filter(argv => argv[2] === 'home').length, w.native]).toEqual([1, []])
+})
+
+test('while the review runs, any further call gets the deny plus already open, and no new round', async ($, on) => {
+  const { w, after } = world(on)
+  await reviewing($, w, after)
+  await after(5000)
+  expect(await exitPlan($)).toEqual({ deny: OPEN })
+  expect(await exitPlan($, { plan: OTHER_PLAN })).toEqual({ deny: OPEN })
+  await after(1000)
+  expect([w.spawns.length, w.plan, w.native]).toEqual([1, held('review'), []])
+})
+
+test('two calls at the same time start one child', async ($, on) => {
+  const { w, after } = world(on)
+  await start($)
+  const got = await Promise.all([exitPlan($), exitPlan($)])
+  await after(1000)
+  expect([got, w.spawns.length]).toEqual([[{ deny: DENY }, { deny: OPEN }], 1])
+})
+
+for (const [name, text, deny] of [
+  ['the same text', PLAN, DENY],
+  ['another text', OTHER_PLAN, OPEN],
+] as const) {
+  test(`a review with no child in this load, ${name}: the same round again with --resume and the kept text`, async ($, on) => {
+    const { w, after } = world(on, { lock: false })
+    w.plan = held('review')
+    await start($)
+    await after(5000) // no inbox at the load: nothing respawned, the review kept
+    expect([w.spawns, w.plan]).toEqual([[], held('review')])
+    w.files[`${SO}/inbox.lock`] = { text: '', mtimeMs: NOW + 5000 }
+    expect(await exitPlan($, { plan: text })).toEqual({ deny })
+    await after(1000)
+    expect(w.spawns.map(s => [s.argv, s.input])).toEqual([[planArgv('--resume'), PLAN]])
+    expect(w.plan).toEqual(held('review'))
+  })
+}
+
+test('a load with a review starts signoff plan again with the same topic and text', async ($, on) => {
+  const { w, after } = world(on)
+  w.plan = { topic: OLD_TOPIC, text: PLAN, phase: 'review', wake: null } // set before midnight
+  await start($)
+  await after(1000)
+  expect(w.spawns.map(s => [s.argv, s.cwd, s.input])).toEqual([
+    [[SIGNOFF, 'plan', '--topic', OLD_TOPIC, '--folder', '.signoff', '--resume'], `${ROOT}/src`, PLAN],
+  ])
+  expect([w.submits, w.toasts]).toEqual([[], []])
+})
+
+test('the band arms a load that has no interactive session.start: the review is started again', async ($, on) => {
+  const { w, after } = world(on)
+  w.plan = held('review')
+  await start($, { isInteractive: false })
+  await after(1000)
+  expect(w.spawns).toEqual([])
+  await bandTexts($, 'desktop')
+  await after(1000)
+  expect(w.spawns.map(s => s.argv)).toEqual([planArgv('--resume')])
+})
+
+test('plan off at a load with a review: no respawn, the state clears, nothing is sent', { options: { plan: 'off' } }, async ($, on) => {
+  const { w, after } = world(on)
+  w.plan = held('review')
+  await start($)
+  await after(5000)
+  expect([w.plan, w.spawns, w.submits, w.toasts]).toEqual([idle, [], [], []])
+})
+
+test('the topic stays for the session: a later review writes into the same folder', async ($, on) => {
+  const { w, after } = world(on)
+  w.plan = { topic: OLD_TOPIC, text: '', phase: null, wake: null }
+  await start($)
+  expect(await exitPlan($)).toEqual({ deny: DENY })
+  await after(1000)
+  expect([w.spawns[0]?.argv[3], w.plan?.topic]).toEqual([OLD_TOPIC, OLD_TOPIC])
+})
+
+test('an approval: phase and wake are kept before the submit, whose text is fixed and holds only the path', async ($, on) => {
+  const { w, after } = world(on)
+  await reviewing($, w, after)
+  await answerPlan(w, after, answered('approve'))
+  expect(w.reads).toContain(ANSWERS)
+  expect(w.submits).toEqual([{ text: approvedText(), asUser: undefined, sent: [] }])
+  expect(w.planAtSubmit).toEqual([held('approved', approvedText())])
+  expect(w.plan).toEqual(held('approved')) // it entered: the wake is let go, the approval stays
+  expect(w.submits[0]?.text.startsWith(FRAME)).toBe(true)
+  expect([...w.submits.map(s => s.text), ...w.toasts, ...w.logs].join('\n')).not.toMatch(/rename it|hello\.txt|127\.0\.0\.1/)
+})
+
+type Other = { name: string; text: string | undefined; said: string; phase: 'revise' | 'answered'; size?: number; isUnreadable?: true }
+const OTHERS: Other[] = [
+  { name: 'revise', text: answered('revise'), said: notApprovedText, phase: 'revise' },
+  { name: 'approve with another source', text: answered('approve', 'elsewhere'), said: notApprovedText, phase: 'answered' },
+  { name: 'approve from a notification', text: answered('approve', 'notification'), said: notApprovedText, phase: 'answered' },
+  { name: 'approve with no source', text: answered('approve', null), said: notApprovedText, phase: 'answered' },
+  { name: 'revise with another source', text: answered('revise', 'elsewhere'), said: notApprovedText, phase: 'answered' },
+  { name: 'approve in a list', text: answered(['approve']), said: notApprovedText, phase: 'answered' },
+  { name: 'no plan answer', text: '{"done": true, "answers": {}}', said: notApprovedText, phase: 'answered' },
+  { name: 'not done', text: answered('approve', 'user', false), said: unreadText, phase: 'answered' },
+  { name: 'done that is not true', text: answered('approve', 'user', 'true'), said: unreadText, phase: 'answered' },
+  { name: 'not JSON', text: '{"done": true,', said: unreadText, phase: 'answered' },
+  { name: 'JSON that is null', text: 'null', said: unreadText, phase: 'answered' },
+  { name: 'no file', text: undefined, said: unreadText, phase: 'answered' },
+  { name: 'a file it cannot read', text: answered('approve'), said: unreadText, phase: 'answered', isUnreadable: true },
+  { name: 'over 4 MiB', text: answered('approve'), said: tooLargeText, phase: 'answered', size: 4 * 1024 * 1024 + 1 },
+]
+for (const c of OTHERS) {
+  test(`an answer that is no approval and no failure: ${c.name}`, async ($, on) => {
+    const { w, after } = world(on)
+    await reviewing($, w, after)
+    if (c.isUnreadable) w.readFails.add(ANSWERS)
+    await answerPlan(w, after, c.text, c.size)
+    expect(w.submits.map(s => [s.text, s.asUser])).toEqual([[c.said, undefined]])
+    expect(w.planAtSubmit).toEqual([held(c.phase, c.said)])
+    expect(w.plan).toEqual(idle) // after the window: no phase and no text
+    if (c.size) expect(w.reads).not.toContain(ANSWERS)
+    expect([...w.submits.map(s => s.text), ...w.toasts, ...w.logs].join('\n')).not.toContain('rename it')
+    // No failure: the next call, the same text too, is a new review.
+    expect(await exitPlan($)).toEqual({ deny: DENY })
+    await after(1000)
+    expect(w.spawns.map(s => s.argv)).toEqual([planArgv(), planArgv()])
+  })
+}
+
+test('an answers file of exactly 4 MiB is read', async ($, on) => {
+  const { w, after } = world(on)
+  await reviewing($, w, after)
+  await answerPlan(w, after, answered('approve'), 4 * 1024 * 1024)
+  expect(w.submits.map(s => s.text)).toEqual([approvedText()])
+})
+
+test('a path with a space and quotes goes into the wake as one JSON string', async ($, on) => {
+  const { w, after } = world(on)
+  await reviewing($, w, after)
+  const path = `/work/my "demo"/${TOPIC}/round-02.answers.json`
+  w.files[path] = { text: answered('approve'), mtimeMs: NOW }
+  w.spawns[0]?.end(`${path}\n`)
+  await after(1000)
+  expect(w.submits.map(s => s.text)).toEqual([approvedText(path)])
+})
+
+type Failure = { name: string; stdout?: string; code?: number | null; signal?: string; spawnFails?: true }
+const FAILURES: Failure[] = [
+  { name: 'exit 1', stdout: `${ANSWERS}\n`, code: 1 },
+  { name: 'exit 130', code: 130 },
+  { name: 'a signal', stdout: `${ANSWERS}\n`, code: null, signal: 'SIGKILL' },
+  { name: 'exit 0 with a signal', stdout: `${ANSWERS}\n`, code: 0, signal: 'SIGTERM' },
+  { name: 'a spawn failure', spawnFails: true },
+  { name: 'no stdout' },
+  { name: 'a second line', stdout: `${ANSWERS}\n${ANSWERS}\n` },
+  { name: 'an empty line after it', stdout: `${ANSWERS}\n\n` },
+  { name: 'a line before it', stdout: `hello\n${ANSWERS}\n` },
+  { name: 'a relative path', stdout: `.signoff/${TOPIC}/round-01.answers.json\n` },
+  { name: 'another topic', stdout: `${ROOT}/.signoff/2026-01-01-plan-ffffffff/round-01.answers.json\n` },
+  { name: 'the topic in a longer name', stdout: `${ROOT}/.signoff/x${TOPIC}/round-01.answers.json\n` },
+  { name: 'another file', stdout: `${ROOT}/.signoff/${TOPIC}/round-01.json\n` },
+  { name: 'a longer file name', stdout: `${ANSWERS}.bak\n` },
+  { name: 'a round number of one digit', stdout: `${ROOT}/.signoff/${TOPIC}/round-1.answers.json\n` },
+  { name: 'a folder below the topic', stdout: `${ROOT}/.signoff/${TOPIC}/x/round-01.answers.json\n` },
+  { name: 'a terminal escape', stdout: `/w\x1b[31m/${TOPIC}/round-01.answers.json\n` },
+  { name: 'a format character', stdout: `/w‮/${TOPIC}/round-01.answers.json\n` },
+  { name: 'a line separator', stdout: `/w /${TOPIC}/round-01.answers.json\n` },
+  { name: 'a path over 4096 characters', stdout: `/${'w'.repeat(4096)}/${TOPIC}/round-01.answers.json\n` },
+]
+for (const c of FAILURES) {
+  test(`a review that did not run: ${c.name}`, async ($, on) => {
+    const { w, after } = world(on)
+    w.files[ANSWERS] = { text: answered('approve'), mtimeMs: NOW }
+    w.spawnFails = c.spawnFails === true
+    await reviewing($, w, after)
+    w.spawns[0]?.end(c.stdout ?? '', c.code === undefined ? 0 : c.code, c.signal ?? null)
+    await after(1000)
+    expect(w.submits.map(s => [s.text, s.asUser])).toEqual([[DID_NOT_RUN, undefined]])
+    expect(w.planAtSubmit[0]?.phase).toBe(null) // ended with it, so a reload does not respawn it
+    expect([w.plan, w.reads.includes(ANSWERS)]).toEqual([idle, false])
+    await exitPlan($)
+    expect([w.native, w.spawns.length]).toEqual([[PLAN], 1]) // off for this load
+  })
+}
+
+test('a failure turns plan review off until the inbox has another server_id', async ($, on) => {
+  const { w, after } = world(on)
+  const serves = (id?: string) => (w.files[`${SO}/inbox.json`] = { text: JSON.stringify({ schema: 1, server_id: id }), mtimeMs: NOW })
+  serves('aaaa')
+  await reviewing($, w, after)
+  w.spawns[0]?.end('', 1)
+  await after(1000)
+  await exitPlan($)
+  serves(undefined) // unreadable for a moment: still off
+  await exitPlan($)
+  expect([w.native.length, w.spawns.length]).toEqual([2, 1])
+  serves('bbbb') // the inbox was restarted
+  expect(await exitPlan($)).toEqual({ deny: DENY })
+  await after(1000)
+  expect(w.spawns.map(s => s.argv)).toEqual([planArgv(), planArgv()])
+})
+
+test('a failure with no server_id to compare stays off for the load', async ($, on) => {
+  const { w, after } = world(on)
+  await reviewing($, w, after)
+  w.spawns[0]?.end('', 1)
+  await after(1000)
+  w.files[`${SO}/inbox.json`] = { text: '{"server_id": "bbbb"}', mtimeMs: NOW }
+  await exitPlan($)
+  expect([w.native.length, w.spawns.length]).toEqual([1, 1])
+})
+
+test('a dropped wake: one toast, kept, sent again at the next main turn only, a second drop quiet, then let go', async ($, on) => {
+  const { w, after } = world(on)
+  w.drop = STOP
+  await reviewing($, w, after)
+  await answerPlan(w, after, answered('approve'))
+  expect([w.submits.length, w.toasts]).toEqual([1, [SAVED_TOAST]])
+  expect(w.plan).toEqual(held('approved', approvedText(), PLAN, true))
+  await after(300_000)
+  expect(w.submits).toHaveLength(1) // no timer of its own
+  await turn($, 'agent-1')
+  await after(1000)
+  expect(w.submits).toHaveLength(1)
+  expect(await turn($)).toEqual({ turnId: 'engine t1' })
+  await after(1000)
+  expect([w.submits.length, w.toasts]).toEqual([2, [SAVED_TOAST]])
+  await after(120_000)
+  expect(w.submits).toHaveLength(2)
+  w.drop = undefined
+  await turn($)
+  await after(1000)
+  expect([w.submits.map(s => s.text), w.plan]).toEqual([[approvedText(), approvedText(), approvedText()], held('approved')])
+  expect(w.submits.map(s => s.asUser).filter(Boolean)).toEqual([])
+  const before = planCost(w)
+  await turn($)
+  await after(1000)
+  expect(planCost(w)).toEqual(before) // let go: the turn costs nothing
+  expect([...w.toasts, ...w.logs].join('\n')).not.toMatch(/answers\.json|stopped and nobody|rename it/)
+})
+
+test('a turn with a review open and no wake costs no call', async ($, on) => {
+  const { w, after } = world(on)
+  await reviewing($, w, after)
+  const before = planCost(w)
+  await turn($)
+  await after(1000)
+  expect(planCost(w)).toEqual(before)
+})
+
+test('a dropped did-not-run message: the second toast, which claims no saved answer, and the same resend', async ($, on) => {
+  const { w, after } = world(on)
+  w.drop = STOP
+  await reviewing($, w, after)
+  w.spawns[0]?.end('', 1)
+  await after(1000)
+  expect(w.toasts).toEqual([NOT_RUN_TOAST])
+  w.drop = undefined
+  await turn($)
+  await after(1000)
+  expect([w.submits.map(s => s.text), w.plan]).toEqual([[DID_NOT_RUN, DID_NOT_RUN], idle])
+})
+
+test('a reload keeps the wake: no send at the load, one at the next turn, no second toast', async ($, on) => {
+  const { w, after } = world(on)
+  w.drop = STOP
+  w.plan = held('approved', approvedText(), PLAN, true)
+  await start($)
+  await after(10_000)
+  expect([w.submits, w.spawns]).toEqual([[], []])
+  await turn($)
+  await after(1000)
+  expect([w.submits.map(s => s.text), w.toasts]).toEqual([[approvedText()], []])
+})
+
+test('a wake behind a running turn: the window holds, its own turn.start sends no copy, and it is let go as it enters', async ($, on) => {
+  const { w, after } = world(on)
+  await reviewing($, w, after)
+  let release = () => {}
+  w.submitGate = new Promise(resolve => (release = resolve))
+  await answerPlan(w, after, answered('revise'))
+  expect(w.plan).toEqual(held('revise', notApprovedText))
+  expect(await exitPlan($)).toEqual({ deny: REVISE_DENY })
+  expect(await turn($)).toEqual({ turnId: 'engine t1' })
+  await after(1000)
+  expect(w.submits).toHaveLength(1)
+  release()
+  await after(1000)
+  expect([w.submits.length, w.plan]).toEqual([1, idle])
+})
+
+test('a wake dropped behind a running turn waits for the turn after', async ($, on) => {
+  const { w, after } = world(on)
+  await reviewing($, w, after)
+  let release = () => {}
+  w.submitGate = new Promise(resolve => (release = resolve))
+  w.drop = STOP
+  await answerPlan(w, after, answered('approve'))
+  release() // that turn was interrupted
+  await after(1000)
+  expect([w.submits.length, w.toasts]).toEqual([1, [SAVED_TOAST]])
+  w.drop = undefined
+  await turn($)
+  await after(1000)
+  expect([w.submits.length, w.plan]).toEqual([2, held('approved')])
+})
+
+test('in the window an approved plan of the same text goes through once, and its wake is dropped', async ($, on) => {
+  const { w, after } = world(on)
+  w.drop = STOP
+  await reviewing($, w, after)
+  await answerPlan(w, after, answered('approve'))
+  let release = () => {}
+  w.nativeGate = new Promise(resolve => (release = resolve))
+  const calling = exitPlan($, { plan: `${PLAN}\n` })
+  await after(1000)
+  expect([w.native, w.plan]).toEqual([[`${PLAN}\n`], held('approved')]) // the approval stands until the tool settles
+  await turn($)
+  await after(1000)
+  expect(w.submits).toHaveLength(1)
+  release()
+  expect(await calling).toEqual(w.nativeAnswer)
+  expect(w.plan).toEqual(idle)
+  expect(await exitPlan($)).toEqual({ deny: DENY }) // once
+})
+
+test('an approved plan rejected in the native dialog is used up', async ($, on) => {
+  const { w, after } = world(on)
+  await reviewing($, w, after)
+  await answerPlan(w, after, answered('approve'))
+  w.nativeAnswer = { result: 'User rejected the plan', isError: true }
+  await exitPlan($)
+  expect([w.native, w.plan]).toEqual([[PLAN], idle])
+  expect(await exitPlan($)).toEqual({ deny: DENY })
+})
+
+test('an approved plan goes through with a dead inbox too, and is used up by a rejection', async ($, on) => {
+  const { w } = world(on, { lock: false })
+  w.plan = held('approved')
+  w.nativeAnswer = { result: 'User rejected the plan', isError: true }
+  await start($)
+  await exitPlan($)
+  expect([w.native, w.plan]).toEqual([[PLAN], idle])
+})
+
+test('an approval is for its text only: another text is a new review, and the kept wake is dropped', async ($, on) => {
+  const { w, after } = world(on)
+  w.drop = STOP
+  await reviewing($, w, after)
+  await answerPlan(w, after, answered('approve'))
+  expect(await exitPlan($, { plan: OTHER_PLAN })).toEqual({ deny: DENY })
+  await after(1000)
+  expect([w.native, w.plan, w.spawns.at(-1)?.input]).toEqual([[], held('review', null, OTHER_PLAN), OTHER_PLAN])
+  await turn($)
+  await after(1000)
+  expect(w.submits).toHaveLength(1)
+})
+
+for (const [name, text, deny] of [
+  ['revise', answered('revise'), REVISE_DENY],
+  ['another source', answered('approve', 'elsewhere'), ANSWERED_DENY],
+  ['an unreadable answer', 'null', ANSWERED_DENY],
+] as const) {
+  test(`in the window after ${name}: the same text gets its fixed deny, another text a new review`, async ($, on) => {
+    const { w, after } = world(on)
+    w.drop = STOP
+    await reviewing($, w, after)
+    await answerPlan(w, after, text)
+    expect(await exitPlan($)).toEqual({ deny })
+    expect(deny).not.toMatch(/\/|http/)
+    await after(1000)
+    expect([w.spawns.length, w.native]).toEqual([1, []])
+    expect(await exitPlan($, { plan: OTHER_PLAN })).toEqual({ deny: DENY })
+    await after(1000)
+    expect(w.plan).toEqual(held('review', null, OTHER_PLAN))
+    await turn($)
+    await after(1000)
+    expect(w.submits).toHaveLength(1) // the kept wake went with the new review
+  })
+}
+
+test('a did-not-run message is no window: with the inbox restarted the same text is a new review', async ($, on) => {
+  const { w, after } = world(on)
+  w.drop = STOP
+  w.files[`${SO}/inbox.json`] = { text: '{"server_id": "aaaa"}', mtimeMs: NOW }
+  await reviewing($, w, after)
+  w.spawns[0]?.end('', 1)
+  await after(1000)
+  w.files[`${SO}/inbox.json`] = { text: '{"server_id": "bbbb"}', mtimeMs: NOW }
+  expect(await exitPlan($)).toEqual({ deny: DENY })
+  await after(1000)
+  expect(w.plan).toEqual(held('review'))
+})
+
+type Elsewhere = { name: string; input?: Record<string, unknown>; answer?: Record<string, unknown>; keeps?: true }
+const ELSEWHERE: Elsewhere[] = [
+  { name: 'a success' },
+  { name: 'a success of a plan too big', input: { plan: 'x'.repeat(BIG + 1) } },
+  { name: 'a rejection', answer: { result: 'User rejected the plan', isError: true }, keeps: true },
+  { name: 'a deny beneath', answer: { deny: 'not now' }, keeps: true },
+  { name: 'a subagent success', input: { plan: PLAN, agentId: 'agent-1' }, keeps: true },
+]
+for (const c of ELSEWHERE) {
+  test(`an open review and Claude Code's own path, ${c.name}: ${c.keeps ? 'the review stays' : 'the review is over, nothing sent'}`, async ($, on) => {
+    const { w, after } = world(on)
+    await reviewing($, w, after)
+    if (!c.input) w.files[`${SO}/inbox.lock`] = { text: '', mtimeMs: NOW - 60_000 } // the inbox died: not taken over
+    if (c.answer) w.nativeAnswer = c.answer
+    await exitPlan($, c.input ?? { plan: PLAN })
+    await after(1000)
+    expect(w.native).toHaveLength(1)
+    expect([w.spawns[0]?.isStopped, w.plan]).toEqual(c.keeps ? [false, held('review')] : [true, idle])
+    await turn($)
+    await after(70_000)
+    expect([w.submits, w.toasts]).toEqual([[], []]) // no wake, no failure
+    if (c.keeps) return
+    expect(await exitPlan($)).toEqual({ deny: DENY }) // and not turned off
+  })
+}
+
+test('a native success with a review and no child in this load, not yet armed, ends the review too', async ($, on) => {
+  const { w, after } = world(on)
+  w.plan = held('review')
+  await start($, { isInteractive: false })
+  await exitPlan($)
+  await after(1000)
+  expect([w.plan, w.spawns]).toEqual([idle, []])
+})
+
+test('a review answered while the native dialog was up does not outlive that success', async ($, on) => {
+  const { w, after } = world(on)
+  w.drop = STOP
+  await reviewing($, w, after)
+  let release = () => {}
+  w.nativeGate = new Promise(resolve => (release = resolve))
+  const calling = exitPlan($, { plan: 'x'.repeat(BIG + 1) })
+  await after(1000)
+  await answerPlan(w, after, answered('approve'))
+  release()
+  await calling
+  await after(1000)
+  expect(w.plan).toEqual(idle)
+  await turn($)
+  await after(1000)
+  expect(w.submits).toHaveLength(1)
+})
+
+// Any native success in the main loop is the user's later word: it ends whatever the plan state holds.
+for (const [name, phase, wake, text] of [
+  ['a kept revise wake', 'revise', notApprovedText, PLAN],
+  ['a kept did-not-run message', null, DID_NOT_RUN, ''],
+  ['an approval of another text', 'approved', null, OTHER_PLAN],
+  ['an approval of another text and its wake', 'approved', approvedText(), OTHER_PLAN],
+] as const) {
+  for (const isRejected of [false, true]) {
+    test(`Claude Code's own path with ${name}: ${isRejected ? 'a rejection changes nothing' : 'a success ends it all'}`, async ($, on) => {
+      const { w, after } = world(on, { lock: false })
+      w.plan = held(phase, wake, text, true)
+      if (isRejected) w.nativeAnswer = { result: 'User rejected the plan', isError: true }
+      await start($)
+      await exitPlan($)
+      expect(w.plan).toEqual(isRejected ? held(phase, wake, text, true) : idle)
+      await turn($)
+      await after(1000)
+      expect(w.submits).toHaveLength(isRejected && wake ? 1 : 0)
+    })
+  }
+}
+
+for (const dropped of [false, true]) {
+  test(`a submit that settles after a native success writes nothing back (${dropped ? 'dropped' : 'entered'})`, async ($, on) => {
+    const { w, after } = world(on)
+    await reviewing($, w, after)
+    let release = () => {}
+    w.submitGate = new Promise(resolve => (release = resolve))
+    await answerPlan(w, after, answered('revise'))
+    w.files[`${SO}/inbox.lock`] = { text: '', mtimeMs: NOW - 60_000 }
+    await exitPlan($)
+    expect(w.plan).toEqual(idle)
+    const sets = w.order.filter(o => o === 'set:plan').length
+    if (dropped) w.drop = STOP
+    release()
+    await after(1000)
+    await turn($)
+    await after(1000)
+    expect([w.plan, w.toasts, w.submits.length, w.order.filter(o => o === 'set:plan').length]).toEqual([idle, [], 1, sets])
+  })
+}
+
+for (const reason of ['clear', 'resume'] as const) {
+  test(`a /${reason} stops the child, clears the state and forgets the topic; nothing is sent`, async ($, on) => {
+    const { w, after } = world(on)
+    await reviewing($, w, after)
+    await $.session.end({ reason, sessionId: w.sessionId, resume: { id: w.sessionId } })
+    await after(1000)
+    expect([w.spawns[0]?.isStopped, w.plan, w.submits, w.toasts]).toEqual([true, null, [], []])
+    await turn($)
+    await after(1000)
+    expect(w.submits).toEqual([])
+    w.sessionId = 'ffffffff-0000-4000-8000-000000000000'
+    expect(await exitPlan($)).toEqual({ deny: DENY }) // no failure: still on, with a topic of the new session
+    await after(1000)
+    expect(w.spawns[1]?.argv[3]).toBe(TOPIC.replace('0a1b2c3d', 'ffffffff'))
+  })
+
+  test(`a /${reason} drops a kept wake, also one whose submit is on its way`, async ($, on) => {
+    const { w, after } = world(on)
+    await reviewing($, w, after)
+    let release = () => {}
+    w.submitGate = new Promise(resolve => (release = resolve))
+    w.drop = STOP
+    await answerPlan(w, after, answered('approve'))
+    await $.session.end({ reason, sessionId: w.sessionId, resume: { id: w.sessionId } })
+    release()
+    await after(1000)
+    await turn($)
+    await after(1000)
+    expect([w.plan, w.submits.length, w.toasts]).toEqual([null, 1, []])
+  })
+
+  test(`a /${reason} while the answer is being taken in: no wake follows it there`, async ($, on) => {
+    const { w, after } = world(on)
+    await reviewing($, w, after)
+    let release = () => {}
+    w.planGetGate = new Promise(resolve => (release = resolve))
+    await answerPlan(w, after, answered('approve'))
+    const ending = $.session.end({ reason, sessionId: w.sessionId, resume: { id: w.sessionId } })
+    await after(1000)
+    release()
+    await ending
+    await after(1000)
+    await turn($)
+    await after(1000)
+    expect([w.plan, w.submits]).toEqual([null, []])
+  })
+}
+
+test('another session end leaves the review', async ($, on) => {
+  const { w, after } = world(on)
+  await reviewing($, w, after)
+  await $.session.end({ reason: 'other', sessionId: w.sessionId, resume: { id: w.sessionId } })
+  await after(1000)
+  expect([w.spawns[0]?.isStopped, w.plan]).toEqual([false, held('review')])
+})
+
+for (const [name, code] of [
+  ['a killed child', null],
+  ['a child that had printed its path', 0],
+] as const) {
+  test(`an unload during a review, ${name}: the old module keeps review, writes and sends nothing`, async ($, on) => {
+    const { w, after } = world(on)
+    await reviewing($, w, after)
+    w.files[ANSWERS] = { text: answered('approve'), mtimeMs: NOW }
+    const sets = w.order.filter(o => o === 'set:plan').length
+    w.isStateDead = true
+    w.spawns[0]?.end(code === 0 ? `${ANSWERS}\n` : '', code, code === 0 ? null : 'SIGTERM')
+    await after(1000)
+    expect([w.plan, w.submits, w.toasts, w.reads.includes(ANSWERS)]).toEqual([held('review'), [], [], false])
+    expect(w.order.filter(o => o === 'set:plan')).toHaveLength(sets)
+    w.isStateDead = false // and were it alive after all: no child runs, so the same round again
+    expect(await exitPlan($)).toEqual({ deny: DENY })
+    await after(1000)
+    expect(w.spawns[1]?.argv).toEqual(planArgv('--resume'))
+  })
+}
+
+// A hook above that settles first aborts what runs beneath, as the user's interrupt of the call does.
+const interrupts = {
+  name: 'above',
+  tier: 'prepend' as const,
+  register(on: On) {
+    on('tool.call', async ($, e, next) => {
+      void next(e).catch(() => undefined)
+      await $.clock.sleep(1000)
+      return { deny: 'interrupted' }
+    })
+  },
+}
+for (const [gate, lock] of [
+  ['idGate', true],
+  ['planSetGate', true],
+  ['idGate', false], // a resume's call
+] as const) {
+  test(`a call interrupted before the spawn starts no child and changes no state (${gate}, ${lock ? 'a new review' : 'a resume'})`, { plugins: [interrupts] }, async ($, on) => {
+    const { w, after } = world(on, { lock })
+    const seeded = lock ? null : held('review')
+    w.plan = seeded
+    await start($)
+    await after(1000)
+    if (!lock) w.files[`${SO}/inbox.lock`] = { text: '', mtimeMs: NOW + 1000 }
+    let release = () => {}
+    w[gate] = new Promise(resolve => (release = resolve))
+    const calling = exitPlan($)
+    await after(1000)
+    expect(await calling).toEqual({ deny: 'interrupted' })
+    w[gate] = undefined
+    release()
+    await after(1000)
+    expect([w.spawns, w.plan, w.submits]).toEqual([[], seeded, []])
+  })
+}
+
+test('an interrupted call of the approved plan uses nothing up', { plugins: [interrupts] }, async ($, on) => {
+  const { w, after } = world(on)
+  w.plan = held('approved')
+  await start($)
+  let release = () => {}
+  w.planGetGate = new Promise(resolve => (release = resolve))
+  const calling = exitPlan($)
+  await after(1000)
+  expect(await calling).toEqual({ deny: 'interrupted' })
+  release()
+  await after(1000)
+  expect([w.plan, w.spawns]).toEqual([held('approved'), []])
+})
+
+test('a /resume during the respawn at a load leaves no child and no review', async ($, on) => {
+  const { w, after } = world(on)
+  w.plan = held('review')
+  await start($)
+  let release = () => {}
+  w.planGetGate = new Promise(resolve => (release = resolve))
+  await after(1000) // the respawn reads the state
+  const ending = $.session.end({ reason: 'resume', sessionId: w.sessionId, resume: { id: w.sessionId } })
+  await after(1000)
+  release()
+  await ending
+  await after(1000)
+  expect([w.spawns.filter(s => !s.isStopped), w.plan, w.submits]).toEqual([[], null, []])
+})
+
+test('an answer request for the plan round never moves the phase to approved', async ($, on) => {
+  const { w, after, clock } = world(on)
+  await reviewing($, w, after)
+  await after(5000)
+  w.files[ANSWERS] = { text: answered('approve'), mtimeMs: clock.now() }
+  const line = `Signoff inbox: the user finished the rounds in "${ROOT}/.signoff/${TOPIC}". Tell the user first. When it is handled, run: signoff inbox done ${R(1)}`
+  w.requestsOut = () => ({ stdout: `${JSON.stringify({ requests: [{ id: R(1), line }], gone: [] })}\n`, exitCode: 0 })
+  request(w, 1, clock.now())
+  await after(5000)
+  expect([w.submits.map(s => s.text), w.plan, w.reads.includes(ANSWERS)]).toEqual([[line], held('review'), false])
+  expect(await exitPlan($)).toEqual({ deny: OPEN })
+})
+
+test('a kept wake whose state is gone (an unload) stays kept, and the log says only the error kind', async ($, on) => {
+  const { w, after } = world(on)
+  w.drop = STOP
+  w.plan = held('approved', approvedText())
+  await start($)
+  w.isStateDead = true
+  await turn($)
+  await after(1000)
+  expect([w.plan, w.toasts]).toEqual([held('approved', approvedText()), []])
+  expect(w.logs.some(l => l.startsWith('signoff: plan review failed ('))).toBe(true)
+  expect(w.logs.join('\n')).not.toMatch(/answers\.json|approved the plan|stopped and nobody/)
+})
+
+test('a failing hook leaves the call to Claude Code', async ($, on) => {
+  const { w } = world(on)
+  await start($)
+  w.isStateDead = true
+  expect(await exitPlan($)).toEqual(w.nativeAnswer)
+  expect([w.native, w.spawns]).toEqual([[PLAN], []])
+})
+
+test('another tool never meets the plan review: no call of the mod', async ($, on) => {
+  const { w } = world(on)
+  await start($)
+  const before = planCost(w)
+  await $.tool.call({ tool: 'Read', file_path: '/work/demo/a.md', plan: PLAN } as never)
+  expect(planCost(w)).toEqual(before)
 })

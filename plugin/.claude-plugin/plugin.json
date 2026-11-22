@@ -23,6 +23,13 @@
       "default": "band",
       "options": ["band", "status", "off"]
     },
+    "plan": {
+      "type": "string",
+      "title": "Plan review",
+      "description": "While the Signoff inbox runs, where you review a plan when Claude leaves plan mode: inbox (the plan waits on a Plan review round in the Signoff inbox, and your answer goes back to the session) or off (Claude Code's own dialog). Any other value is inbox.",
+      "default": "inbox",
+      "options": ["inbox", "off"]
+    },
     "chat": {
       "type": "string",
       "title": "Questions in chat",

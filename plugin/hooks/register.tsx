@@ -1,15 +1,19 @@
 import { atom, read, update } from 'claude-code'
 import type { Args, EngineInterface, Next, PluginOptions, Register, RenderInput } from 'claude-code'
 
-import type { PanelRows } from '../types'
+import type { PanelRows, PlanReview } from '../types'
 
 // The Signoff band: how many rounds and todo items wait on the user in this session's project, from the inbox's
 // state.json. It reads files through $.fs every EVERY ms and starts no Python for that; the processes it starts
 // by itself are `signoff inbox home`, once per load of this module, and only after an inbox.lock showed that an inbox
-// has run, and `signoff inbox requests` for a message from the inbox it found new, whose lines it hands the session.
+// has run, `signoff inbox requests` for a message from the inbox it found new, whose lines it hands the session, and
+// `signoff plan` for the plan review: at an ExitPlanMode it takes over, and again at a load while that review waits.
+// To the model it sends those lines and the plan review's fixed messages, nothing else.
 // Open and /signoff:open open the panel: this project's open rounds from `signoff inbox rows`, run once per opening.
 
 type Engine = EngineInterface
+type Child = { stream: ReturnType<Engine['process']['spawn']>; isStopped: boolean } // signoff plan, as this load runs it
+type Verdict = { deny: string } | 'native' | 'pass'
 type DrawInput = RenderInput<'Pane'> | RenderInput<'AbovePrompt'>
 type Line = { id: string; line: string } // a request's line, as checkReply took it
 
@@ -33,6 +37,32 @@ const MAX_LINE = 4096 // a request_line() is at most about 2,800 characters
 const RETRY_AFTER = 60_000
 const MAX_RETRIES = 3 // in a row per load; then only at the folder's next change
 const NOT_ONE_LINE = /[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/u
+const MAX_PLAN = 256 * 1024 // MAX_ATTACHMENT in signoff.py, in bytes
+const MAX_ANSWERS = 4 * 1024 * 1024 // $.fs.read rejects more
+const SESSION_START = /^[A-Za-z0-9-]{1,8}$/ // PLAN_TOPIC's end in signoff.py: the session id's first 8 characters
+
+// The plan review's texts, all fixed: a deny holds no path, a message the answers path and nothing else of the
+// user's. The terminal shows a plugin's prompt as the user's own, so each message says whose it is.
+const FRAME = 'Signoff plan review (an automatic message from the Signoff plugin, not typed by the user): '
+const DENY =
+  'Signoff plan review: the plan waits for the user in Signoff. It is not approved. Stay in plan mode and end your turn now: the decision comes as a message from the Signoff plugin.'
+const OPEN_DENY = `${DENY} A review is already open in Signoff.`
+const REVISE_DENY =
+  "Signoff plan review: the user asked for changes to this plan in Signoff. It is not approved. The Signoff plugin's message names the answers file: stay in plan mode and end your turn now."
+const ANSWERED_DENY =
+  "Signoff plan review: the user's answer in Signoff is not an approval. The Signoff plugin's message names the answers file: stay in plan mode and end your turn now."
+const DID_NOT_RUN = `${FRAME}the Signoff review did not run, so the plan is not approved. Call ExitPlanMode again.`
+// Each takes the path as a JSON string, so a folder's name cannot end its quotes.
+const APPROVED = (file: string) =>
+  `${FRAME}the user approved the plan in Signoff. Call ExitPlanMode again with the same plan. The answers file is ${file}.`
+const NOT_APPROVED = (file: string) =>
+  `${FRAME}the user did not approve the plan in Signoff. Read the comment and the line notes in the answers file ${file}, revise the plan and call ExitPlanMode again.`
+const TOO_LARGE = (file: string) =>
+  `${FRAME}the plugin could not read an answer that large, so it is not taken as the user's approval. Read the answers file ${file} and call ExitPlanMode again.`
+const UNREAD = (file: string) =>
+  `${FRAME}the plugin found no finished answer it could read, so it is not taken as the user's approval. Read the answers file ${file} and call ExitPlanMode again.`
+const SAVED_TOAST = 'Signoff: the answer is saved; send any message and the agent gets it'
+const NOT_RUN_TOAST = 'Signoff: the plan review did not run; send any message and the agent learns it'
 
 const countA = atom({ plugin: 'signoff', key: 'count' } as const, 0)
 const hiddenA = atom({ plugin: 'signoff', key: 'hiddenFor' } as const, null)
@@ -41,6 +71,7 @@ const rowsA = atom({ plugin: 'signoff', key: 'rows' } as const, null)
 const whereA = atom({ plugin: 'signoff', key: 'where' } as const, null)
 const hasAppA = atom({ plugin: 'signoff', key: 'hasApp' } as const, false) // in state: a mod reload keeps the rows too
 const requestsA = atom({ plugin: 'signoff', key: 'requests' } as const, null) // a reload keeps it, a /clear empties it
+const planA = atom({ plugin: 'signoff', key: 'plan' } as const, null) // one key, so phase and wake are one write
 
 // One load's facts. A reload (an options change too) starts a fresh module; $.state keeps the count meanwhile.
 const look = {
@@ -49,7 +80,7 @@ const look = {
   isWindows: false,
   candidates: [] as string[], // where an inbox.lock says an inbox has run
   home: undefined as string | undefined,
-  isHomeAsked: false,
+  homeAsked: undefined as Promise<string | undefined> | undefined, // this load's one `inbox home` run
   project: undefined as string | undefined,
   root: '', // the session root it was found for: $.session.root(), which a `/cd` moves and a Bash `cd` does not
   projectsAt: -1, // the projects/ folder's time at the last listing
@@ -72,9 +103,16 @@ const look = {
   // After an Esc, Claude Code drops a plugin's prompt until the user sends input, so retries by time are not enough.
   dropped: [] as Line[], // the checked lines of the last dropped submit, for the next main turn
   isTurned: false, // a main turn started since the last hand-over began
+  // The plan review.
+  queue: Promise.resolve() as Promise<unknown>, // see oneAtATime
+  child: undefined as Child | undefined, // until its end is taken into $.state
+  wake: undefined as string | undefined, // $.state's wake, so a turn with none costs no call
+  waking: undefined as string | undefined, // the wake whose submit the engine holds
+  offFor: undefined as string | undefined, // after a failure: the inbox's server_id then, '' when there was none
 }
 
 const hint = () => (look.options.hint === 'status' || look.options.hint === 'off' ? look.options.hint : 'band')
+const planReview = () => (look.options.plan === 'off' ? 'off' : 'inbox')
 const isAbsolute = (path: string | undefined): path is string => typeof path === 'string' && path.startsWith('/')
 const line = (n: number) => `Signoff: ${n} waiting`
 
@@ -95,14 +133,24 @@ async function readJSON($: Engine, path: string): Promise<unknown> {
 }
 
 async function findHome($: Engine): Promise<string | undefined> {
-  if (look.home || look.isHomeAsked) return look.home
-  let isRun = false
-  for (const dir of look.candidates) if (await $.fs.exists(`${dir}/inbox.lock`)) isRun = true
-  if (!isRun) return undefined
-  look.isHomeAsked = true // one Python start per load of this module; a failed one is not tried again
-  const ran = await $.process.run([`${$.plugin.root}/bin/signoff`, 'inbox', 'home'], { timeoutMs: 10_000 })
-  const home = ran.stdout.replace(/\r?\n$/, '')
-  if (ran.exitCode === 0 && isAbsolute(home) && !home.includes('\n')) look.home = home
+  if (look.home) return look.home
+  if (!look.homeAsked) {
+    let isRun = false
+    for (const dir of look.candidates) if (await $.fs.exists(`${dir}/inbox.lock`)) isRun = true
+    if (!isRun) return undefined
+    look.homeAsked ??= askHome($) // one Python start per load of this module; a failed one is not tried again
+  }
+  return look.homeAsked // a plan review's call during that run waits for it
+}
+
+async function askHome($: Engine): Promise<string | undefined> {
+  try {
+    const ran = await $.process.run([`${$.plugin.root}/bin/signoff`, 'inbox', 'home'], { timeoutMs: 10_000 })
+    const home = ran.stdout.replace(/\r?\n$/, '')
+    if (ran.exitCode === 0 && isAbsolute(home) && !home.includes('\n')) look.home = home
+  } catch (err) {
+    $.ui.log(`signoff: inbox home failed (${err instanceof Error ? err.name : typeof err})`, { to: 'debug' })
+  }
   return look.home
 }
 
@@ -351,6 +399,249 @@ async function poll($: Engine) {
   if (isShown) await show($, n)
 }
 
+// The plan review (AD-29). Its decisions, a child's end and a load's respawn run one at a time, so two calls start
+// one child and a child's end never lands between a decision and its write. Nothing here waits on next(e) or a submit.
+// shortcut: that wait is the hook's own 10 seconds, past which the call goes to Claude Code's own path; give the
+// decisions a time limit of their own if a slow `inbox home` ever makes that happen.
+function oneAtATime<T>(work: () => Promise<T>): Promise<T> {
+  const got = look.queue.then(work)
+  look.queue = got.catch(() => undefined)
+  return got
+}
+
+function logPlanError($: Engine, err: unknown) {
+  $.ui.log(`signoff: plan review failed (${err instanceof Error ? err.name : typeof err})`, { to: 'debug' })
+}
+
+const idle = (topic: string): PlanReview => ({ topic, text: '', phase: null, wake: null })
+
+// The look's steps, at the call: the last look may be five seconds old. The session root, when an inbox lives for
+// its project.
+async function reviewRoot($: Engine): Promise<string | undefined> {
+  try {
+    const home = await findHome($)
+    if (home && (await alive($, home)) && (await findProject($, home))) return look.root
+  } catch {
+    // no inbox.lock, no projects folder: no inbox for this session
+  }
+  return undefined
+}
+
+async function serverId($: Engine): Promise<string | undefined> {
+  const inbox = (await readJSON($, `${look.home}/inbox.json`).catch(() => undefined)) as { server_id?: unknown } | undefined
+  return typeof inbox?.server_id === 'string' ? inbox.server_id : undefined
+}
+
+// The topic folder of the session's first take-over, by this machine's date: a later respawn keeps it.
+async function newTopic($: Engine, session: string): Promise<string> {
+  const now = new Date(await $.clock.now())
+  const two = (n: number) => `${n}`.padStart(2, '0')
+  return `${now.getFullYear()}-${two(now.getMonth() + 1)}-${two(now.getDate())}-plan-${session}`
+}
+
+// Nothing is awaited from the caller's last check to the spawn. The plan goes on stdin only.
+function startReview($: Engine, root: string, review: PlanReview, isResume: boolean) {
+  const folder = typeof look.options.folder === 'string' && look.options.folder ? look.options.folder : '.signoff'
+  const argv = [`${$.plugin.root}/bin/signoff`, 'plan', '--topic', review.topic, '--folder', folder, ...(isResume ? ['--resume'] : [])]
+  const child = { stream: $.process.spawn({ argv, cwd: root, input: review.text }), isStopped: false }
+  look.child = child
+  void followReview($, child, review.topic)
+}
+
+// The stream's return kills the child at once, also while it waits silent (measured on 2.1.323 and 2.1.330).
+function stopReview() {
+  look.wake = undefined
+  const child = look.child
+  if (!child) return
+  child.isStopped = true
+  look.child = undefined
+  void child.stream.return(undefined as never).catch(() => undefined)
+}
+
+async function followReview($: Engine, child: Child, topic: string) {
+  let out = ''
+  let isExit0 = false
+  try {
+    for await (const piece of child.stream) if (piece.stream === 'stdout' && out.length <= MAX_LINE + 1) out += piece.text // stderr is never kept
+    const { code, signal } = await child.stream.result
+    isExit0 = code === 0 && signal === null
+  } catch {
+    // rejected: it could not start, the mod stopped it, or an unload killed it; settleReview tells them apart
+  }
+  const path = isExit0 ? answersPath(out, topic) : undefined
+  try {
+    if (await oneAtATime(() => settleReview($, child, path))) await sendWake($)
+  } catch (err) {
+    logPlanError($, err)
+  }
+}
+
+// One line: an absolute path to a round's answers file in that topic folder. It goes into the model's prompt.
+function answersPath(out: string, topic: string): string | undefined {
+  const path = out.replace(/\r?\n$/, '')
+  if (!path.startsWith('/') || path.length > MAX_LINE || NOT_ONE_LINE.test(path)) return undefined
+  return new RegExp(`/${topic}/round-[0-9]{2,4}\\.answers\\.json$`).test(path) ? path : undefined
+}
+
+// Only done and the plan item's choice and source count; none of the file's text goes further.
+async function readAnswer($: Engine, path: string): Promise<{ phase: PlanReview['phase']; text: string }> {
+  const file = JSON.stringify(path)
+  try {
+    const stat = await $.fs.stat(path)
+    if (stat.kind === 'file' && stat.size > MAX_ANSWERS) return { phase: 'answered', text: TOO_LARGE(file) }
+    if (stat.kind === 'file') {
+      const got = JSON.parse(await $.fs.read(path)) as { done?: unknown; answers?: { plan?: { choice?: unknown; source?: unknown } } } | null
+      if (got?.done === true) {
+        const plan = got.answers?.plan
+        if (plan?.source === 'user' && plan.choice === 'approve') return { phase: 'approved', text: APPROVED(file) }
+        return { phase: plan?.source === 'user' && plan.choice === 'revise' ? 'revise' : 'answered', text: NOT_APPROVED(file) }
+      }
+    }
+  } catch {
+    // unreadable or not JSON: no approval, and no failure either
+  }
+  return { phase: 'answered', text: UNREAD(file) }
+}
+
+// A child's end: true when a wake is to be sent. An unload is no failure: the first $ call here is the state's read,
+// which an unloaded module's dead $ refuses, so it writes and sends nothing, and the review waits for the respawn.
+async function settleReview($: Engine, child: Child, path: string | undefined): Promise<boolean> {
+  try {
+    if (child.isStopped) return false // the mod's own stop is no failure
+    const held = await read($, planA)
+    if (child.isStopped || held?.phase !== 'review') return false
+    const { phase, text } = path === undefined ? { phase: null, text: DID_NOT_RUN } : await readAnswer($, path)
+    const server = path === undefined ? ((await serverId($)) ?? '') : undefined
+    if (child.isStopped) return false
+    const wake = { text, isToasted: false }
+    await update($, planA, old => (old?.phase === 'review' ? { topic: old.topic, text: phase ? old.text : '', phase, wake } : old))
+    if (child.isStopped) return false
+    look.wake = text // held before its first submit
+    if (server !== undefined) look.offFor = server
+    return true
+  } finally {
+    if (look.child === child) look.child = undefined
+  }
+}
+
+// The wake is held until a submit of it resolves without a drop, which is when its own turn starts (measured): that
+// turn's turn.start finds it in look.waking and sends no copy. A drop or a throw keeps it for the next main turn.
+async function sendWake($: Engine) {
+  const text = look.wake
+  if (text === undefined || text === look.waking) return
+  look.waking = text
+  const hasEntered = await submit($, text)
+  if (look.waking === text) look.waking = undefined
+  if (look.wake !== text) return // ended or replaced meanwhile: nothing is written back
+  if (hasEntered) {
+    look.wake = undefined
+    await update($, planA, old => {
+      if (old?.wake?.text !== text) return old
+      return old.phase === 'approved' ? { ...old, wake: null } : idle(old.topic)
+    })
+    return
+  }
+  const held = await read($, planA)
+  if (held?.wake?.text !== text || held.wake.isToasted) return
+  await update($, planA, old => (old?.wake?.text === text ? { ...old, wake: { text, isToasted: true } } : old))
+  if (look.wake === text) $.ui.toast(text === DID_NOT_RUN ? NOT_RUN_TOAST : SAVED_TOAST)
+}
+
+// At a load: a review the last module's child waited on. With the setting off the review ends, and nothing is sent.
+async function resumeReview($: Engine) {
+  if (planReview() === 'off') {
+    await update($, planA, old => (old?.phase === 'review' ? idle(old.topic) : old))
+    return
+  }
+  if (look.child) return
+  const root = await reviewRoot($)
+  if (!root) return // kept: the next ExitPlanMode starts it again
+  const held = await read($, planA)
+  if (held?.phase === 'review') startReview($, root, held, true)
+}
+
+// What an ExitPlanMode with a plan gets: Claude Code's own path, the approved plan's one pass, or a fixed deny.
+async function decide($: Engine, text: string, signal: AbortSignal): Promise<Verdict> {
+  const held = await read($, planA)
+  if (signal.aborted) return 'native' // interrupted while it waited: an approval is not used up either
+  if (!look.child && held?.phase === 'approved' && held.text === text) {
+    look.wake = undefined
+    if (held.wake) await update($, planA, old => old && { ...old, wake: null })
+    return 'pass'
+  }
+  const root = await reviewRoot($)
+  if (!root) return 'native'
+  const session = (await $.session.id()).slice(0, 8)
+  if (!SESSION_START.test(session)) return 'native'
+  if (look.offFor !== undefined) {
+    const now = await serverId($)
+    if (!look.offFor || !now || now === look.offFor) return 'native' // so an older inbox burns one call, not every second one
+    look.offFor = undefined
+  }
+  if (look.child) return { deny: OPEN_DENY }
+  if (held?.phase === 'review') {
+    if (signal.aborted) return 'native'
+    startReview($, root, held, true) // the same round, with the text it holds
+    return { deny: held.text === text ? DENY : OPEN_DENY }
+  }
+  if (held?.wake && held.text === text) {
+    if (held.phase === 'revise') return { deny: REVISE_DENY }
+    if (held.phase === 'answered') return { deny: ANSWERED_DENY }
+  }
+  const review: PlanReview = { topic: held?.topic ?? (await newTopic($, session)), text, phase: 'review', wake: null }
+  if (signal.aborted) return 'native'
+  await update($, planA, () => review) // before the child, so its end finds the review
+  if (signal.aborted) {
+    await update($, planA, old => (old?.phase === 'review' && old.text === text ? held : old)) // not over a /clear
+    return 'native'
+  }
+  look.wake = undefined // a kept wake goes with the new review
+  startReview($, root, review, false)
+  return { deny: DENY }
+}
+
+// The plan went through, or was approved in Claude Code's own dialog, the user's later word: whatever the state
+// holds is over. A submit the engine holds already cannot be taken back, and writes nothing back.
+async function endPlan($: Engine) {
+  stopReview() // at once, so a child's end from now on sends nothing
+  await oneAtATime(async () => {
+    const held = await read($, planA)
+    stopReview()
+    if (held?.phase || held?.wake) await update($, planA, old => old && idle(old.topic))
+  }).catch(err => logPlanError($, err))
+}
+
+function canReview(text: string): boolean {
+  if (planReview() === 'off' || !look.isArmed || look.isWindows || !text) return false
+  return new TextEncoder().encode(text).length <= MAX_PLAN
+}
+
+type PlanCall = Extract<Args<'tool.call'>, { readonly tool: 'ExitPlanMode' }> // as the registration's matcher leaves it
+
+async function onExitPlanMode($: Engine, e: PlanCall, next: Next<'tool.call', PlanCall>) {
+  if (e.agentId !== undefined) return next(e) // a subagent's or teammate's plan never touches the review
+  const given = (e as { plan?: unknown }).plan // undeclared in the engine's types: none is Claude Code's own path
+  const text = typeof given === 'string' ? given.trimEnd() : ''
+  let verdict: Verdict = 'native'
+  if (canReview(text)) {
+    try {
+      verdict = await oneAtATime(() => decide($, text, next.signal))
+    } catch (err) {
+      logPlanError($, err)
+    }
+  }
+  if (typeof verdict === 'object') return verdict
+  let isOver = verdict === 'pass' // once, whatever the dialog says
+  try {
+    const got = await next(e)
+    const { deny, isError } = got as { deny?: unknown; isError?: unknown }
+    if (!next.signal.aborted && deny === undefined && isError !== true) isOver = true
+    return got
+  } finally {
+    if (isOver) await endPlan($)
+  }
+}
+
 // A panel row: the numbers its rows reply gave. The inbox maps them to the item and opens it in Focus.
 type Target = { run: number; round: number; item: number; inbox: number }
 
@@ -553,6 +844,10 @@ async function arm($: Engine) {
   if (look.isWindows) return // no inbox there yet: nothing to look at
   look.candidates = await candidates($)
   $.clock.every(EVERY, () => void poll($)) // a reload drops it with the module
+  const held = await read($, planA).catch(() => null)
+  look.wake = held?.wake?.text
+  // From a timer: the band's drawing can arm, and a child dies with the dispatch that started it when that aborts.
+  if (held?.phase === 'review') $.clock.after(0, () => void oneAtATime(() => resumeReview($)).catch(err => logPlanError($, err)))
 }
 
 async function onSessionStart($: Engine, e: Args<'session.start'>, next: Next<'session.start'>) {
@@ -562,9 +857,18 @@ async function onSessionStart($: Engine, e: Args<'session.start'>, next: Next<'s
 }
 
 // A /clear ends the conversation and empties $.state but keeps this module: this load's notes on the requests go too,
-// so the new mark is looked at from a fresh listing.
-async function onSessionEnd(_$: Engine, e: Args<'session.end'>, next: Next<'session.end'>) {
+// so the new mark is looked at from a fresh listing. After a /clear or a /resume another conversation goes on in
+// this module: the plan review ends, and no wake or approval follows it there.
+async function onSessionEnd($: Engine, e: Args<'session.end'>, next: Next<'session.end'>) {
   if (e.reason === 'clear') Object.assign(look, { listedAt: -1, isCut: false, failures: 0, retryAt: 0, dropped: [] })
+  if (e.reason === 'clear' || e.reason === 'resume') {
+    stopReview()
+    // In the queue, so a decision or a respawn on its way neither writes nor leaves a child behind it.
+    await oneAtATime(async () => {
+      stopReview()
+      await update($, planA, () => null)
+    }).catch(err => logPlanError($, err))
+  }
   return next(e)
 }
 
@@ -575,6 +879,7 @@ async function onTurnStart($: Engine, e: Args<'turn.start'>, next: Next<'turn.st
   if (e.agentId !== undefined) return started
   look.isTurned = true
   if (look.dropped.length) void poll($).catch(() => undefined)
+  if (look.wake !== undefined) void sendWake($).catch(err => logPlanError($, err)) // a check of its own: isTurned is the hand-over's
   return started
 }
 
@@ -643,6 +948,7 @@ export const register: Register = (on, options) => {
   on('session.start', onSessionStart)
   on('session.end', onSessionEnd)
   on('turn.start', onTurnStart)
+  on('tool.call', { tool: 'ExitPlanMode' }, onExitPlanMode).catch(($, e, next) => next(e))
   on('command.run', { command: COMMAND }, onCommandRun)
   on('ui.close', onClose)
   on('ui.render', { component: 'AbovePrompt' }, onBand)
