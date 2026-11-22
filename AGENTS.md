@@ -410,8 +410,8 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   costs the plan review no `$` call. While a wake is kept, the answered plan's text opens no second review (a
   fixed deny after revise and after any other answer that is no approval); another text is a new review and drops
   the wake, except such an answer's wake that still waits its turn behind a hand-over or another wake (this load's
-  `isWakeDue`): another text then gets that fixed deny too, and the wake follows. A wake kept with another session's
-  topic is never sent. An approval lets that exact text through once: the state is made idle and the wake dropped
+  `isWakeDue`): another text then gets that fixed deny too, and the wake follows. A load takes no wake kept with
+  another session's topic. An approval lets that exact text through once: the state is made idle and the wake dropped
   before `await next(e)`, so two calls or a reload during the dialog get no second pass, and a rejected pass ends and
   stops nothing else (a review begun meanwhile stays).
   Any native success of a main-loop `ExitPlanMode` (no `deny`, not `isError`) is the user's later word and ends
@@ -431,8 +431,10 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   ends the child before `session.end`, so there it counts as did-not-run, whose message and toast reach no
   session, and the review ends; an old answer saved within that second of `since`, or before the clock was set
   back, can still answer a resumed child; a root or folder reached through a link to a path with a control, format
-  or separator character is taken over and its answer lost, as the command prints the resolved path; a submit that never settles
-  holds both the hand-over and the wake until a reload; whoever can write the answers or plan file, or get a start
+  or separator character is taken over and its answer lost, as the command prints the resolved path; a submit that
+  never settles holds both the hand-over and the wake until a reload, and with an answer that is no approval
+  waiting, every plan gets its deny until a reload, a `/clear` or a `/resume`; a reload forgets that an answer
+  waited, so another text then drops it; whoever can write the answers or plan file, or get a start
   link of the inbox, can approve (in plan mode
   Claude Code asks before a Write or Edit, but a Bash command the user allowed by a rule, or auto mode, may write
   without asking).
@@ -601,7 +603,8 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   hand-over no process, `$.fs` call or submit. A `/clear`, a project change and a changed session root forget the
   kept lines, and a submit refused after any of them keeps none: they were checked for that root only, so after a
   root change the next look lists again and asks the command, which checks the new one. So does one after a root
-  that moved while `inbox requests` ran: that run's reply is neither marked nor sent. A hand-over that a `/clear`
+  move that a look saw while `inbox requests` ran: that run's reply is neither marked nor sent (a faster move: see
+  the known limits). A hand-over that a `/clear`
   overtook writes no mark back and sends nothing (a submit the engine already holds runs in the cleared
   conversation too: it cannot be taken back). A reload loses the kept lines, and the normal look fetches
   them again. It never works around the Stop: no `asUser`, no tighter timer, no other channel. `gone` ids (done,
@@ -612,8 +615,10 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   (`claude -p`, where it loads but is not armed; the SDK; `allowManagedModsOnly`) gets requests only at a later session start and
   still counts as live, so new sessions of the project get no hand-over while it runs; a project the
   session's root moves into gets its older requests at a later session start with no other live session of the
-  project; and the hooks note a session by each event's `cwd`, so after a shell `cd` into another project the inbox
-  may count it there while its mod hands over the root's project's requests.
+  project; a root move while `inbox requests` runs that no look saw before it ended (the usual case, as the
+  command takes far less than a look's 5 seconds) still has that reply, checked for the old root, sent; and the
+  hooks note a session by each event's `cwd`, so after a shell `cd` into another project the inbox may count it
+  there while its mod hands over the root's project's requests.
 - **Only listed files are served.** Pictures and boards by number, each resolved inside the decisions file's
   folder; read into memory at start for a decisions run, read on request (with the same link check) for the
   past-decisions page. No SVG, no directory listing, no path from the request ever touches the disk.

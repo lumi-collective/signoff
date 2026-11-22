@@ -1786,6 +1786,31 @@ test('a root that moves while inbox requests runs: nothing is sent, and it is as
   expect(requestRuns(w).slice(0, 2)).toEqual([asked(1), [`${ROOT}/nested`, ID, R(1)]])
 })
 
+const quickRequests = {
+  name: 'quickrequests',
+  tier: 'prepend' as const,
+  register(on: On) {
+    on('process.run', async ($, e, next) => {
+      const got = await next(e)
+      if (e.argv[2] === 'requests') await $.clock.sleep(3000) // ends before the next look
+      return got
+    })
+  },
+}
+// A known limit, pinned: the check sees only a move that a look saw.
+test('a root that moves while inbox requests runs, with no look between: the reply still goes', { plugins: [quickRequests] }, async ($, on) => {
+  const { w, after, clock } = world(on)
+  await start($)
+  await after(5000)
+  request(w, 1, clock.now())
+  for (let k = 0; k < 10 && !requestRuns(w).length; k++) await after(1000) // the command runs
+  expect(requestRuns(w)).toHaveLength(1)
+  w.root = `${ROOT}/nested`
+  w.requestsOut = () => ({ stdout: '', exitCode: 1 })
+  await after(15_000)
+  expect(texts(w)).toEqual([lineOf(R(1), 'message 1')])
+})
+
 const slowRequests = {
   name: 'slowrequests',
   tier: 'prepend' as const,
@@ -3417,6 +3442,16 @@ for (const [name, text, deny] of [
   })
 }
 
+test('an answer whose submit is out is still dropped by another text: no wider deny', async ($, on) => {
+  const { w, after } = world(on)
+  await reviewing($, w, after)
+  let release = () => {}
+  w.submitGate = new Promise(resolve => (release = resolve))
+  await answerPlan(w, after, answered('revise')) // the engine holds its submit
+  expect(await exitPlan($, { plan: OTHER_PLAN })).toEqual({ deny: DENY })
+  release()
+})
+
 test('an approval that waits for a hand-over is still dropped by another text', async ($, on) => {
   const { w, after, clock } = world(on)
   const release = await answerBehindMessage($, w, after, () => clock.now(), answered('approve'))
@@ -3539,6 +3574,17 @@ for (const [why, since, saved, takes] of [
     expect([texts(w), w.spawns.length]).toEqual(takes ? [[approvedText()], 1] : [[], 2])
   })
 }
+
+test('a resumed child with a since that is text but reads as a number takes no answer', async ($, on) => {
+  const { w, after } = world(on)
+  w.plan = { ...held('review'), since: '0' as unknown as number }
+  await start($)
+  await after(1000)
+  w.files[ANSWERS] = { text: answered('approve'), mtimeMs: NOW + 5000 }
+  w.spawns[0]?.end(`${ANSWERS}\n`)
+  await after(1000)
+  expect([texts(w), w.spawns.length]).toEqual([[], 2])
+})
 
 test('a child without --resume is never checked by saved', async ($, on) => {
   const { w, after } = world(on)
