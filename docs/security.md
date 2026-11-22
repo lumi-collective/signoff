@@ -28,7 +28,9 @@ to look. Every five seconds it checks for `inbox.lock` in the default homes. Onc
 `signoff inbox home` once each time Claude Code loads the mod. Then it reads `inbox.lock`'s time, `projects/` and
 `state.json` in the home through Claude Code's file reads, and shows the session's project count above the prompt
 (or in the status line, or nothing: the `hint` setting; with `off` it reads no count). While an inbox lives it also
-reads the time of `requests/<project>/` and lists it when that changed, whatever the `hint`; only for a request it
+reads the time of `requests/<project>/` and lists it when that changed, or at your next turn when Claude Code
+refused a message (those lines then go again with no command run, unless the session's root moved), whatever the
+`hint`; only for a request it
 has not handed over does it run `signoff inbox requests <folder> <project> <id>…` (fixed arguments: the session's
 root, which the command checks is in that project, and the project's and the requests' 16 hex digit ids), check
 that each line it prints is one line in the fixed frame ending with its own id, and hand those lines to the session

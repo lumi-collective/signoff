@@ -88,6 +88,9 @@ type World = {
   beat: () => void
 }
 
+const CALL_BEGINS = 'test: the call begins'
+const CALL_INTERRUPTED = 'test: the call is interrupted'
+
 /** The engine beneath the mod: the Signoff home's files, the signoff command, a clock. Nothing real runs. */
 const OPENED = 'Signoff: the inbox is open; no browser window? Run signoff inbox open in a terminal'
 const ROWS = {
@@ -219,12 +222,21 @@ function world(
       f?.kind === 'dir' || f?.isLink ? { kind: f.kind ?? 'file', mtimeMs: 0, isLink: !!f.isLink } : { kind: 'file' as const, mtimeMs: f?.mtimeMs ?? 0, isLink: false }
     return { value: names.map(name => ({ name, size: 1, ...entry(w.files[`${e.path}/${name}`]) })) }
   })
+  // As measured: an abort of a dispatch rejects the process.run it started. The kit hands that abort to no hook
+  // beneath, so the plugin that interrupts a call says when the call begins and when it is interrupted.
+  let callRuns: (() => void)[] | undefined
   on('process.run', async (_, e) => {
     const argv = [...e.argv]
     w.ran.push(argv)
     w.order.push(`run:${argv[2]}`)
+    const aborted = { deny: 'process.run: aborted' }
+    const held = (gate: Promise<void> | undefined) =>
+      new Promise<boolean>(resolve => {
+        callRuns?.push(() => resolve(true))
+        void Promise.resolve(gate).then(() => resolve(false))
+      })
     if (argv.slice(1).join(' ') === 'inbox home') {
-      await w.homeGate
+      if (await held(w.homeGate)) return aborted
       return { value: ok(`${home}\n`) }
     }
     if (argv.slice(1, 3).join(' ') === 'inbox requests') {
@@ -237,7 +249,7 @@ function world(
       return { value: { ...ok(out.stdout, `signoff: ${LINK}\n`, out.exitCode), isStdoutTruncated: out.isStdoutTruncated ?? false } }
     }
     if (argv.slice(1, 3).join(' ') === 'inbox open') {
-      await w.openGate
+      if (await held(w.openGate)) return aborted
       return { value: ok('', `signoff: no browser opened; open ${LINK} yourself (it works once)\n`, w.openExit) }
     }
     if (argv.slice(1).join(' ') === `inbox rows ${cwd}`)
@@ -271,10 +283,18 @@ function world(
     w.marks = write.value as Marks
     return { value: { isSet: true as const, version: ++version } }
   })
+  // As measured: this plugin's prompts queued behind one turn become one turn, and only the last submit settles.
+  const queued: object[] = []
   on('prompt.submit', async (_, e) => {
     w.submits.push({ text: e.text, asUser: e.origin?.kind === 'plugin' ? e.origin.asUser : undefined, sent: [...(w.marks?.sent ?? [])] })
     w.planAtSubmit.push(w.plan)
-    await w.submitGate
+    if (w.submitGate) {
+      const mine = {}
+      queued.push(mine)
+      await w.submitGate
+      if (queued.at(-1) !== mine) await new Promise<never>(() => {})
+      queued.length = 0
+    }
     return w.drop === undefined ? { text: e.text } : { drop: w.drop }
   })
   on('session.end', (_, e) => ({ sessionId: e.sessionId }))
@@ -291,7 +311,14 @@ function world(
   }))
   on('ui.toast', (_, e) => (w.toasts.push(e.text), { value: undefined }))
   on('ui.status', (_, e) => (w.statuses.push(e.text), { value: undefined }))
-  on('ui.log', (_, e) => (w.logs.push(e.text), { value: undefined }))
+  on('ui.log', (_, e) => {
+    if (e.text === CALL_BEGINS) callRuns = []
+    else if (e.text === CALL_INTERRUPTED) {
+      for (const abort of callRuns ?? []) abort()
+      callRuns = undefined
+    } else w.logs.push(e.text)
+    return { value: undefined }
+  })
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('session.cwd', () => ({ value: w.cwd }))
   on('session.root', () => ({ value: w.root }))
@@ -1681,6 +1708,153 @@ test('a /cd while the engine holds the submit: its drop holds nothing for the ne
   expect(spent(w)).toEqual(before)
 })
 
+for (const wait of [2000, 240_000]) {
+  test(`a dropped request never goes where the command refuses the root (a nested project, a turn ${wait} ms on)`, async ($, on) => {
+    const { w, after, clock } = world(on)
+    await start($)
+    await dropOne(w, after, clock.now)
+    await after(wait)
+    const before = w.submits.length
+    w.root = `${ROOT}/nested` // a project of its own the hooks have not noted: inbox requests refuses this root
+    w.requestsOut = () => ({ stdout: '', exitCode: 1 })
+    w.drop = undefined
+    await turn($)
+    await after(10_000)
+    expect(w.submits.slice(before).map(s => s.text)).toEqual([])
+    expect(requestRuns(w).at(-1)).toEqual([`${ROOT}/nested`, ID, R(1)]) // the command was asked, and checked it
+  })
+}
+
+test('a root that moves while the engine holds the submit: the refused batch is asked again from the new root', async ($, on) => {
+  const { w, after, clock } = world(on)
+  let release = () => {}
+  w.submitGate = new Promise(resolve => (release = resolve))
+  w.drop = STOP
+  await start($)
+  await after(5000)
+  request(w, 1, clock.now())
+  await after(5000)
+  w.root = `${ROOT}/docs`
+  await after(5000)
+  release() // refused: its lines were checked for the old root
+  await after(1000)
+  w.submitGate = undefined
+  w.drop = undefined
+  await turn($)
+  await after(4000)
+  expect([requestRuns(w), w.submits.length]).toEqual([[asked(1), [`${ROOT}/docs`, ID, R(1)]], 2])
+})
+
+// Each of these plugins is a module of its own in the kit.
+const slowRequests = {
+  name: 'slowrequests',
+  tier: 'prepend' as const,
+  register(on: On) {
+    on('process.run', async ($, e, next) => {
+      if (e.argv[2] === 'requests') await $.clock.sleep(3000)
+      return next(e)
+    })
+  },
+}
+for (const isFailing of [false, true]) {
+  test(`a /clear during inbox requests (${isFailing ? 'it fails' : 'it answers'}): nothing lands in the cleared conversation`, { plugins: [slowRequests] }, async ($, on) => {
+    const { w, after, clock } = world(on)
+    if (isFailing) w.requestsOut = () => ({ stdout: '', exitCode: 1 })
+    await start($)
+    await after(25_000) // the mark is older than a new one's margin
+    request(w, 1, clock.now())
+    await after(5000)
+    expect(w.submits).toEqual([])
+    await $.session.end({ reason: 'clear', sessionId: 's1', resume: { id: 's1' } })
+    w.marks = null as Marks
+    await after(4000) // the command answers into the cleared conversation
+    expect([w.submits, w.marks, w.logs.filter(l => l.includes('hand-over failed'))]).toEqual([[], null, []])
+  })
+}
+
+const slowListing = {
+  name: 'slowlisting',
+  tier: 'prepend' as const,
+  register(on: On) {
+    on('fs.list', async ($, e, next) => {
+      if (e.path.includes('/requests/')) await $.clock.sleep(3000)
+      return next(e)
+    })
+  },
+}
+test('a /clear while a turn resend lists: the kept lines do not land in the cleared conversation', { plugins: [slowListing] }, async ($, on) => {
+  const { w, after, clock } = world(on)
+  w.drop = STOP
+  await start($)
+  await after(8000)
+  request(w, 1, clock.now())
+  await after(30_000)
+  w.drop = undefined
+  const before = w.submits.length
+  expect(before).toBeGreaterThan(0)
+  await turn($)
+  await after(1000) // the resend lists
+  await $.session.end({ reason: 'clear', sessionId: 's1', resume: { id: 's1' } })
+  w.marks = null as Marks
+  await after(3000)
+  expect([w.submits.length, w.marks]).toEqual([before, null])
+})
+
+const slowMarks = {
+  name: 'slowmarks',
+  tier: 'prepend' as const,
+  register(on: On) {
+    on('state.set', async ($, e, next) => {
+      const write = e as { key?: string; value?: { sent?: string[] } | null }
+      if (write.key === 'requests' && write.value?.sent?.length) await $.clock.sleep(3000)
+      return next(e)
+    })
+  },
+}
+test('a /clear while the batch is being marked: it is not submitted', { plugins: [slowMarks] }, async ($, on) => {
+  const { w, after, clock } = world(on)
+  await start($)
+  await after(5000)
+  request(w, 1, clock.now())
+  await after(5000) // the mark's write is on its way
+  expect(w.submits).toEqual([])
+  await $.session.end({ reason: 'clear', sessionId: 's1', resume: { id: 's1' } })
+  await after(3000)
+  expect(w.submits).toEqual([])
+})
+
+const statFailsAtTurn = {
+  name: 'statfails',
+  tier: 'prepend' as const,
+  register(on: On) {
+    let hasTurned = false
+    on('turn.start', async ($, e, next) => {
+      hasTurned = true
+      return next(e)
+    })
+    on('fs.stat', async ($, e, next) => {
+      if (hasTurned && e.path.includes('/requests/')) {
+        hasTurned = false
+        return { deny: 'EIO: i/o error' }
+      }
+      return next(e)
+    })
+  },
+}
+test('a failed stat at the turn keeps the resend for the next look, with no process', { plugins: [statFailsAtTurn] }, async ($, on) => {
+  const { w, after, clock } = world(on)
+  await start($)
+  await dropOne(w, after, clock.now)
+  await after(240_000)
+  w.drop = undefined
+  const before = w.submits.length
+  await turn($)
+  await after(1000)
+  expect(w.submits).toHaveLength(before)
+  await after(4000)
+  expect([w.submits.length, requestRuns(w).length]).toEqual([before + 1, 4])
+})
+
 test('more new requests than a batch holds: the oldest ten, then the rest at the next look', async ($, on) => {
   const { w, after, clock } = world(on)
   await start($)
@@ -2460,8 +2634,10 @@ const interrupts = {
   tier: 'prepend' as const,
   register(on: On) {
     on('tool.call', async ($, e, next) => {
+      $.ui.log('test: the call begins', { to: 'debug' }) // CALL_BEGINS: a plugin of a test is a module of its own
       void next(e).catch(() => undefined)
       await $.clock.sleep(1000)
+      $.ui.log('test: the call is interrupted', { to: 'debug' })
       return { deny: 'interrupted' }
     })
   },

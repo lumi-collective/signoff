@@ -103,6 +103,7 @@ const look = {
   // After an Esc, Claude Code drops a plugin's prompt until the user sends input, so retries by time are not enough.
   dropped: [] as Line[], // the checked lines of the last dropped submit, for the next main turn
   isTurned: false, // a main turn started since the last hand-over began
+  clears: 0, // the /clears this load saw: a hand-over begun before one writes and sends nothing after it
   // The plan review.
   queue: Promise.resolve() as Promise<unknown>, // see oneAtATime
   child: undefined as Child | undefined, // until its end is taken into $.state
@@ -178,6 +179,8 @@ async function findProject($: Engine, home: string): Promise<string | undefined>
   }
   // The notes on the requests folder were the other project's, as at a /clear.
   if (project !== look.project) Object.assign(look, { listedAt: -1, isCut: false, failures: 0, retryAt: 0, dropped: [] })
+  // The command checked the old root only (a nested project the hooks have not noted is not this one): it is asked again.
+  if (session !== look.root && look.dropped.length) Object.assign(look, { listedAt: -1, dropped: [] })
   look.project = project
   look.root = session
   look.projectsAt = at // only after a whole listing: a failed one is tried again at the next look
@@ -294,6 +297,7 @@ async function deliver($: Engine, home: string, project: string, root: string) {
   look.isDelivering = true
   const isResend = look.isTurned && look.dropped.length > 0
   look.isTurned = false
+  const clears = look.clears
   try {
     const now = await $.clock.now()
     const held = await read($, requestsA)
@@ -313,7 +317,10 @@ async function deliver($: Engine, home: string, project: string, root: string) {
       s => (s.kind === 'dir' ? s.mtimeMs : undefined),
       () => undefined, // no folder: no request yet
     )
-    if (at === undefined) return
+    if (at === undefined) {
+      look.isTurned ||= isResend // a stat that failed at the turn: the next look tries the resend
+      return
+    }
     const isRetry = look.retryAt > 0 && now >= look.retryAt
     // A listing within 2 s of the folder's time may share its tick with a later write (HFS+ 1 s, FAT 2 s): once more,
     // unless a failed batch waits for its retry.
@@ -337,8 +344,8 @@ async function deliver($: Engine, home: string, project: string, root: string) {
       .filter(e => e.mtimeMs >= mark.since && !sent.includes(e.name.slice(0, 16)))
       .sort((a, b) => a.mtimeMs - b.mtimeMs || (a.name < b.name ? -1 : 1))
     const asked = fresh.slice(0, MAX_IDS).map(e => e.name.slice(0, 16))
-    // Each write keeps the mark and its project as $.state holds them.
-    const keep = (ids: string[]) => update($, requestsA, old => ({ since: old?.since ?? mark.since, sent: ids, project: old?.project ?? project }))
+    // Each write keeps the mark and its project as $.state holds them, and writes none back into a state a /clear emptied.
+    const keep = (ids: string[]) => update($, requestsA, old => old && { since: old.since, sent: ids, project: old.project ?? project })
     if (sent.length !== mark.sent.length) await keep(sent)
     look.dropped = look.dropped.filter(d => fresh.some(e => e.name === `${d.id}.json`)) // less what is done since
     if (!asked.length) return
@@ -351,6 +358,7 @@ async function deliver($: Engine, home: string, project: string, root: string) {
         .catch(() => undefined)
       reply = ran && checkReply($, ran, asked) // its stderr is never read
     }
+    if (clears !== look.clears) return
     if (!reply) return failed($, now)
     const { lines, named } = reply
     // What the command cut at MAX_HANDOVER_TEXT, what did not fit MAX_IDS, and what a resend did not hold go at the
@@ -359,11 +367,14 @@ async function deliver($: Engine, home: string, project: string, root: string) {
     // Marked before it goes, so a reload while the engine holds the submit does not send it again.
     const marked = [...sent, ...named].slice(-MAX_SENT)
     await keep(marked)
+    if (clears !== look.clears) return
     if (lines.length && !(await submit($, lines.map(l => l.line).join('\n')))) {
       // A /clear while the engine held the submit: writing the mark back would bring its batch into the new conversation.
-      if ((await read($, requestsA)) === null) return
+      if (clears !== look.clears) return
       await keep(marked.filter(id => !lines.some(l => l.id === id)))
-      if (look.project === project) look.dropped = lines // a project change meanwhile forgot them
+      // Kept only for the root the command checked: after a move, the next look asks it again.
+      if (look.project === project && look.root === root) look.dropped = lines
+      else look.listedAt = -1
       return failed($, now)
     }
     look.failures = 0
@@ -860,7 +871,10 @@ async function onSessionStart($: Engine, e: Args<'session.start'>, next: Next<'s
 // so the new mark is looked at from a fresh listing. After a /clear or a /resume another conversation goes on in
 // this module: the plan review ends, and no wake or approval follows it there.
 async function onSessionEnd($: Engine, e: Args<'session.end'>, next: Next<'session.end'>) {
-  if (e.reason === 'clear') Object.assign(look, { listedAt: -1, isCut: false, failures: 0, retryAt: 0, dropped: [] })
+  if (e.reason === 'clear') {
+    look.clears += 1
+    Object.assign(look, { listedAt: -1, isCut: false, failures: 0, retryAt: 0, dropped: [] })
+  }
   if (e.reason === 'clear' || e.reason === 'resume') {
     stopReview()
     // In the queue, so a decision or a respawn on its way neither writes nor leaves a child behind it.
