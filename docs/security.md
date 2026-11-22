@@ -25,8 +25,9 @@ background process in a session but a plan review's waiter while that review is 
 (`plugin/hooks/register.tsx`, in a Claude Code
 that runs plugin mods, interactive sessions, not on Windows) runs inside Claude Code and starts no process of its own
 to look. Every five seconds it checks for `inbox.lock` in the default homes. Once one is there, it runs
-`signoff inbox home` once each time Claude Code loads the mod. Then it reads `inbox.lock`'s time, `projects/` and
-`state.json` in the home through Claude Code's file reads, and shows the session's project count above the prompt
+`signoff inbox home` once each time Claude Code loads the mod (again only when an interrupt killed it). Then it
+reads `inbox.lock`'s time, `projects/` and `state.json` in the home through Claude Code's file reads, and shows the
+session's project count above the prompt
 (or in the status line, or nothing: the `hint` setting; with `off` it reads no count). While an inbox lives it also
 reads the time of `requests/<project>/` and lists it when that changed, or at your next turn when Claude Code
 refused a message (those lines then go again with no command run, unless the session's root moved), whatever the
@@ -43,11 +44,12 @@ For a plan review (the `plan` setting, on by default while an inbox lives) the m
 with fixed text and runs `signoff plan --topic <date>-plan-<session> --folder <folder> [--resume]` in the session's
 root, with the plan on stdin and never in an argument. That process waits until you answer (at a reload of the mod
 it is started again with `--resume` in the root the review began in, and when what that finds is an answer older
-than the review, the mod takes no answer from it and starts a new round) and is stopped by `/clear`, `/resume` or
-an approval in Claude Code's own dialog. A root or folder setting with a control, format or separator character
-gets no plan review. The mod takes from it one line, the answers path, checked to be one line in that topic folder, and reads
-only `done` and the plan item's `choice` and `source` from that file (4 MiB at most; a larger or unreadable one is
-no approval). To the session it sends fixed text and that path, never your words. An approval lets that exact plan
+than the review, by the file's time or by its `saved`, the mod takes no answer from it and starts a new round), is
+stopped by `/clear`, `/resume` or an approval in Claude Code's own dialog, and ends when you quit or restart Claude
+Code. A root or folder setting with a control, format or separator character gets no plan review. The mod takes
+from it one line, the answers path, checked to be one line in that topic folder, and reads only `done`, `saved` and
+the plan item's `choice` and `source` from that file (4 MiB at most; a larger or unreadable one is no approval). To
+the session it sends fixed text and that path, never your words. An approval lets that exact plan
 text through once, to Claude Code's own dialog, and is used up before that dialog opens. Whoever can write the
 answers or plan file, or get a start link of the inbox, can approve. In plan mode Claude Code asks before a Write
 or Edit, but a Bash command you allowed by a rule, or auto mode, may write without asking.

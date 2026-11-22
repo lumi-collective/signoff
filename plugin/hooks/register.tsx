@@ -5,9 +5,10 @@ import type { PanelRows, PlanReview } from '../types'
 
 // The Signoff band: how many rounds and todo items wait on the user in this session's project, from the inbox's
 // state.json. It reads files through $.fs every EVERY ms and starts no Python for that; the processes it starts
-// by itself are `signoff inbox home`, once per load of this module, and only after an inbox.lock showed that an inbox
-// has run, `signoff inbox requests` for a message from the inbox it found new, whose lines it hands the session, and
-// `signoff plan` for the plan review: at an ExitPlanMode it takes over, and again at a load while that review waits.
+// by itself are `signoff inbox home`, once per load of this module (again only when an interrupt killed it) and only
+// after an inbox.lock showed that an inbox has run, `signoff inbox requests` for a message from the inbox it found
+// new, whose lines it hands the session, and `signoff plan` for the plan review: at an ExitPlanMode it takes over, and
+// again at a load while that review waits.
 // To the model it sends those lines and the plan review's fixed messages, nothing else.
 // Open and /signoff:open open the panel: this project's open rounds from `signoff inbox rows`, run once per opening.
 
@@ -48,7 +49,7 @@ const DENY =
   'Signoff plan review: the plan waits for the user in Signoff. It is not approved. Stay in plan mode and end your turn now: the decision comes as a message from the Signoff plugin.'
 const OPEN_DENY = `${DENY} A review is already open in Signoff.`
 const REVISE_DENY =
-  "Signoff plan review: the user asked for changes to this plan in Signoff. It is not approved. The Signoff plugin's message names the answers file: stay in plan mode and end your turn now."
+  "Signoff plan review: the user asked for changes to the plan in Signoff. It is not approved. The Signoff plugin's message names the answers file: stay in plan mode and end your turn now."
 const ANSWERED_DENY =
   "Signoff plan review: the user's answer in Signoff is not an approval. The Signoff plugin's message names the answers file: stay in plan mode and end your turn now."
 const DID_NOT_RUN = `${FRAME}the Signoff review did not run, so the plan is not approved. Call ExitPlanMode again.`
@@ -146,7 +147,7 @@ async function findHome($: Engine, signal?: AbortSignal): Promise<string | undef
     let isRun = false
     for (const dir of look.candidates) if (await $.fs.exists(`${dir}/inbox.lock`)) isRun = true
     if (!isRun) return undefined
-    look.homeAsked ??= askHome($, signal) // one Python start per load of this module; a failed one is not tried again
+    look.homeAsked ??= askHome($, signal) // one Python start per load of this module, again only after an interrupt
   }
   return look.homeAsked // a plan review's call during that run waits for it
 }
@@ -525,8 +526,8 @@ function answersPath(out: string, topic: string): string | undefined {
   return new RegExp(`/${topic}/round-[0-9]{2,4}\\.answers\\.json$`).test(path) ? path : undefined
 }
 
-// Only done and the plan item's choice and source count; none of the file's text goes further.
-// With notBefore, an older file is no answer of this review: undefined.
+// Only done, saved and the plan item's choice and source count; none of the file's text goes further.
+// With notBefore, an older file or an older saved is no answer of this review: undefined.
 async function readAnswer($: Engine, path: string, notBefore?: number): Promise<{ phase: PlanReview['phase']; text: string } | undefined> {
   const file = JSON.stringify(path)
   try {
@@ -534,8 +535,11 @@ async function readAnswer($: Engine, path: string, notBefore?: number): Promise<
     if (stat.kind === 'file' && notBefore !== undefined && stat.mtimeMs < notBefore) return undefined
     if (stat.kind === 'file' && stat.size > MAX_ANSWERS) return { phase: 'answered', text: TOO_LARGE(file) }
     if (stat.kind === 'file') {
-      const got = JSON.parse(await $.fs.read(path)) as { done?: unknown; answers?: { plan?: { choice?: unknown; source?: unknown } } } | null
+      type Saved = { done?: unknown; saved?: unknown; answers?: { plan?: { choice?: unknown; source?: unknown } } }
+      const got = JSON.parse(await $.fs.read(path)) as Saved | null
       if (got?.done === true) {
+        // saved is the inbox's own clock, to the second: a touch or a file server's clock does not move it.
+        if (notBefore !== undefined && !(Date.parse(String(got.saved)) + 1000 > notBefore)) return undefined
         const plan = got.answers?.plan
         if (plan?.source === 'user' && plan.choice === 'approve') return { phase: 'approved', text: APPROVED(file) }
         return { phase: plan?.source === 'user' && plan.choice === 'revise' ? 'revise' : 'answered', text: NOT_APPROVED(file) }
@@ -673,7 +677,8 @@ async function decide($: Engine, text: string, signal: AbortSignal): Promise<Ver
     startReview($, root, held, true) // the same round, with the text it holds
     return { deny: held.text === text ? DENY : OPEN_DENY }
   }
-  if (held?.wake && held.text === text) {
+  // An answer still waiting for a hand-over was never sent: another text does not drop it unseen.
+  if (held?.wake && (held.text === text || (look.isWakeDue && held.phase !== 'approved'))) {
     if (held.phase === 'revise') return { deny: REVISE_DENY }
     if (held.phase === 'answered') return { deny: ANSWERED_DENY }
   }
@@ -939,8 +944,10 @@ async function arm($: Engine) {
   // In the queue, so a /clear during the read ends what it read.
   const held = await oneAtATime(async () => {
     const got = await read($, planA)
-    look.wake = got?.wake?.text
-    look.leftOut = got?.wake?.isOut ? got.wake.text : undefined
+    // This session's only, as the pass and the respawn; the id is read only with a wake kept.
+    const wake = got?.wake && isOwn(got, (await $.session.id()).slice(0, 8)) ? got.wake : undefined
+    look.wake = wake?.text
+    look.leftOut = wake?.isOut ? wake.text : undefined
     return got
   }).catch(() => null)
   // From a timer: the band's drawing can arm, and a child dies with the dispatch that started it when that aborts.

@@ -197,8 +197,9 @@ the app can find it. Other ways to build it, and the details: [docs/inbox.md](do
   setting moves the count to the status line or turns it off. The mod also hands an open session the messages you
   send its project from the inbox: it lists the project's `requests/` folder when its time changed, and only for a
   message it has not handed over runs `signoff inbox requests`, whose lines it sends as one prompt from the plugin
-  (also with the `hint` off). No background process stays in a session. The inbox and the macOS app are extra
-  processes only when you start them.
+  (also with the `hint` off). No background process stays in a session but a plan review's waiter while that review
+  is open (see [docs/security.md](docs/security.md)). The inbox and the macOS app are extra processes only when you
+  start them.
 - **Leaves your machine:** nothing from Signoff. The server listens on `127.0.0.1` only, the page loads nothing
   from outside, and there is no telemetry and no update check. A board's own script could still send data out over
   WebRTC, so boards hold synthetic data only.

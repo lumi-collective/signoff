@@ -322,7 +322,8 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   mod's hand-over rule's, and `signoff plan` is the plan review's, below): every `EVERY` (5) seconds it checks `inbox.lock` in the
   homes `hook.sh` mirrors (or `SIGNOFF_INBOX_HOME`; no test keeps this copy in step, and a wrong one only keeps
   the band empty) through `$.fs`, and only once one is there it runs
-  `${$.plugin.root}/bin/signoff inbox home`, once per load of the mod (its module state: a reload asks again).
+  `${$.plugin.root}/bin/signoff inbox home`, once per load of the mod (again only when an interrupt killed it; its
+  module state: a reload asks again).
   Then it reads, through `$.fs` only, `inbox.lock`'s
   time, `projects/*.json` (again only when the folder's time or `$.session.root()` changed; the session's project
   is the longest `root` holding the session's root: where it started, or where `/cd` or a worktree move took it,
@@ -383,20 +384,22 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   waits and an inbox lives (with `plan` `off` at that load the review ends instead, and nothing is sent). A respawn
   and a pass need a topic that ends with this session id's first 8 characters. `--resume` takes the newest round,
   an older review's when this one's round was not written yet: so an old answer never answers a later review. A
-  resumed child's answers file older than `since` (or with no `since`) is no answer, no failure and no message, and
+  resumed child's answers file older than `since`, or one whose `saved` (the inbox's clock, to the second, so with
+  1 second of tolerance) is older or no time, or any with no `since`, is no answer, no failure and no message, and
   the review starts once more without `--resume`, with the held text and topic, in its root. A child without
   `--resume` always writes a new round and is never checked, so a slow file clock refuses no normal answer.
   On exit 0 its stdout must be one line, an absolute path ending `/<topic>/round-NN.answers.json` with no control,
   format or separator character, at most 4096 characters; stderr is never kept. Of that file (at most 4 MiB, what
-  `$.fs.read` takes) it uses only `done` and the `plan` item's `choice` and `source`: `done`, `approve` and `user`
-  are an approval, and anything else is none (revise, another source, a file too large, not done or unreadable),
-  which is no failure either. An `answer` request never moves the phase.
+  `$.fs.read` takes) it uses only `done`, `saved` (a resumed child's, as above) and the `plan` item's `choice` and
+  `source`: `done`, `approve` and `user` are an approval, and anything else is none (revise, another source, a file
+  too large, not done or unreadable), which is no failure either. An `answer` request never moves the phase.
   It sends `$.prompt.submit` (never `asUser`) with fixed text that names Signoff as its sender and the user in the
   third person, and that path only, as a JSON string: never the user's text or the plan's. That wake is in
   `$.state` before its first submit and until it entered. One submit of this mod is out at a time, as prompts of
   one plugin queued behind one turn become one turn and only the last submit's promise settles, the others never
-  (measured on 2.1.323 and 2.1.330; another plugin's and the user's own do not merge with them; task
-  notifications, peers and schedules were not measured): the hand-over waits, before it clears the turn's note or
+  (measured on 2.1.323 and 2.1.330; another plugin's and the user's own do not merge with them, nor do the
+  notifications of a background command and of a subagent, measured headless; peers and schedules were not
+  measured): the hand-over waits, before it clears the turn's note or
   marks, while a wake is out, a wake waits while a hand-over runs or another wake is out, and the one that settles
   starts the other, with its checks again. So in a live load the promise is the only release: with one out, nothing
   that is measured to merge can join it. A wake's `isOut` is written before each submit and cleared when that was
@@ -406,8 +409,10 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   submit at each next main turn, which never waits for it; no timer, no other channel. With none kept, a turn
   costs the plan review no `$` call. While a wake is kept, the answered plan's text opens no second review (a
   fixed deny after revise and after any other answer that is no approval); another text is a new review and drops
-  the wake. An approval lets that exact text through once: the state is made idle and the wake dropped before
-  `await next(e)`, so two calls or a reload during the dialog get no second pass, and a rejected pass ends and
+  the wake, except such an answer's wake that still waits its turn behind a hand-over or another wake (this load's
+  `isWakeDue`): another text then gets that fixed deny too, and the wake follows. A wake kept with another session's
+  topic is never sent. An approval lets that exact text through once: the state is made idle and the wake dropped
+  before `await next(e)`, so two calls or a reload during the dialog get no second pass, and a rejected pass ends and
   stops nothing else (a review begun meanwhile stays).
   Any native success of a main-loop `ExitPlanMode` (no `deny`, not `isError`) is the user's later word and ends
   the whole plan state: the child stopped, nothing sent, nothing written back by a submit that settles later. A
@@ -424,7 +429,11 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   approval was used up loses it, as it is never restored (one seen before that write uses nothing up); a second
   call at the same time as a pass opens a round, which that pass's success leaves in the inbox; Claude Code's exit
   ends the child before `session.end`, so there it counts as did-not-run, whose message and toast reach no
-  session; whoever can write the answers or plan file, or get a start link of the inbox, can approve (in plan mode
+  session, and the review ends; an old answer saved within that second of `since`, or before the clock was set
+  back, can still answer a resumed child; a root or folder reached through a link to a path with a control, format
+  or separator character is taken over and its answer lost, as the command prints the resolved path; a submit that never settles
+  holds both the hand-over and the wake until a reload; whoever can write the answers or plan file, or get a start
+  link of the inbox, can approve (in plan mode
   Claude Code asks before a Write or Edit, but a Bash command the user allowed by a rule, or auto mode, may write
   without asking).
 - **The inbox writes a round only while it holds its lock.** It takes `<round file>.lock` for the open rounds

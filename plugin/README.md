@@ -68,8 +68,9 @@ exception: when a session starts and no other session of that project is open, t
 The plugin also has a mod, where Claude Code runs plugin mods. It is code that runs inside Claude Code in
 interactive sessions, not on Windows. Every five seconds it checks whether the inbox's lock file is there, and
 starts no process for that. Once the inbox has run, the mod runs the signoff command once each time Claude Code
-loads it, to learn the inbox's folder. From then on it reads three small files there through Claude Code: the lock
-file's time (the inbox touches it every two seconds while it runs), the project notes the hooks keep, and the
+loads it (again only when an interrupt killed it), to learn the inbox's folder. From then on it reads three small
+files there through Claude Code: the lock file's time (the inbox touches it every two seconds while it runs), the
+project notes the hooks keep, and the
 inbox's count of what waits on you. That count covers open rounds, waiting todo items, and the project's sessions
 waiting on a permission or an answer, this one included.
 
@@ -92,13 +93,15 @@ While the inbox runs, the mod also takes a plan over when Claude leaves plan mod
 refuses that call with a fixed text and starts the signoff command's plan, with the plan on that command's standard
 input. That command writes the plan and a Plan review round into your decisions folder and waits until you answer
 in the inbox; after a reload of the mod, the mod starts it again on that round, or on a new one when the round was
-not written yet (an older answer never answers a later review). Of your answers file the mod
-reads only whether it is done and whether you approved, and sends the session one message from the plugin, with
-fixed text and that file's path, none of your words. The agent reads your comment and line notes from the file.
+not written yet (an answer from before the review began is not taken). Of your answers file the mod
+reads only whether it is done, when it was saved and whether you approved, and sends the session one message from
+the plugin, with fixed text and that file's path, none of your words. The agent reads your comment and line notes
+from the file.
 After an approval the same plan goes on once, to Claude Code's own dialog, and that uses the approval up, also
 when you reject the plan there. After an Esc, the message waits for your
 next turn, and a notice says so. The mod stops that command at /clear, at /resume and when you approve a plan in
-Claude Code's own dialog. It keeps the plan's text in Claude Code's session state until the review is over and an
+Claude Code's own dialog, and quitting or restarting Claude Code ends it too. It keeps the plan's text in Claude
+Code's session state until the review is over and an
 approved plan went to that dialog. The mod sends one message at a time: a message from the inbox waits while the
 plan review's message does. The Plan
 review setting in /config turns this off (off); the default is inbox.

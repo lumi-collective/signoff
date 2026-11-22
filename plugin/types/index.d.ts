@@ -19,8 +19,8 @@ export type PanelRows = {
  * awaited; approved until the pass uses it up; revise or answered (no approval) only while their wake is held.
  * wake: the fixed message to the model, held until it entered (isToasted: the user had the toast; isOut: a submit of
  * it went out and was not seen refused, so after a reload the engine may still hold it).
- * In review only: since, the time (ms) of the take-over, which an older answers file never answers, and root, the
- * session root it was taken over in, where every respawn runs.
+ * In review only: since, the time (ms) of the take-over, which an older answers file (by its time or its saved)
+ * never answers, and root, the session root it was taken over in, where every respawn runs.
  */
 export type PlanReview = {
   topic: string
