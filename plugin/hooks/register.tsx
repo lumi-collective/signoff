@@ -374,6 +374,7 @@ async function deliver($: Engine, home: string, project: string, root: string) {
       reply = ran && checkReply($, ran, asked) // its stderr is never read
     }
     if (clears !== look.clears) return
+    if (look.root !== root) return void (look.listedAt = -1) // the root moved while the command ran: asked again
     if (!reply) return failed($, now)
     const { lines, named } = reply
     // What the command cut at MAX_HANDOVER_TEXT, what did not fit MAX_IDS, and what a resend did not hold go at the

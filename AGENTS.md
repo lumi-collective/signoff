@@ -591,7 +591,8 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   next look. Refused again is a failure again, and they stay for the turn after. With none kept, a turn costs the
   hand-over no process, `$.fs` call or submit. A `/clear`, a project change and a changed session root forget the
   kept lines, and a submit refused after any of them keeps none: they were checked for that root only, so after a
-  root change the next look lists again and asks the command, which checks the new one. A hand-over that a `/clear`
+  root change the next look lists again and asks the command, which checks the new one. So does one after a root
+  that moved while `inbox requests` ran: that run's reply is neither marked nor sent. A hand-over that a `/clear`
   overtook writes no mark back and sends nothing (a submit the engine already holds runs in the cleared
   conversation too: it cannot be taken back). A reload loses the kept lines, and the normal look fetches
   them again. It never works around the Stop: no `asUser`, no tighter timer, no other channel. `gone` ids (done,

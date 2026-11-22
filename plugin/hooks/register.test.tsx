@@ -1759,6 +1759,30 @@ test('a root that moves while the engine holds the submit: the refused batch is 
 })
 
 // Each of these plugins is a module of its own in the kit.
+const slowerRequests = {
+  name: 'slowerrequests',
+  tier: 'prepend' as const,
+  register(on: On) {
+    on('process.run', async ($, e, next) => {
+      const got = await next(e) // the command checked the root it was given
+      if (e.argv[2] === 'requests') await $.clock.sleep(7000) // past one look
+      return got
+    })
+  },
+}
+test('a root that moves while inbox requests runs: nothing is sent, and it is asked again from the new root', { plugins: [slowerRequests] }, async ($, on) => {
+  const { w, after, clock } = world(on)
+  await start($)
+  await after(5000)
+  request(w, 1, clock.now())
+  await after(5000) // the command runs
+  w.root = `${ROOT}/nested` // a project of its own the hooks have not noted
+  w.requestsOut = () => ({ stdout: '', exitCode: 1 })
+  await after(25_000)
+  expect(w.submits).toEqual([])
+  expect(requestRuns(w).slice(0, 2)).toEqual([asked(1), [`${ROOT}/nested`, ID, R(1)]])
+})
+
 const slowRequests = {
   name: 'slowrequests',
   tier: 'prepend' as const,
