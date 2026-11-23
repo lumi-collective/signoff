@@ -815,11 +815,12 @@ async function onExitPlanMode($: Engine, e: PlanCall, next: Next<'tool.call', Pl
     if (window && look.window === window) look.window = undefined
   }
   if (!next.signal.aborted && isSuccess(got)) await endPlan($)
-  else if (!next.signal.aborted && verdict === 'native' && text && look.mayApprove) await endApproval($)
+  else if (!next.signal.aborted && verdict === 'native' && text && look.mayApprove) await endApproval($) // not an Esc
   return got
 }
 
-// A rejection in Claude Code's own dialog, or a prompt outside plan mode: a kept approval is over.
+// A rejection in Claude Code's own dialog (an Esc there is an interrupt, which ends nothing), or a prompt outside plan
+// mode: a kept approval is over.
 async function endApproval($: Engine) {
   await oneAtATime(() =>
     update($, planA, old => {
@@ -845,10 +846,11 @@ async function onPermission($: Engine, e: Args<'classic.PermissionRequest'>, nex
   if (!input || typeof input !== 'object' || Array.isArray(input)) return next(e)
   if (!Object.keys(input).every(key => key === 'plan' || key === 'planFilePath')) return next(e)
   if (typeof input.plan !== 'string' || input.plan.trimEnd() !== window.text || input.planFilePath !== window.file) return next(e)
-  // The hooks beneath (mods below, the user's settings hooks) decide first: the allow only where none of them did.
+  // The hooks beneath (mods below, the user's settings hooks) go first: a decision or a block of theirs goes back
+  // unchanged, and the allow keeps whatever else they said (a continue: false).
   const below = await next(e)
-  if ((below as { decision?: unknown }).decision !== undefined) return below
-  return { decision: { behavior: 'allow' as const, updatedInput: input } } // no mode: Claude Code picks it
+  if (below.decision !== undefined || below.block !== undefined) return below
+  return { ...below, decision: { behavior: 'allow' as const, updatedInput: input } } // no mode: Claude Code picks it
 }
 
 // Leaving plan mode by hand: the user's next prompt says so. Without a kept approval it costs no $ call.

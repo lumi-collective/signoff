@@ -426,12 +426,13 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   inside its own window. The window's first `classic.PermissionRequest` for `ExitPlanMode` with no `agent_id`
   takes the window, matching or not. It gets the `allow` only with the keys `plan` and `planFilePath` and no
   other, the plan equal to the approved text after the same trim and `planFilePath` as the passing call carried
-  it, and only when the hooks beneath it (mods below, the user's settings hooks) give no decision of their own,
-  which goes back unchanged. Any other request, a later one and one with no window open get `next(e)`, Claude
+  it, and only when the hooks beneath it (mods below, the user's settings hooks) give no `decision` and no
+  `block` of their own, which go back unchanged; anything else they return (a `preventContinuation`) stays beside
+  the allow. Any other request, a later one and one with no window open get `next(e)`, Claude
   Code's own dialog. Two same-text calls whose windows overlap cannot be told apart (measured once in three runs
   on 2.1.323), and either gets the same approved plan once. A call past its hook budget (the `.catch`) closes an
   open window, and a decision under way meanwhile opens none. A kept approval ends at a rejection in Claude Code's
-  own dialog, at a `classic.UserPromptSubmit` whose `permission_mode` is not `plan` (the user left plan mode by
+  own dialog (not at an Esc there: that call is interrupted, and an interrupted call ends nothing), at a `classic.UserPromptSubmit` whose `permission_mode` is not `plan` (the user left plan mode by
   hand; until a load has seen an approval, a prompt costs no `$` call), and at a load with `plan` `off`.
   Any native success of a main-loop `ExitPlanMode` (no `deny`, not `isError`) is the user's later word and ends
   the whole plan state: the child stopped, nothing sent, nothing written back by a submit that settles later. A
@@ -448,9 +449,10 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   approval was used up loses it, as it is never restored (one seen before that write uses nothing up); a second
   call at the same time as a pass opens a round, which that pass's success leaves in the inbox; Claude Code's exit
   ends the child before `session.end`, so there it counts as did-not-run, whose message and toast reach no
-  session, and the review ends; a topic folder the mod cannot list at a take-over (or one `project_root()` would
-  find elsewhere) gives no `after`, so after a reload that review's resumed answer is refused and a new round
-  opens; a root or folder reached through a link to a path with a control, format
+  session, and the review ends; a topic folder the mod cannot list at a take-over, or no project root found up
+  from the session's root, gives no `after`, so after a reload that review's resumed answer is refused and a new
+  round opens, while a root that `project_root()` would find elsewhere gives `after` 0 (the topic folder is not
+  there), so only the clock checks hold there (no ordinary case of it is known); a root or folder reached through a link to a path with a control, format
   or separator character is taken over and its answer lost, as the command prints the resolved path; a submit that
   never settles holds both the hand-over and the wake until a reload, and with an answer that is no approval
   waiting, every plan gets its deny until a reload, a `/clear` or a `/resume`; a reload forgets that an answer
@@ -460,8 +462,9 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   as they can write `$.state` and rewrite the tool's input; whoever can write the answers or plan file, or get a
   start link of the inbox, can approve, and that approval ends plan mode with no dialog. In plan mode Claude Code
   by default leaves a Bash write to the auto mode classifier (`useAutoModeDuringPlan`); with that off, a Bash
-  command the user allowed by a rule may still write; Write and Edit are asked (measured on 2.1.323 and 2.1.330,
-  for a write the prompt said the user asked for).
+  command the user allowed by a rule may still write (measured on 2.1.323 and 2.1.330, for a write the prompt said
+  the user asked for). Write and Edit did not write there, but that run answered no prompt, so an ask was not told
+  from a deny; Claude Code's own plan file is written in plan mode with no ask.
 - **The inbox writes a round only while it holds its lock.** It takes `<round file>.lock` for the open rounds
   of each live run in `runs/` (no `ended`, the pid alive, the file not older than `RUNS_MAX_AGE`), each file once
   however many runs wait on it (flock is per open file); when another process holds one, that run's rounds are

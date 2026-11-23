@@ -57,15 +57,17 @@ once, in the session root the review began in, and is used up before Claude Code
 answers that dialog's permission request itself (`allow`, with the request's own input and no mode, so Claude Code
 picks the mode). The request names no tool call, so the mod binds it by time: the one request for that exact plan,
 from the main conversation and with only the tool's known keys, that comes while the passing call waits, and only
-when no hook beneath it (your own settings hooks, other mods) decides, whose answer goes first; any other request
+when no hook beneath it (your own settings hooks, other mods) gives a decision or a block, which goes back unchanged
+(what else they return stays beside the allow); any other request
 gets Claude Code's own dialog. Two calls of the same plan at the same moment cannot be told apart, and either gets
-it once. A later rejection in Claude Code's own dialog, or a prompt you send outside plan mode, ends a
-kept approval; a `/rewind` does not. Under a managed guard that runs no `classic` hooks, Claude Code's dialog asks
+it once. A later rejection in Claude Code's own dialog (not an Esc there), or a prompt you send outside plan mode,
+ends a kept approval; a `/rewind` does not. Under a managed guard that runs no `classic` hooks, Claude Code's dialog asks
 after the approval (not measured). Whoever can write the answers or plan file, or get a start link of the inbox,
 can approve, and that approval ends plan mode with no dialog. In plan mode Claude Code by default leaves a Bash
 write to the auto mode classifier (`useAutoModeDuringPlan`), and with that off a Bash command you allowed by a rule
-may still write; Write and Edit are asked (measured on Claude Code 2.1.323 and 2.1.330, for a write the prompt said
-you asked for). Other plugins' mods you installed are trusted: they can write the mod's session state and rewrite a
+may still write (measured on Claude Code 2.1.323 and 2.1.330, for a write the prompt said you asked for). Write and
+Edit did not write there, in a run that answered no prompt, so an ask was not told from a deny; Claude Code's own
+plan file is written in plan mode with no ask. Other plugins' mods you installed are trusted: they can write the mod's session state and rewrite a
 tool's input.
 
 Its Open button and `/signoff:open` open a panel. They run `signoff inbox rows <session root>` once. That asks

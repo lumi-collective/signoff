@@ -3898,7 +3898,7 @@ test('a rejection of another text in the dialog ends a kept approval', async ($,
 
 test('a prompt outside plan mode ends a kept approval; one in plan mode keeps it, and with none a prompt costs nothing', async ($, on) => {
   const { w, after } = world(on)
-  const prompt = (mode: string) =>
+  const prompt = (mode: string | undefined) =>
     $.classic.UserPromptSubmit({ hook_event_name: 'UserPromptSubmit', session_id: 's', transcript_path: '/t', cwd: ROOT, permission_mode: mode, prompt: 'go on' } as never)
   await start($)
   await after(1000)
@@ -3908,6 +3908,7 @@ test('a prompt outside plan mode ends a kept approval; one in plan mode keeps it
   await reviewing($, w, after)
   await answerPlan(w, after, answered('approve'))
   await prompt('plan')
+  await prompt(undefined) // a prompt that names no mode says nothing of it
   await after(1000)
   expect(w.plan?.phase).toBe('approved')
   await prompt('default') // the user left plan mode by hand
@@ -3933,8 +3934,9 @@ test('an approval is for its root: after a /cd into another project the same tex
   expect([w.native, w.plan?.phase, w.spawns.map(s => s.cwd)]).toEqual([[], 'review', ['/work']])
 })
 
-// As the .catch test: the budget runs in real time, two gates of 7 seconds. A stand-in, the dialog's too, has 10 of
-// its own, so the kit holds no pass window open across another call's budget.
+// As the .catch test: the budget runs in real time, two gates of 7 seconds. It pins the outcome only: the kit's
+// engine, as the measured one, gives a call past its own budget a next(e) that settles at once, so no window of its
+// own lives. The two tests after it pin the guards for another call's lapse.
 test('a call of the approved text past its hook budget never gets the allow', { timeoutMs: 40_000 }, async ($, on) => {
   const { w, after } = world(on)
   w.plan = held('approved')
@@ -3965,3 +3967,142 @@ test('a call of the approved text past its hook budget never gets the allow', { 
   await Promise.all([holding, late].map(call => call.catch(() => undefined)))
   expect(answers).toEqual([DIALOG, DIALOG])
 })
+
+// The two cross-call budget guards, driven in real time (from the security review of this change). A call's own
+// clock stops in its $ calls (the gates below) and ticks while it waits on the queue; each stand-in has 10 s of its
+// own, so no gate holds 10 s.
+test('another call past its budget during a pass decision: that pass opens no window', { timeoutMs: 40_000 }, async ($, on) => {
+  const { w, after } = world(on)
+  w.plan = held('approved')
+  await start($)
+  await after(1000)
+  const real = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
+  let releaseId = () => {}
+  let releaseRoot = () => {}
+  let open = () => {}
+  w.idGate = new Promise(resolve => (releaseId = resolve))
+  w.nativeGate = new Promise(resolve => (open = resolve))
+  const passing = exitPlan($, CALLED) // held 6 s at the id, 6 at the root: its own clock stopped
+  await real(100)
+  const late = exitPlan($, { plan: OTHER_PLAN }) // behind it on the queue, past its budget at about 10 s
+  await real(5900)
+  w.rootGate = new Promise(resolve => (releaseRoot = resolve))
+  w.idGate = undefined
+  releaseId()
+  await real(6000)
+  w.rootGate = undefined
+  releaseRoot()
+  await real(500)
+  expect(w.native).toEqual([OTHER_PLAN, CALLED.plan]) // the late call's .catch, then the pass's next(e)
+  expect(await asks($)).toEqual(DIALOG)
+  open()
+  await Promise.all([passing, late].map(call => call.catch(() => undefined)))
+})
+
+test('another call past its budget while a pass window is open closes it', { timeoutMs: 40_000 }, async ($, on) => {
+  const { w, after } = world(on)
+  w.plan = held('approved')
+  await start($)
+  await after(1000)
+  const real = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
+  let releaseId = () => {}
+  let releaseHolding = () => {}
+  let open = () => {}
+  w.idGate = new Promise(resolve => (releaseId = resolve))
+  w.nativeGate = new Promise(resolve => (open = resolve))
+  const passing = exitPlan($, CALLED) // held 5 s at the id
+  await real(100)
+  const holding = exitPlan($, { plan: 'A third plan' }) // next on the queue, held at its id from about 5 s
+  await real(100)
+  const late = exitPlan($, { plan: OTHER_PLAN }) // last on the queue, past its budget at about 10 s
+  await real(4800)
+  const first = releaseId
+  w.idGate = new Promise(resolve => (releaseHolding = resolve)) // the holding call's id waits on this one
+  first() // the pass opens its window at about 5 s; its native stand-in lasts to about 15
+  await real(500)
+  expect(w.native).toEqual([CALLED.plan])
+  await real(5500)
+  expect(w.native).toEqual([CALLED.plan, OTHER_PLAN]) // the late call's .catch took Claude Code's own path
+  expect(await asks($)).toEqual(DIALOG)
+  w.idGate = undefined
+  releaseHolding()
+  open()
+  await Promise.all([passing, holding, late].map(call => call.catch(() => undefined)))
+})
+
+test('a hook beneath that blocks (a command hook exit 2) keeps its block: no allow', async ($, on) => {
+  const { w, after } = world(on)
+  w.plan = held('approved')
+  w.permissionBelow = { block: 'my rule' }
+  await start($)
+  const { calling, release } = await inWindow($, w, after)
+  expect(await asks($)).toEqual({ block: 'my rule' })
+  release()
+  await calling
+})
+
+test('a continue: false from beneath stays beside the allow', async ($, on) => {
+  const { w, after } = world(on)
+  w.plan = held('approved')
+  w.permissionBelow = { preventContinuation: true, stopReason: 'stop' }
+  await start($)
+  const { calling, release } = await inWindow($, w, after)
+  expect(await asks($)).toEqual({ ...ALLOW, preventContinuation: true, stopReason: 'stop' })
+  release()
+  await calling
+})
+
+test('the use-up takes only this session own approval: another one written meanwhile opens no window', async ($, on) => {
+  const { w, after } = world(on)
+  w.plan = held('approved')
+  await start($)
+  await after(1000)
+  let release = () => {}
+  w.planSetGate = new Promise(resolve => (release = resolve))
+  const { calling, release: open } = await inWindow($, w, after)
+  w.setPlan({ ...held('approved')!, topic: TOPIC.replace(/-plan-.*$/, '-plan-ffffffff') }) // another load's session
+  w.planSetGate = undefined
+  release()
+  await after(1000)
+  expect([w.native, await asks($)]).toEqual([[CALLED.plan], DIALOG])
+  open()
+  await calling
+})
+
+test('an Esc at the dialog of another text keeps a kept approval, as the words say', { plugins: [interrupts] }, async ($, on) => {
+  const { w, after } = world(on, { lock: false })
+  w.plan = held('approved')
+  w.nativeAnswer = { result: 'The user interrupted', isError: true }
+  await start($)
+  await after(1000)
+  let open = () => {}
+  w.nativeGate = new Promise(resolve => (open = resolve))
+  const calling = exitPlan($, { plan: OTHER_PLAN })
+  await after(1000)
+  expect(await calling).toEqual({ deny: 'interrupted' }) // the dialog was up: the Esc
+  open()
+  await after(1000)
+  expect([w.native, w.plan]).toEqual([[OTHER_PLAN], held('approved')])
+})
+
+// The mod's copy of project_root(): the .signoff arm, the home folder skipped, and no root.
+test('a take-over in a project marked only by its .signoff folder lists the topic there', async ($, on) => {
+  const { w, after } = world(on)
+  delete w.files[`${ROOT}/.git`] // an entry of the kit's file table, not a file
+  w.files['/work/.git'] = { text: '', mtimeMs: NOW } // an outer repository
+  w.files[`${ROOT}/.signoff/${TOPIC}/round-02.json`] = { text: '{}', mtimeMs: NOW }
+  await reviewing($, w, after)
+  expect(w.plan?.after).toBe(2)
+})
+
+for (const [why, options] of [
+  ['the home folder is never one', { env: { HOME: ROOT, SIGNOFF_INBOX_HOME: SO } }],
+  ['no folder up from the root has a marker', {}],
+] as const) {
+  test(`a take-over with no project root keeps no after (${why})`, async ($, on) => {
+    const { w, after } = world(on, options as never)
+    if (why.startsWith('no folder')) delete w.files[`${ROOT}/.git`]
+    await reviewing($, w, after)
+    expect(w.plan && 'after' in w.plan).toBe(false)
+  })
+}

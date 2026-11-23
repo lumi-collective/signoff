@@ -103,13 +103,15 @@ from the file.
 After an approval the same plan goes on once, and the mod answers Claude Code's permission request for it, so no
 dialog asks and Claude Code picks the mode. That request names no tool call, so the mod takes the one request for
 that exact plan, from the main conversation, while the call it let through waits, and only when no hook beneath it
-(your own settings hooks, other mods) decides; any other gets Claude Code's own dialog. That uses the approval up,
-also when the plan is rejected. A rejection in Claude Code's own
-dialog, or a prompt you send outside plan mode, ends a kept approval. Whoever can write your answers or plan file,
-or get a start link of the inbox, can approve, and that approval ends plan mode with no dialog; in plan mode Claude
-Code by default leaves a Bash write to its auto mode classifier, and with that off a Bash command you allowed by a
-rule may still write, while Write and Edit are asked (measured on Claude Code 2.1.323 and 2.1.330, for a write the
-prompt said you asked for). Other installed plugins' mods are trusted. After an Esc, the message waits for your
+(your own settings hooks, other mods) gives a decision or a block, which goes back unchanged; any other gets Claude
+Code's own dialog. That uses the approval up, also when the plan is rejected. A rejection in Claude Code's own
+dialog (not an Esc there), or a prompt you send outside plan mode, ends a kept approval. Whoever can write your
+answers or plan file, or get a start link of the inbox, can approve, and that approval ends plan mode with no
+dialog; in plan mode Claude Code by default leaves a Bash write to its auto mode classifier, and with that off a
+Bash command you allowed by a rule may still write (measured on Claude Code 2.1.323 and 2.1.330, for a write the
+prompt said you asked for). Write and Edit did not write there, in a run that answered no prompt, so an ask was not
+told from a deny; Claude Code's own plan file is written in plan mode with no ask. Other installed plugins' mods are
+trusted. After an Esc, the message waits for your
 next turn, and a notice says so. The mod stops that command at /clear, at /resume and when you approve a plan in
 Claude Code's own dialog, and quitting or restarting Claude Code ends it too. It keeps the plan's text in Claude
 Code's session state until the review is over and an
