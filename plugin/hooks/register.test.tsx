@@ -33,6 +33,7 @@ type Plan = {
   wake: { text: string; isToasted: boolean; isOut?: boolean } | null
   since?: number
   root?: string
+  after?: number
 } | null
 type Ran = { stdout: string; exitCode: number; isStdoutTruncated?: boolean }
 type Marks = { since: number; sent: string[]; project?: string; projects?: Record<string, number> } | null
@@ -82,6 +83,10 @@ type World = {
   native: unknown[]
   nativeAnswer: Record<string, unknown>
   nativeGate: Promise<void> | undefined
+  /** Another writer of the plan's state (a /clear, another load): it moves the version, so a write in flight reads again. */
+  setPlan: (plan: Plan) => void
+  /** What the hooks beneath the mod answer a permission request: {} when none decides. */
+  permissionBelow: Record<string, unknown>
   opened: { id: string; focus?: boolean }[]
   /** What happened, in order: `open` (ui.open), `set:<key>` (a state write), `run:<subcommand>`. */
   order: string[]
@@ -180,6 +185,8 @@ function world(
     native: [],
     nativeAnswer: { result: { plan: 'shown', isAgent: false } },
     nativeGate: undefined,
+    setPlan: () => {},
+    permissionBelow: {},
     opened: [],
     order: [],
     isPaneOpen: false,
@@ -202,6 +209,7 @@ function world(
   if (lock) w.files[`${home}/inbox.lock`] = { text: '', mtimeMs: now }
   if (project) w.files[`${home}/projects/${ID}.json`] = { text: JSON.stringify({ schema: 1, id: ID, root: ROOT, name: 'demo' }), mtimeMs: now }
   w.files[`${home}/projects/${OTHER}.json`] = { text: JSON.stringify({ schema: 1, id: OTHER, root: '/work', name: 'work' }), mtimeMs: now }
+  w.files[`${ROOT}/.git`] = { text: '', mtimeMs: now } // the project's marker, where signoff plan puts a relative folder
   const missing = { deny: 'ENOENT: no such file or directory' }
   const dirOf = (path: string) => Object.keys(w.files).filter(f => f.startsWith(`${path}/`))
   on('env.get', (_, e) => ({ value: env[e.name] }))
@@ -270,6 +278,10 @@ function world(
   // `requests` is kept here, as the engine would, so a test can seed it (a reload keeps $.state) or empty it (a /clear).
   let version = 0
   let planVersion = 0
+  w.setPlan = plan => {
+    w.plan = plan
+    planVersion++
+  }
   const dead = { deny: "state: the plugin's environment is unloaded" }
   on('state.get', async (_, e, next) => {
     const key = (e as { key?: string }).key
@@ -351,7 +363,13 @@ function world(
       cwd: e.cwd,
       input: e.input,
       isStopped: false,
-      end: (stdout = '', code = 0, signal = null) => settle({ stdout, code, signal }),
+      end: (stdout = '', code = 0, signal = null) => {
+        // As signoff plan: the round it answers has its plan file beside it, the plan as it came on stdin.
+        const plan = /^(\/.*)\/round-([0-9]+)\.answers\.json\n$/.exec(stdout)
+        const path = plan && `${plan[1]}/plan-${plan[2]}.md`
+        if (path && !(path in w.files) && e.input !== undefined) w.files[path] = { text: e.input, mtimeMs: now }
+        settle({ stdout, code, signal })
+      },
     }
     // The mod closing the stream kills the child, as the engine does (measured).
     const stopped = () => {
@@ -370,6 +388,8 @@ function world(
     if (stdout.length > 7) yield { stream: 'stdout' as const, text: stdout.slice(7) }
     return { value: { code, signal } } as never
   })
+  on('classic.PermissionRequest', () => w.permissionBelow) // the user's settings hooks, then Claude Code's own dialog
+  on('classic.UserPromptSubmit', () => ({}))
   on('tool.call', async (_, e) => {
     w.native.push((e as { plan?: unknown }).plan)
     await w.nativeGate
@@ -2029,7 +2049,8 @@ const held = (phase: NonNullable<Plan>['phase'], wake: string | null = null, tex
   text,
   phase,
   wake: wake === null ? null : { text: wake, isToasted, isOut },
-  ...(phase === 'review' && { since: NOW, root: `${ROOT}/src` }), // as a take-over at NOW keeps it
+  ...(phase === 'review' && { since: NOW, root: `${ROOT}/src`, after: 0 }), // as a first take-over at NOW keeps it
+  ...(phase === 'approved' && { root: `${ROOT}/src` }), // an approval keeps its review's root
 })
 const idle: Plan = { topic: TOPIC, text: '', phase: null, wake: null }
 const planCost = (w: World) => [...spent(w), w.planReads, w.order.length, w.spawns.length]
@@ -2480,7 +2501,7 @@ test('an approval is for its text only: another text is a new review, and the ke
   await answerPlan(w, after, answered('approve'))
   expect(await exitPlan($, { plan: OTHER_PLAN })).toEqual({ deny: DENY })
   await after(1000)
-  expect([w.native, w.plan, w.spawns.at(-1)?.input]).toEqual([[], { ...held('review', null, OTHER_PLAN), since: NOW + 2000 }, OTHER_PLAN])
+  expect([w.native, w.plan, w.spawns.at(-1)?.input]).toEqual([[], { ...held('review', null, OTHER_PLAN), since: NOW + 2000, after: 1 }, OTHER_PLAN])
   await turn($)
   await after(1000)
   expect(w.submits).toHaveLength(1)
@@ -2502,7 +2523,7 @@ for (const [name, text, deny] of [
     expect([w.spawns.length, w.native]).toEqual([1, []])
     expect(await exitPlan($, { plan: OTHER_PLAN })).toEqual({ deny: DENY })
     await after(1000)
-    expect(w.plan).toEqual({ ...held('review', null, OTHER_PLAN), since: NOW + 3000 })
+    expect(w.plan).toEqual({ ...held('review', null, OTHER_PLAN), since: NOW + 3000, after: 1 }) // round 01 is in the folder
     await turn($)
     await after(1000)
     expect(w.submits).toHaveLength(1) // the kept wake went with the new review
@@ -2583,16 +2604,19 @@ for (const [name, phase, wake, text] of [
   ['an approval of another text and its wake', 'approved', approvedText(), OTHER_PLAN],
 ] as const) {
   for (const isRejected of [false, true]) {
-    test(`Claude Code's own path with ${name}: ${isRejected ? 'a rejection changes nothing' : 'a success ends it all'}`, async ($, on) => {
+    // A rejection of another text ends an approval (it is that text's no longer), and changes nothing else.
+    const isKept = isRejected && phase !== 'approved'
+    const outcome = isKept ? 'a rejection changes nothing' : isRejected ? 'a rejection ends the approval' : 'a success ends it all'
+    test(`Claude Code's own path with ${name}: ${outcome}`, async ($, on) => {
       const { w, after } = world(on, { lock: false })
       w.plan = held(phase, wake, text, true)
       if (isRejected) w.nativeAnswer = { result: 'User rejected the plan', isError: true }
       await start($)
       await exitPlan($)
-      expect(w.plan).toEqual(isRejected ? held(phase, wake, text, true) : idle)
+      expect(w.plan).toEqual(isKept ? held(phase, wake, text, true) : idle)
       await turn($)
       await after(1000)
-      expect(w.submits).toHaveLength(isRejected && wake ? 1 : 0)
+      expect(w.submits).toHaveLength(isKept && wake ? 1 : 0)
     })
   }
 }
@@ -3618,4 +3642,326 @@ test('past the hook budget the .catch still ends the plan state after a native s
   await Promise.all([holding, waiting].map(call => call.catch(() => undefined)))
   await after(2000)
   expect([w.plan?.phase ?? null, w.spawns.map(s => s.isStopped)]).toEqual([null, [true]]) // the review the other call began
+})
+
+// The approved plan passes Claude Code's dialog: the permission request carries no tool_use_id (measured), so its one
+// allow goes to the request that comes while the passing call's next(e) runs.
+const PLAN_FILE = `${HOME}/.claude/plans/a-plan.md`
+const CALLED = { plan: `${PLAN}\n`, planFilePath: PLAN_FILE } // as Claude Code calls it: the plan's own end of line
+const asks = ($: Engine, input: unknown = CALLED, more: Record<string, unknown> = {}) =>
+  $.classic.PermissionRequest({
+    hook_event_name: 'PermissionRequest',
+    session_id: 's',
+    transcript_path: '/t',
+    cwd: ROOT,
+    permission_mode: 'plan',
+    tool_name: 'ExitPlanMode',
+    tool_input: input,
+    ...more,
+  } as never)
+const ALLOW = { decision: { behavior: 'allow', updatedInput: CALLED } }
+const DIALOG = {} // the request went on to Claude Code's own dialog
+
+/** The approved plan's call, held in its next(e): the dialog is up. */
+async function inWindow($: Engine, w: World, after: (ms: number) => Promise<void>, input: Record<string, unknown> = CALLED) {
+  let release = () => {}
+  w.nativeGate = new Promise(resolve => (release = resolve))
+  const calling = exitPlan($, input)
+  await after(1000)
+  return { calling, release }
+}
+
+test('an approval from Signoff passes the dialog: one allow with the request own input, no mode', async ($, on) => {
+  const { w, after } = world(on)
+  await reviewing($, w, after)
+  await answerPlan(w, after, answered('approve'))
+  expect([texts(w), w.plan]).toEqual([[approvedText()], held('approved')]) // the wake entered
+  const { calling, release } = await inWindow($, w, after)
+  expect([w.native, w.plan]).toEqual([[CALLED.plan], idle])
+  expect(await asks($)).toEqual(ALLOW) // no updatedPermissions: Claude Code picks the mode
+  release()
+  expect(await calling).toEqual(w.nativeAnswer)
+  expect(await asks($)).toEqual(DIALOG) // the window closed with its next(e)
+  expect(await exitPlan($, CALLED)).toEqual({ deny: DENY }) // once: the same text is a new review
+  expect(await asks($)).toEqual(DIALOG)
+})
+
+// The passing call's own request is the window's first main-loop ExitPlanMode one: a rewritten one uses the window up,
+// so a later request (another call's) gets no allow. A subagent's or another tool's leaves it.
+for (const c of [
+  { name: 'another text', input: { plan: OTHER_PLAN, planFilePath: PLAN_FILE } },
+  { name: 'no plan', input: { planFilePath: PLAN_FILE } },
+  { name: 'a plan that is no text', input: { plan: 5, planFilePath: PLAN_FILE } },
+  { name: 'an unknown key', input: { ...CALLED, allowedPrompts: [] } },
+  { name: 'another plan file', input: { plan: CALLED.plan, planFilePath: `${HOME}/.claude/plans/b-plan.md` } },
+  { name: 'no plan file', input: { plan: CALLED.plan } },
+  { name: 'an input that is no object', input: null },
+  { name: 'agent_id', more: { agent_id: 'a1b2c3', agent_type: 'general-purpose' }, leaves: true },
+  { name: 'another tool', more: { tool_name: 'Bash' }, leaves: true },
+]) {
+  test(`in the pass window a request with ${c.name} goes to the dialog, and ${c.leaves ? 'leaves' : 'uses up'} the allow`, async ($, on) => {
+    const { w, after } = world(on)
+    w.plan = held('approved')
+    await start($)
+    const { calling, release } = await inWindow($, w, after)
+    expect(await asks($, c.input === undefined ? CALLED : c.input, c.more)).toEqual(DIALOG)
+    expect(await asks($)).toEqual(c.leaves ? ALLOW : DIALOG)
+    release()
+    await calling
+  })
+}
+
+test('a hook beneath that decides wins over the allow, and its answer goes back as it is', async ($, on) => {
+  const { w, after } = world(on)
+  w.plan = held('approved')
+  w.permissionBelow = { decision: { behavior: 'deny', message: 'my own rule' } }
+  await start($)
+  const { calling, release } = await inWindow($, w, after)
+  expect(await asks($)).toEqual(w.permissionBelow)
+  release()
+  await calling
+})
+
+test('a rejection of the approved text itself in the dialog ends a kept approval', async ($, on) => {
+  const { w, after } = world(on)
+  w.plan = held('approved')
+  w.nativeAnswer = { result: 'User rejected the plan', isError: true }
+  await start($)
+  w.sessionId = '0a1b/../4e5f' // so the call takes Claude Code's own path
+  await exitPlan($, CALLED)
+  await after(1000)
+  expect([w.native, w.plan]).toEqual([[CALLED.plan], idle])
+})
+
+test('a second request in the same window gets the dialog', async ($, on) => {
+  const { w, after } = world(on)
+  w.plan = held('approved')
+  await start($)
+  const { calling, release } = await inWindow($, w, after)
+  expect([await asks($), await asks($)]).toEqual([ALLOW, DIALOG])
+  release()
+  await calling
+})
+
+test('no window, no allow: before the pass, in review, with no state, and after the call', async ($, on) => {
+  const { w, after } = world(on)
+  w.plan = held('approved')
+  await start($)
+  await after(1000)
+  expect(await asks($)).toEqual(DIALOG) // before the pass
+  const { calling, release } = await inWindow($, w, after)
+  release() // no request came while it waited
+  await calling
+  expect(await asks($)).toEqual(DIALOG) // after its next(e) settled
+  expect(await exitPlan($, CALLED)).toEqual({ deny: DENY })
+  expect([w.plan?.phase, await asks($)]).toEqual(['review', DIALOG])
+})
+
+test('a call that takes Claude Code own path with no state opens no window', async ($, on) => {
+  const { w, after } = world(on, { lock: false })
+  await start($)
+  const { calling, release } = await inWindow($, w, after)
+  expect([w.native, w.plan, await asks($)]).toEqual([[CALLED.plan], null, DIALOG])
+  release()
+  await calling
+})
+
+test('two calls of the approved text whose dialogs overlap: one allow in all', async ($, on) => {
+  const { w, after } = world(on)
+  w.plan = held('approved')
+  await start($)
+  const { calling, release } = await inWindow($, w, after)
+  w.sessionId = '0a1b/../4e5f' // so the second call takes Claude Code's own path, as one the mod does not take over
+  const second = exitPlan($, CALLED)
+  await after(1000)
+  expect(w.native).toEqual([CALLED.plan, CALLED.plan])
+  expect([await asks($), await asks($)]).toEqual([ALLOW, DIALOG])
+  release()
+  await Promise.all([calling, second])
+  expect(await asks($)).toEqual(DIALOG)
+})
+
+test('a call interrupted during the use-up write opens no window', { plugins: [interrupts] }, async ($, on) => {
+  const { w, after } = world(on)
+  w.plan = held('approved')
+  await start($)
+  await after(1000)
+  let release = () => {}
+  w.planSetGate = new Promise(resolve => (release = resolve))
+  let open = () => {}
+  w.nativeGate = new Promise(resolve => (open = resolve))
+  const calling = exitPlan($, CALLED)
+  await after(1000)
+  expect(await calling).toEqual({ deny: 'interrupted' })
+  w.planSetGate = undefined
+  release()
+  await after(1000)
+  expect([w.plan, await asks($)]).toEqual([idle, DIALOG]) // used up, and lost
+  open()
+  await after(1000)
+})
+
+test('a use-up that found the state gone opens no window', async ($, on) => {
+  const { w, after } = world(on)
+  w.plan = held('approved')
+  await start($)
+  await after(1000)
+  let release = () => {}
+  w.planSetGate = new Promise(resolve => (release = resolve))
+  const { calling, release: open } = await inWindow($, w, after)
+  w.setPlan(null) // another writer emptied it meanwhile
+  w.planSetGate = undefined
+  release()
+  await after(1000)
+  expect([w.native, w.plan, await asks($)]).toEqual([[CALLED.plan], null, DIALOG])
+  open()
+  await calling
+})
+
+test('an approved plan file that is not the kept text is no approval', async ($, on) => {
+  const { w, after } = world(on)
+  w.drop = STOP // the message waits, so its phase stays
+  await reviewing($, w, after)
+  w.files[`${ROOT}/.signoff/${TOPIC}/plan-01.md`] = { text: OTHER_PLAN, mtimeMs: NOW } // what the user saw
+  await answerPlan(w, after, answered('approve'))
+  expect([texts(w), w.plan?.phase]).toEqual([[unreadText], 'answered'])
+  expect(await exitPlan($, CALLED)).toEqual({ deny: ANSWERED_DENY })
+})
+
+// R1 without a clock: a resumed child's answer from a round the topic folder held at the take-over is older.
+test('an old answer whose times look new never answers a resumed review: its round is not above the take-over', async ($, on) => {
+  const { w, after } = world(on)
+  w.plan = { ...held('review')!, since: NOW - 60_000, after: 1 } // a clock set back since: the old answer looks newer
+  w.files[ANSWERS] = { text: answered('approve'), mtimeMs: NOW }
+  await start($)
+  await after(1000)
+  w.spawns[0]?.end(`${ANSWERS}\n`)
+  await after(1000)
+  expect([texts(w), w.spawns.map(s => s.argv)]).toEqual([[], [planArgv('--resume'), planArgv()]])
+})
+
+test('a resumed child answer from a round above the take-over approves', async ($, on) => {
+  const { w, after } = world(on)
+  const second = ANSWERS.replace('round-01', 'round-02')
+  w.plan = { ...held('review')!, after: 1 }
+  w.files[second] = { text: answered('approve'), mtimeMs: NOW }
+  await start($)
+  await after(1000)
+  w.spawns[0]?.end(`${second}\n`)
+  await after(1000)
+  expect([texts(w), w.spawns.length]).toEqual([[approvedText(second)], 1])
+})
+
+test('a resumed review with no round from its take-over (an older build) takes no answer', async ($, on) => {
+  const { w, after } = world(on)
+  const { after: _, ...older } = held('review')!
+  w.plan = older
+  await start($)
+  await after(1000)
+  await answerPlan(w, after, answered('approve'))
+  expect([texts(w), w.spawns.map(s => s.argv)]).toEqual([[], [planArgv('--resume'), planArgv()]])
+})
+
+test('a take-over notes the highest round or plan number of its topic folder', async ($, on) => {
+  const { w, after } = world(on)
+  w.files[`${ROOT}/.signoff/${TOPIC}/round-03.json`] = { text: '{}', mtimeMs: NOW }
+  w.files[`${ROOT}/.signoff/${TOPIC}/plan-04.md`] = { text: PLAN, mtimeMs: NOW }
+  w.files[`${ROOT}/.signoff/${TOPIC}/notes.md`] = { text: '', mtimeMs: NOW }
+  await reviewing($, w, after)
+  expect(w.plan?.after).toBe(4)
+})
+
+test('a saved whose text cannot be made is no answer and no message', async ($, on) => {
+  const { w, after } = world(on)
+  w.plan = held('review')
+  await start($)
+  await after(1000)
+  w.files[ANSWERS] = {
+    text: JSON.stringify({ version: 1, done: true, saved: { toString: 1 }, answers: { plan: { choice: 'approve', source: 'user' } } }),
+    mtimeMs: NOW + 5000,
+  }
+  w.spawns[0]?.end(`${ANSWERS}\n`)
+  await after(1000)
+  expect([texts(w), w.spawns.length]).toEqual([[], 2])
+})
+
+// Expiry of a kept approval.
+test('a rejection of another text in the dialog ends a kept approval', async ($, on) => {
+  const { w, after } = world(on, { lock: false })
+  w.plan = held('approved')
+  w.nativeAnswer = { result: 'User rejected the plan', isError: true }
+  await start($)
+  await exitPlan($, { plan: OTHER_PLAN })
+  await after(1000)
+  expect([w.native, w.plan]).toEqual([[OTHER_PLAN], idle])
+})
+
+test('a prompt outside plan mode ends a kept approval; one in plan mode keeps it, and with none a prompt costs nothing', async ($, on) => {
+  const { w, after } = world(on)
+  const prompt = (mode: string) =>
+    $.classic.UserPromptSubmit({ hook_event_name: 'UserPromptSubmit', session_id: 's', transcript_path: '/t', cwd: ROOT, permission_mode: mode, prompt: 'go on' } as never)
+  await start($)
+  await after(1000)
+  const reads = w.planReads
+  await prompt('default')
+  expect(w.planReads).toBe(reads)
+  await reviewing($, w, after)
+  await answerPlan(w, after, answered('approve'))
+  await prompt('plan')
+  await after(1000)
+  expect(w.plan?.phase).toBe('approved')
+  await prompt('default') // the user left plan mode by hand
+  await after(1000)
+  expect(w.plan).toEqual(idle)
+})
+
+test('plan off at a load with an approval: it ends', { options: { plan: 'off' } }, async ($, on) => {
+  const { w, after } = world(on)
+  w.plan = held('approved', approvedText())
+  await start($)
+  await after(1000)
+  expect([w.plan, w.submits]).toEqual([idle, []])
+})
+
+test('an approval is for its root: after a /cd into another project the same text is a new review there', async ($, on) => {
+  const { w, after } = world(on)
+  w.plan = held('approved')
+  w.root = '/work'
+  await start($)
+  expect(await exitPlan($, CALLED)).toEqual({ deny: DENY })
+  await after(1000)
+  expect([w.native, w.plan?.phase, w.spawns.map(s => s.cwd)]).toEqual([[], 'review', ['/work']])
+})
+
+// As the .catch test: the budget runs in real time, two gates of 7 seconds. A stand-in, the dialog's too, has 10 of
+// its own, so the kit holds no pass window open across another call's budget.
+test('a call of the approved text past its hook budget never gets the allow', { timeoutMs: 40_000 }, async ($, on) => {
+  const { w, after } = world(on)
+  w.plan = held('approved')
+  await start($)
+  await after(1000)
+  let releaseRead = () => {}
+  let releaseId = () => {}
+  let open = () => {}
+  w.planGetGate = new Promise(resolve => (releaseRead = resolve))
+  w.idGate = new Promise(resolve => (releaseId = resolve))
+  w.nativeGate = new Promise(resolve => (open = resolve))
+  const real = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
+  const holding = exitPlan($, { plan: OTHER_PLAN }) // 7 seconds at the read, 7 at the id
+  await real(100)
+  const late = exitPlan($, CALLED) // waits on the queue alone, past its budget
+  await real(6900)
+  w.planGetGate = undefined
+  releaseRead()
+  await real(4000)
+  expect(w.native).toEqual([CALLED.plan]) // past the budget: the .catch took Claude Code's own path
+  const answers = [await asks($)] // its request
+  w.files[`${SO}/inbox.lock`] = { text: '', mtimeMs: NOW - 60_000 } // so the holding call ends on that path too
+  w.idGate = undefined
+  releaseId()
+  await real(500) // then the late call's own decision goes on
+  answers.push(await asks($))
+  open()
+  await Promise.all([holding, late].map(call => call.catch(() => undefined)))
+  expect(answers).toEqual([DIALOG, DIALOG])
 })

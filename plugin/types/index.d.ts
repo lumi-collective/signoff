@@ -20,7 +20,9 @@ export type PanelRows = {
  * wake: the fixed message to the model, held until it entered (isToasted: the user had the toast; isOut: a submit of
  * it went out and was not seen refused, so after a reload the engine may still hold it).
  * In review only: since, the time (ms) of the take-over, which an older answers file (by its time or its saved)
- * never answers, and root, the session root it was taken over in, where every respawn runs.
+ * never answers; after, the highest round or plan number the topic folder held at the take-over, which a resumed
+ * child's round must be above; and root, the session root it was taken over in, where every respawn runs. An
+ * approval keeps root: it passes in that root only.
  */
 export type PlanReview = {
   topic: string
@@ -29,6 +31,7 @@ export type PlanReview = {
   wake: { text: string; isToasted: boolean; isOut: boolean } | null
   since?: number
   root?: string
+  after?: number
 }
 
 // The hooks module's session values (hooks/register.tsx): numbers, the panel's one-line titles and the plan review.

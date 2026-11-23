@@ -117,6 +117,11 @@ const look = {
   // A wake the last load left out, which the engine may still run: only that turn's text says it entered.
   leftOut: undefined as string | undefined,
   hasSkipped: false, // the first main turn went by with no copy of it
+  // The pass's window: open while the call that took the pass waits on its next(e), in memory only, so after a
+  // reload the dialog asks. file: that call's planFilePath. isUsed: its one allow went.
+  window: undefined as { text: string; file: unknown; isUsed: boolean } | undefined,
+  lapses: 0, // main-loop ExitPlanMode calls past their hook budget: one during a decision opens no window
+  mayApprove: false, // an approval may be kept: only then does a prompt outside plan mode cost a $ call
 }
 
 const hint = () => (look.options.hint === 'status' || look.options.hint === 'off' ? look.options.hint : 'band')
@@ -482,6 +487,41 @@ function newTopic(now: number, session: string): string {
   return `${day.getFullYear()}-${two(day.getMonth() + 1)}-${two(day.getDate())}-plan-${session}`
 }
 
+// project_root() in signoff.py, where signoff plan puts a relative folder: from the real folder up, the nearest that
+// has a .git or holds a .signoff folder that is no link, never the home folder or /.
+async function projectRoot($: Engine, from: string): Promise<string | undefined> {
+  const home = await $.env.get('HOME')
+  const real = async (path: string) => (await $.fs.stat(path, { resolve: true }).catch(() => undefined))?.realPath
+  const homeReal = isAbsolute(home) ? await real(home) : undefined
+  const isMarker = async (path: string) => {
+    if (!(await $.fs.exists(path))) return false
+    const stat = await $.fs.stat(path)
+    return stat.kind === 'dir' && !stat.isLink
+  }
+  for (let up = await real(from); up && up !== '/'; up = up.slice(0, up.lastIndexOf('/')) || '/') {
+    if (up !== homeReal && ((await $.fs.exists(`${up}/.git`)) || (await isMarker(`${up}/.signoff`)))) return up
+  }
+  return undefined
+}
+
+// The highest round or plan number in the topic folder at a take-over, as signoff plan numbers them, so a resumed
+// child's answer from a round not above it is an older review's: no clock decides that. 0 with no folder yet;
+// undefined when it cannot be known, and then a resumed child takes no answer.
+async function lastRound($: Engine, root: string, topic: string): Promise<number | undefined> {
+  try {
+    const folder = planFolder()
+    const base = isAbsolute(folder) ? folder : await projectRoot($, root).then(r => r && `${r}/${folder}`)
+    if (!base) return undefined
+    const dir = `${base}/${topic}`
+    if (!(await $.fs.exists(dir))) return 0
+    let n = 0
+    for (const entry of await $.fs.list(dir)) n = Math.max(n, Number(/^(?:round|plan)-([0-9]+)\./.exec(entry.name)?.[1] ?? 0))
+    return n
+  } catch {
+    return undefined
+  }
+}
+
 // Nothing is awaited from the caller's last check to the spawn. The plan goes on stdin only.
 function startReview($: Engine, root: string, review: PlanReview, isResume: boolean) {
   const argv = [`${$.plugin.root}/bin/signoff`, 'plan', '--topic', review.topic, '--folder', planFolder(), ...(isResume ? ['--resume'] : [])]
@@ -526,9 +566,24 @@ function answersPath(out: string, topic: string): string | undefined {
   return new RegExp(`/${topic}/round-[0-9]{2,4}\\.answers\\.json$`).test(path) ? path : undefined
 }
 
-// Only done, saved and the plan item's choice and source count; none of the file's text goes further.
+// The round number in an answers path that answersPath took.
+const roundOf = (path: string) => Number(/round-([0-9]+)\.answers\.json$/.exec(path)?.[1])
+
+// Whether the plan file beside that round's answers holds exactly the kept text: what the user saw and approved.
+async function sawPlan($: Engine, path: string, text: string): Promise<boolean> {
+  const plan = path.replace(/round-([0-9]+)\.answers\.json$/, 'plan-$1.md')
+  try {
+    const stat = await $.fs.stat(plan)
+    return stat.kind === 'file' && stat.size <= MAX_ANSWERS && (await $.fs.read(plan)) === text
+  } catch {
+    return false
+  }
+}
+
+// Only done, saved and the plan item's choice and source count; none of the file's text goes further. An approval
+// also needs its round's plan file to hold the kept text.
 // With notBefore, an older file or an older saved is no answer of this review: undefined.
-async function readAnswer($: Engine, path: string, notBefore?: number): Promise<{ phase: PlanReview['phase']; text: string } | undefined> {
+async function readAnswer($: Engine, path: string, text: string, notBefore?: number): Promise<{ phase: PlanReview['phase']; text: string } | undefined> {
   const file = JSON.stringify(path)
   try {
     const stat = await $.fs.stat(path)
@@ -539,9 +594,13 @@ async function readAnswer($: Engine, path: string, notBefore?: number): Promise<
       const got = JSON.parse(await $.fs.read(path)) as Saved | null
       if (got?.done === true) {
         // saved is the inbox's own clock, to the second: a touch or a file server's clock does not move it.
-        if (notBefore !== undefined && !(Date.parse(String(got.saved)) + 1000 > notBefore)) return undefined
+        const saved = typeof got.saved === 'string' ? Date.parse(got.saved) : NaN
+        if (notBefore !== undefined && !(saved + 1000 > notBefore)) return undefined
         const plan = got.answers?.plan
-        if (plan?.source === 'user' && plan.choice === 'approve') return { phase: 'approved', text: APPROVED(file) }
+        if (plan?.source === 'user' && plan.choice === 'approve') {
+          if (await sawPlan($, path, text)) return { phase: 'approved', text: APPROVED(file) }
+          return { phase: 'answered', text: UNREAD(file) }
+        }
         return { phase: plan?.source === 'user' && plan.choice === 'revise' ? 'revise' : 'answered', text: NOT_APPROVED(file) }
       }
     }
@@ -561,7 +620,9 @@ async function settleReview($: Engine, child: Child, path: string | undefined): 
     // Only a resumed child is checked: one without --resume always writes a new round, so a slow file clock refuses
     // no answer of it, and the round started again below starts no third.
     const notBefore = child.isResume ? (typeof held.since === 'number' ? held.since : Infinity) : undefined
-    const answer = path === undefined ? { phase: null, text: DID_NOT_RUN } : await readAnswer($, path, notBefore)
+    // No clock: its round must be above every round the topic folder held at the take-over.
+    const isOlder = child.isResume && path !== undefined && !(typeof held.after === 'number' && roundOf(path) > held.after)
+    const answer = path === undefined ? { phase: null, text: DID_NOT_RUN } : isOlder ? undefined : await readAnswer($, path, held.text, notBefore)
     const server = path === undefined ? ((await serverId($)) ?? '') : undefined
     if (child.isStopped) return false
     if (!answer) {
@@ -570,7 +631,10 @@ async function settleReview($: Engine, child: Child, path: string | undefined): 
     }
     const { phase, text } = answer
     const wake = { text, isToasted: false, isOut: false }
-    await update($, planA, old => (old?.phase === 'review' ? { topic: old.topic, text: phase ? old.text : '', phase, wake } : old))
+    // An approval keeps the review's root: a pass is for that root only.
+    const keep = (old: PlanReview) => (phase === 'approved' && typeof old.root === 'string' ? { root: old.root } : {})
+    await update($, planA, old => (old?.phase === 'review' ? { topic: old.topic, text: phase ? old.text : '', phase, wake, ...keep(old) } : old))
+    if (phase === 'approved') look.mayApprove = true
     if (child.isStopped) return false
     look.wake = text // held before its first submit
     if (server !== undefined) look.offFor = server
@@ -635,10 +699,11 @@ async function wakeAtTurn($: Engine, wake: string, turnText: string) {
   await sendWake($)
 }
 
-// At a load: a review the last module's child waited on. With the setting off the review ends, and nothing is sent.
+// At a load: a review the last module's child waited on. With the setting off the review or an approval ends, and
+// nothing is sent.
 async function resumeReview($: Engine) {
   if (planReview() === 'off') {
-    await update($, planA, old => (old?.phase === 'review' ? idle(old.topic) : old))
+    await update($, planA, old => (old?.phase === 'review' || old?.phase === 'approved' ? idle(old.topic) : old))
     return
   }
   if (look.child) return
@@ -656,12 +721,19 @@ async function decide($: Engine, text: string, signal: AbortSignal): Promise<Ver
   if (!SESSION_START.test(session)) return 'native'
   const held = stored && isOwn(stored, session) ? stored : null
   if (signal.aborted) return 'native' // an interrupt seen before the write uses nothing up
-  if (!look.child && held?.phase === 'approved' && held.text === text) {
+  // The approval's root only: after a /cd into another project the same text is a new review there.
+  if (!look.child && held?.phase === 'approved' && held.text === text && held.root === (await $.session.root())) {
     // Used up before the pass, so two calls or a reload during the dialog get no second one. An interrupt from here
-    // on loses the approval: it is never restored.
-    await update($, planA, old => old && idle(old.topic))
+    // on loses the approval: it is never restored. Only a write that took this approval passes (onExitPlanMode opens
+    // its window only with no interrupt after it): a state another writer emptied meanwhile goes to Claude Code's
+    // own dialog.
+    let isTaken = false
+    await update($, planA, old => {
+      isTaken = old?.phase === 'approved' && old.text === text && isOwn(old, session)
+      return old && idle(old.topic)
+    })
     look.wake = undefined
-    return 'pass'
+    return isTaken ? 'pass' : 'native'
   }
   const root = await reviewRoot($, signal)
   if (!root) return 'native'
@@ -678,13 +750,14 @@ async function decide($: Engine, text: string, signal: AbortSignal): Promise<Ver
     return { deny: held.text === text ? DENY : OPEN_DENY }
   }
   // An answer still waiting for a hand-over was never sent: another text does not drop it unseen.
-  if (held?.wake && (held.text === text || (look.isWakeDue && held.phase !== 'approved'))) {
+  if (held?.wake && (held.text === text || look.isWakeDue)) {
     if (held.phase === 'revise') return { deny: REVISE_DENY }
     if (held.phase === 'answered') return { deny: ANSWERED_DENY }
   }
   const since = await $.clock.now() // before the child: no answer of an older review is as new
   const topic = held?.topic ?? newTopic(since, session)
-  const review: PlanReview = { topic, text, phase: 'review', wake: null, since, root }
+  const after = await lastRound($, root, topic)
+  const review: PlanReview = { topic, text, phase: 'review', wake: null, since, root, ...(after !== undefined && { after }) }
   if (signal.aborted) return 'native'
   await update($, planA, () => review) // before the child, so its end finds the review
   if (signal.aborted) {
@@ -720,6 +793,7 @@ async function onExitPlanMode($: Engine, e: PlanCall, next: Next<'tool.call', Pl
   if (e.agentId !== undefined) return next(e) // a subagent's or teammate's plan never touches the review
   const given = (e as { plan?: unknown }).plan // undeclared in the engine's types: none is Claude Code's own path
   const text = typeof given === 'string' ? given.trimEnd() : ''
+  const lapses = look.lapses
   let verdict: Verdict = 'native'
   if (canReview(text)) {
     try {
@@ -729,9 +803,58 @@ async function onExitPlanMode($: Engine, e: PlanCall, next: Next<'tool.call', Pl
     }
   }
   if (typeof verdict === 'object') return verdict
-  const got = await next(e) // a pass was used up already: rejected, it ends nothing else
+  // The pass's window, for its one allow at the permission request (onPermission). Never for a call that may have
+  // gone past its budget meanwhile: its .catch already took Claude Code's own path.
+  const isPass = verdict === 'pass' && look.lapses === lapses && !next.signal.aborted
+  const window = isPass ? { text, file: (e as { planFilePath?: unknown }).planFilePath, isUsed: false } : undefined
+  if (window) look.window = window
+  let got
+  try {
+    got = await next(e) // a pass was used up already: rejected, it ends nothing else
+  } finally {
+    if (window && look.window === window) look.window = undefined
+  }
   if (!next.signal.aborted && isSuccess(got)) await endPlan($)
+  else if (!next.signal.aborted && verdict === 'native' && text && look.mayApprove) await endApproval($)
   return got
+}
+
+// A rejection in Claude Code's own dialog, or a prompt outside plan mode: a kept approval is over.
+async function endApproval($: Engine) {
+  await oneAtATime(() =>
+    update($, planA, old => {
+      look.mayApprove = false
+      if (old?.phase !== 'approved') return old
+      if (look.wake === old.wake?.text) look.wake = undefined // its message goes with it
+      return idle(old.topic)
+    }),
+  ).catch(err => logPlanError($, err))
+}
+
+// The approved plan's one allow. The permission request carries no tool_use_id (measured on 2.1.323 and 2.1.330), so
+// it is bound by time: the first main-loop request for ExitPlanMode while the passing call's next(e) runs, with the
+// approved text and only the known keys (plan, and planFilePath as that call carried it). Two same-text calls whose
+// windows overlap cannot be told apart: either gets that plan once. Anything else is Claude Code's own dialog.
+async function onPermission($: Engine, e: Args<'classic.PermissionRequest'>, next: Next<'classic.PermissionRequest'>) {
+  const window = look.window
+  if (!window || window.isUsed || e.tool_name !== 'ExitPlanMode' || e.agent_id !== undefined) return next(e)
+  // Each call sends one request, inside its own window (measured): the first is the passing call's, so it takes the
+  // window whether it matches or not, and a later one, another call's, finds it used.
+  window.isUsed = true
+  const input = e.tool_input as Record<string, unknown> | null
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return next(e)
+  if (!Object.keys(input).every(key => key === 'plan' || key === 'planFilePath')) return next(e)
+  if (typeof input.plan !== 'string' || input.plan.trimEnd() !== window.text || input.planFilePath !== window.file) return next(e)
+  // The hooks beneath (mods below, the user's settings hooks) decide first: the allow only where none of them did.
+  const below = await next(e)
+  if ((below as { decision?: unknown }).decision !== undefined) return below
+  return { decision: { behavior: 'allow' as const, updatedInput: input } } // no mode: Claude Code picks it
+}
+
+// Leaving plan mode by hand: the user's next prompt says so. Without a kept approval it costs no $ call.
+async function onPrompt($: Engine, e: Args<'classic.UserPromptSubmit'>, next: Next<'classic.UserPromptSubmit'>) {
+  if (look.mayApprove && e.permission_mode !== undefined && e.permission_mode !== 'plan') void endApproval($)
+  return next(e)
 }
 
 function isSuccess(got: unknown): boolean {
@@ -948,10 +1071,12 @@ async function arm($: Engine) {
     const wake = got?.wake && isOwn(got, (await $.session.id()).slice(0, 8)) ? got.wake : undefined
     look.wake = wake?.text
     look.leftOut = wake?.isOut ? wake.text : undefined
+    look.mayApprove = got?.phase === 'approved'
     return got
   }).catch(() => null)
   // From a timer: the band's drawing can arm, and a child dies with the dispatch that started it when that aborts.
-  if (held?.phase === 'review') $.clock.after(0, () => void oneAtATime(() => resumeReview($)).catch(err => logPlanError($, err)))
+  if (held?.phase === 'review' || (held?.phase === 'approved' && planReview() === 'off'))
+    $.clock.after(0, () => void oneAtATime(() => resumeReview($)).catch(err => logPlanError($, err)))
 }
 
 async function onSessionStart($: Engine, e: Args<'session.start'>, next: Next<'session.start'>) {
@@ -1057,11 +1182,19 @@ export const register: Register = (on, options) => {
   on('turn.start', onTurnStart)
   // Past the hook's 10 seconds it lands here, so a native success ends the plan state here too. Not awaited: the
   // handler has one second, and a late $ write lands (measured).
+  // A call here gets no allow: no window opens for a call whose decision was under way, and an open one closes.
   on('tool.call', { tool: 'ExitPlanMode' }, onExitPlanMode).catch(async ($, e, next) => {
+    if (e.agentId === undefined) {
+      look.lapses += 1
+      look.window = undefined
+    }
     const got = await next(e)
     if (e.agentId === undefined && isSuccess(got)) void endPlan($)
     return got
   })
+  // Not under a guard that runs no classic hooks: there Claude Code's own dialog asks after the pass.
+  on('classic.PermissionRequest', onPermission).catch(($, e, next) => next(e))
+  on('classic.UserPromptSubmit', onPrompt).catch(($, e, next) => next(e))
   on('command.run', { command: COMMAND }, onCommandRun)
   on('ui.close', onClose)
   on('ui.render', { component: 'AbovePrompt' }, onBand)

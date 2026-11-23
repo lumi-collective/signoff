@@ -44,15 +44,29 @@ For a plan review (the `plan` setting, on by default while an inbox lives) the m
 with fixed text and runs `signoff plan --topic <date>-plan-<session> --folder <folder> [--resume]` in the session's
 root, with the plan on stdin and never in an argument. That process waits until you answer (at a reload of the mod
 it is started again with `--resume` in the root the review began in, and when what that finds is an answer older
-than the review, by the file's time or by its `saved`, the mod takes no answer from it and starts a new round), is
+than the review, by its round's number, by the file's time or by its `saved`, the mod takes no answer from it and
+starts a new round; for the round's number, when the review begins the mod lists the topic folder, found as the
+command finds it: from the session's root up to the nearest folder with a `.git` or a `.signoff` folder), is
 stopped by `/clear`, `/resume` or an approval in Claude Code's own dialog, and ends when you quit or restart Claude
 Code. A root or folder setting with a control, format or separator character gets no plan review. The mod takes
 from it one line, the answers path, checked to be one line in that topic folder, and reads only `done`, `saved` and
-the plan item's `choice` and `source` from that file (4 MiB at most; a larger or unreadable one is no approval). To
-the session it sends fixed text and that path, never your words. An approval lets that exact plan
-text through once, to Claude Code's own dialog, and is used up before that dialog opens. Whoever can write the
-answers or plan file, or get a start link of the inbox, can approve. In plan mode Claude Code asks before a Write
-or Edit, but a Bash command you allowed by a rule, or auto mode, may write without asking.
+the plan item's `choice` and `source` from that file (4 MiB at most; a larger or unreadable one is no approval),
+and for an approval that round's `plan-NN.md`, which must hold exactly the plan it kept: what you saw. To
+the session it sends fixed text and that path, never your words. An approval lets that exact plan text through
+once, in the session root the review began in, and is used up before Claude Code's dialog opens. The mod then
+answers that dialog's permission request itself (`allow`, with the request's own input and no mode, so Claude Code
+picks the mode). The request names no tool call, so the mod binds it by time: the one request for that exact plan,
+from the main conversation and with only the tool's known keys, that comes while the passing call waits, and only
+when no hook beneath it (your own settings hooks, other mods) decides, whose answer goes first; any other request
+gets Claude Code's own dialog. Two calls of the same plan at the same moment cannot be told apart, and either gets
+it once. A later rejection in Claude Code's own dialog, or a prompt you send outside plan mode, ends a
+kept approval; a `/rewind` does not. Under a managed guard that runs no `classic` hooks, Claude Code's dialog asks
+after the approval (not measured). Whoever can write the answers or plan file, or get a start link of the inbox,
+can approve, and that approval ends plan mode with no dialog. In plan mode Claude Code by default leaves a Bash
+write to the auto mode classifier (`useAutoModeDuringPlan`), and with that off a Bash command you allowed by a rule
+may still write; Write and Edit are asked (measured on Claude Code 2.1.323 and 2.1.330, for a write the prompt said
+you asked for). Other plugins' mods you installed are trusted: they can write the mod's session state and rewrite a
+tool's input.
 
 Its Open button and `/signoff:open` open a panel. They run `signoff inbox rows <session root>` once. That asks
 the running inbox's control socket for the project's open rounds and their open questions (run and item numbers and

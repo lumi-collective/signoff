@@ -365,9 +365,10 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   there. A test gives `inbox open` and `inbox rows` a link on stderr and terminal escapes in the titles, and
   checks every text the mod shows.
 
-  Plan review (AD-29): its only tool hook is `tool.call` on `ExitPlanMode`, whose `.catch` is `next(e)` and, after a
+  Plan review (AD-29): its tool hooks are `tool.call` on `ExitPlanMode`, whose `.catch` is `next(e)` and, after a
   main-loop success, the end of the plan state, not awaited (past the hook's 10 seconds it is the only one that
-  sees that success). It takes a
+  sees that success), and `classic.PermissionRequest`, which answers that call's permission request for an
+  approved plan (below; its `.catch` is `next(e)`). Its allow carries `updatedInput` and no mode. It takes a
   call over only when the `plan` option is not `off`, it has armed, not on Windows, the inbox is live and the
   session's project found (checked at the call, also with `hint` `off`; a call during the load's first
   `inbox home` run waits for it; a run that this call's own interrupt killed is asked again at the next need, any
@@ -376,22 +377,26 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   refused there), the call is not interrupted before the spawn, and the call is in the main loop and carries a plan (`e.plan`, not empty once
   `trimEnd()` cut it) of at most `MAX_ATTACHMENT` in UTF-8; else `next(e)`, also with a review open. It then denies
   with fixed text (no path), keeps `{topic, text, phase, wake}` in `$.state` (`plan`), in review also `since` (the
-  clock at the take-over, before the child) and `root` (that session root), both as they were through every
-  respawn, the topic `<local date>-plan-<those 8>` from the session's first take-over, and starts `signoff plan`
+  clock at the take-over, before the child), `after` (the highest round or plan number in the topic folder then, as
+  `signoff plan` numbers them, the folder found as it finds a relative one; absent when it cannot be known) and
+  `root` (that session root), all as they were through every respawn, an approval keeping `root`, the topic `<local date>-plan-<those 8>` from the session's first take-over, and starts `signoff plan`
   in that root, as every respawn does, with the plan on stdin and never in argv. The decisions, a child's end and a respawn run one at a time. While the
   child runs, any call gets the deny and that a review is already open, with no new round; with a review and no
   child in this load it starts `signoff plan --resume` with the kept text, as it does at a load while that review
   waits and an inbox lives (with `plan` `off` at that load the review ends instead, and nothing is sent). A respawn
   and a pass need a topic that ends with this session id's first 8 characters. `--resume` takes the newest round,
   an older review's when this one's round was not written yet: so an old answer never answers a later review. A
-  resumed child's answers file older than `since`, or one whose `saved` (the inbox's clock, to the second, so with
-  1 second of tolerance) is older or no time, or any with no `since`, is no answer, no failure and no message, and
+  resumed child's answer from a round not above `after` (no clock decides that), or with no `after`, is no answer,
+  nor is its answers file when older than `since`, or when its `saved` (the inbox's clock, to the second, so with
+  1 second of tolerance) is older or no time (a `saved` that is not text is none), or any with no `since`: no
+  answer, no failure and no message, and
   the review starts once more without `--resume`, with the held text and topic, in its root. A child without
   `--resume` always writes a new round and is never checked, so a slow file clock refuses no normal answer.
   On exit 0 its stdout must be one line, an absolute path ending `/<topic>/round-NN.answers.json` with no control,
   format or separator character, at most 4096 characters; stderr is never kept. Of that file (at most 4 MiB, what
   `$.fs.read` takes) it uses only `done`, `saved` (a resumed child's, as above) and the `plan` item's `choice` and
-  `source`: `done`, `approve` and `user` are an approval, and anything else is none (revise, another source, a file
+  `source`: `done`, `approve` and `user` are an approval when that round's `plan-NN.md` holds exactly the kept
+  text, what the user saw (else the unread message), and anything else is none (revise, another source, a file
   too large, not done or unreadable), which is no failure either. An `answer` request never moves the phase.
   It sends `$.prompt.submit` (never `asUser`) with fixed text that names Signoff as its sender and the user in the
   third person, and that path only, as a JSON string: never the user's text or the plan's. That wake is in
@@ -411,12 +416,26 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   fixed deny after revise and after any other answer that is no approval); another text is a new review and drops
   the wake, except such an answer's wake that still waits its turn behind a hand-over or another wake (this load's
   `isWakeDue`): another text then gets that fixed deny too, and the wake follows. A load takes no wake kept with
-  another session's topic. An approval lets that exact text through once: the state is made idle and the wake dropped
-  before `await next(e)`, so two calls or a reload during the dialog get no second pass, and a rejected pass ends and
-  stops nothing else (a review begun meanwhile stays).
+  another session's topic. An approval lets that exact text through once, in its root only (after a `/cd` into
+  another project the same text is a new review there): the state is made idle and the wake dropped before
+  `await next(e)`, so two calls or a reload during the dialog get no second pass, and a rejected pass ends and
+  stops nothing else (a review begun meanwhile stays). It passes only when that write took the approval and no
+  interrupt came after it; else the call takes Claude Code's own path. While the passing call's `next(e)` runs,
+  its window is open, in the module's memory only (after a reload the dialog asks). The binding is by time, not by
+  id: the permission request carries no `tool_use_id` (measured on 2.1.323 and 2.1.330), and each call sends one,
+  inside its own window. The window's first `classic.PermissionRequest` for `ExitPlanMode` with no `agent_id`
+  takes the window, matching or not. It gets the `allow` only with the keys `plan` and `planFilePath` and no
+  other, the plan equal to the approved text after the same trim and `planFilePath` as the passing call carried
+  it, and only when the hooks beneath it (mods below, the user's settings hooks) give no decision of their own,
+  which goes back unchanged. Any other request, a later one and one with no window open get `next(e)`, Claude
+  Code's own dialog. Two same-text calls whose windows overlap cannot be told apart (measured once in three runs
+  on 2.1.323), and either gets the same approved plan once. A call past its hook budget (the `.catch`) closes an
+  open window, and a decision under way meanwhile opens none. A kept approval ends at a rejection in Claude Code's
+  own dialog, at a `classic.UserPromptSubmit` whose `permission_mode` is not `plan` (the user left plan mode by
+  hand; until a load has seen an approval, a prompt costs no `$` call), and at a load with `plan` `off`.
   Any native success of a main-loop `ExitPlanMode` (no `deny`, not `isError`) is the user's later word and ends
   the whole plan state: the child stopped, nothing sent, nothing written back by a submit that settles later. A
-  rejection and a subagent's call change nothing. A `/clear` and a `/resume` (`session.end`) stop the child, clear
+  rejection changes nothing else, and a subagent's call nothing. A `/clear` and a `/resume` (`session.end`) stop the child, clear
   the state and forget the topic. Both hold armed or not, so also with `claude -p` and on Windows such a success
   reads `$.state` once and such an end writes it once. A child the mod stopped is no failure. An unload is none: the first `$` call
   at a child's end is the state's read, which an unloaded module's `$` refuses (measured on 2.1.323 and 2.1.330),
@@ -429,15 +448,20 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   approval was used up loses it, as it is never restored (one seen before that write uses nothing up); a second
   call at the same time as a pass opens a round, which that pass's success leaves in the inbox; Claude Code's exit
   ends the child before `session.end`, so there it counts as did-not-run, whose message and toast reach no
-  session, and the review ends; an old answer saved within that second of `since`, or before the clock was set
-  back, can still answer a resumed child; a root or folder reached through a link to a path with a control, format
+  session, and the review ends; a topic folder the mod cannot list at a take-over (or one `project_root()` would
+  find elsewhere) gives no `after`, so after a reload that review's resumed answer is refused and a new round
+  opens; a root or folder reached through a link to a path with a control, format
   or separator character is taken over and its answer lost, as the command prints the resolved path; a submit that
   never settles holds both the hand-over and the wake until a reload, and with an answer that is no approval
   waiting, every plan gets its deny until a reload, a `/clear` or a `/resume`; a reload forgets that an answer
-  waited, so another text then drops it; whoever can write the answers or plan file, or get a start
-  link of the inbox, can approve (in plan mode
-  Claude Code asks before a Write or Edit, but a Bash command the user allowed by a rule, or auto mode, may write
-  without asking).
+  waited, so another text then drops it; a `/rewind`, and leaving plan mode with no prompt before the next plan,
+  end no approval (no event says so); under a guard that runs no `classic.*` hooks (`sec-default`) Claude Code's
+  own dialog asks after the pass (not measured: the probe machine had no guard); other installed mods are trusted,
+  as they can write `$.state` and rewrite the tool's input; whoever can write the answers or plan file, or get a
+  start link of the inbox, can approve, and that approval ends plan mode with no dialog. In plan mode Claude Code
+  by default leaves a Bash write to the auto mode classifier (`useAutoModeDuringPlan`); with that off, a Bash
+  command the user allowed by a rule may still write; Write and Edit are asked (measured on 2.1.323 and 2.1.330,
+  for a write the prompt said the user asked for).
 - **The inbox writes a round only while it holds its lock.** It takes `<round file>.lock` for the open rounds
   of each live run in `runs/` (no `ended`, the pid alive, the file not older than `RUNS_MAX_AGE`), each file once
   however many runs wait on it (flock is per open file); when another process holds one, that run's rounds are

@@ -93,12 +93,23 @@ While the inbox runs, the mod also takes a plan over when Claude leaves plan mod
 refuses that call with a fixed text and starts the signoff command's plan, with the plan on that command's standard
 input. That command writes the plan and a Plan review round into your decisions folder and waits until you answer
 in the inbox; after a reload of the mod, the mod starts it again on that round, or on a new one when the round was
-not written yet (an answer from before the review began is not taken). Of your answers file the mod
-reads only whether it is done, when it was saved and whether you approved, and sends the session one message from
+not written yet (an answer from before the review began, by its round's number or its time, is not taken; for the
+number, when a review begins the mod looks from the session's folder up for the project's .git or .signoff folder
+and lists the review's topic folder there). Of your
+answers file the mod reads only whether it is done, when it was saved and whether you approved, and for an approval
+it also checks that the round's plan file holds the plan it kept. It sends the session one message from
 the plugin, with fixed text and that file's path, none of your words. The agent reads your comment and line notes
 from the file.
-After an approval the same plan goes on once, to Claude Code's own dialog, and that uses the approval up, also
-when you reject the plan there. After an Esc, the message waits for your
+After an approval the same plan goes on once, and the mod answers Claude Code's permission request for it, so no
+dialog asks and Claude Code picks the mode. That request names no tool call, so the mod takes the one request for
+that exact plan, from the main conversation, while the call it let through waits, and only when no hook beneath it
+(your own settings hooks, other mods) decides; any other gets Claude Code's own dialog. That uses the approval up,
+also when the plan is rejected. A rejection in Claude Code's own
+dialog, or a prompt you send outside plan mode, ends a kept approval. Whoever can write your answers or plan file,
+or get a start link of the inbox, can approve, and that approval ends plan mode with no dialog; in plan mode Claude
+Code by default leaves a Bash write to its auto mode classifier, and with that off a Bash command you allowed by a
+rule may still write, while Write and Edit are asked (measured on Claude Code 2.1.323 and 2.1.330, for a write the
+prompt said you asked for). Other installed plugins' mods are trusted. After an Esc, the message waits for your
 next turn, and a notice says so. The mod stops that command at /clear, at /resume and when you approve a plan in
 Claude Code's own dialog, and quitting or restarting Claude Code ends it too. It keeps the plan's text in Claude
 Code's session state until the review is over and an

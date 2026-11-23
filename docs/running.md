@@ -127,8 +127,19 @@ While the inbox runs, when Claude is about to leave plan mode, the plugin's mod 
 a Plan review round in the inbox. The agent is told the plan waits and ends its turn; Claude Code shows that as a
 refused ExitPlanMode. You approve it there, or ask for changes with a comment and line notes, and press Done. The
 agent then gets a message that says it comes from the Signoff plugin: after an approval it calls ExitPlanMode again
-with the same plan and Claude Code's own dialog asks; after anything else it reads your notes and revises. If you
+with the same plan, the mod answers Claude Code's permission request for that call, and plan mode ends with no
+second dialog, in the mode Claude Code picks (the one from before plan mode, measured in the terminal and the
+desktop app); after anything else it reads your notes and revises. If you
 stopped the agent with Esc meanwhile, a notice says your answer is saved: send any message and the agent gets it.
+
+The mod answers only the one permission request for that exact plan, from the main conversation, that comes while
+the call it let through waits (the request names no tool call, so the mod binds it by time), only in the session
+folder the review began in, and only when no hook beneath it (your own settings hooks, other mods) decides; theirs
+goes first. Anything else gets Claude Code's own dialog: after a reload of the mod, after a
+`/cd` into another project, when the round's plan file no longer holds the plan, and under an organization's
+managed guard that runs no `classic` hooks of a mod (Claude Code's dialog then asks once more; this was not
+measured). A rejection in Claude Code's own dialog, or a prompt you send outside plan mode, ends an
+approval that waits; a `/rewind` does not.
 
 A plan you approve in Claude Code's own dialog instead (the inbox had stopped, say) ends the review. So do
 `/clear`, `/resume` and quitting or restarting Claude Code: the round then stays in the inbox and no longer
