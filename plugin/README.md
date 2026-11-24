@@ -114,8 +114,9 @@ Bash command you allowed by a rule may still write (measured on Claude Code 2.1.
 python3, cp and tee, for a write the prompt said you asked for). Write and Edit did not write there, in a run that answered no prompt, so an ask was not
 told from a deny; Claude Code's own plan file is written in plan mode with no ask. Other installed plugins' mods are
 trusted. After an Esc, the message waits for your
-next turn, and a notice says so. The mod stops that command at /clear, at /resume and when you approve a plan in
-Claude Code's own dialog, and quitting or restarting Claude Code ends it too. It keeps the plan's text in Claude
+next turn, and a notice says so. The mod stops that command at /clear, at /resume, when you turn the Plan review
+setting off and when you approve a plan in Claude Code's own dialog, and quitting or restarting Claude Code ends it
+too. It keeps the plan's text in Claude
 Code's session state until the review is over and an
 approved plan went to that dialog. The mod sends one message at a time: a message from the inbox waits while the
 plan review's message does. The Plan

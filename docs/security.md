@@ -50,7 +50,8 @@ it is started again with `--resume` in the root the review began in, and when wh
 than the review, by its round's number, by the file's time or by its `saved`, the mod takes no answer from it and
 starts a new round; for the round's number, when the review begins the mod lists the topic folder, found as the
 command finds it: from the session's root up to the nearest folder with a `.git` or a `.signoff` folder), is
-stopped by `/clear`, `/resume` or an approval in Claude Code's own dialog, and ends when you quit or restart Claude
+stopped by `/clear`, `/resume`, turning the Plan review setting off or an approval in Claude Code's own dialog, and
+ends when you quit or restart Claude
 Code. A root or folder setting with a control, format or separator character gets no plan review. The mod takes
 from it one line, the answers path, checked to be one line in that topic folder, and reads only `done`, `saved` and
 the plan item's `choice` and `source` from that file (4 MiB at most; a larger or unreadable one is no approval).
@@ -65,8 +66,8 @@ when no hook beneath it (your own settings hooks, other mods) gives a decision o
 (what else they return stays beside the allow; Claude Code did not stop on a `continue: false` there, measured
 headless on 2.1.323 and 2.1.330); any other request
 gets Claude Code's own dialog. Two calls of the same plan at the same moment cannot be told apart, and either gets
-it once. A later rejection in Claude Code's own dialog (not an Esc there), or a prompt you send outside plan mode,
-ends a kept approval; a `/rewind` does not. Under a managed guard that runs no `classic` hooks of a mod, the tool
+it once. A later rejection in Claude Code's own dialog (not an Esc there), a prompt you send outside plan mode, or
+turning the Plan review setting off ends a kept approval; a `/rewind` does not. Under a managed guard that runs no `classic` hooks of a mod, the tool
 hook still takes the plan over, and Claude Code's dialog asks after the approval (not measured). With
 `allowManagedModsOnly`, which runs no hook of a mod you installed, nothing is taken over, and plans get Claude
 Code's own dialog (not measured). Whoever can write the answers or plan file, or get a start link of the inbox,
