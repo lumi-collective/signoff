@@ -1947,6 +1947,29 @@ def lock_rounds(rounds):
     return held
 
 
+# The page's source: page.html holds the markup, the theme part and a line __PART:<name>__ for each of these, once
+# and in this order; each line is replaced by that file's text. Fixed here, never taken from a request or a folder.
+PAGE_PARTS = ("page.css", "page-common.js", "page-inbox.js", "page-items.js", "page-rounds.js")
+
+
+def page_source():
+    """The page as served, before __NONCE__ and __DATA__. OSError when it cannot be put together: a server then
+    says it cannot start, as for any file it cannot read."""
+    page = (HERE / "page.html").read_text(encoding="utf-8")
+    marks = ["__PART:%s__\n" % name for name in PAGE_PARTS]
+    # Each line holding a placeholder, whole: checked on the template, before any part is in.
+    if re.findall(r"[^\n]*__PART:[^\n]*\n?", page) != marks:
+        raise OSError("page.html must hold the lines %s, once each and in this order"
+                      % " ".join(m.strip() for m in marks))
+    for name, mark in zip(PAGE_PARTS, marks):
+        text = (HERE / name).read_text(encoding="utf-8")
+        for spot in ("__PART:", "__NONCE__", "__DATA__"):  # the nonce and the agent's data go only where page.html says
+            if spot in text:
+                raise OSError("%s holds %s, which only page.html may" % (name, spot))
+        page = page.replace(mark, text)
+    return page
+
+
 class _Server(http.server.ThreadingHTTPServer):
     """What every Signoff server shares: loopback, the tokens, the start link, the idle clock."""
     daemon_threads = True
@@ -1966,7 +1989,7 @@ class _Server(http.server.ThreadingHTTPServer):
 
     def _listen(self, port=0):
         """Bind 127.0.0.1 on port (0: a random one, the default)."""
-        self.page = (HERE / "page.html").read_text(encoding="utf-8")
+        self.page = page_source()
         self.token = secrets.token_urlsafe(32)
         self.board_token = getattr(self, "board_token", None) or secrets.token_urlsafe(32)
         self.start_token = secrets.token_urlsafe(32)

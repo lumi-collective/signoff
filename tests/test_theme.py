@@ -1,12 +1,12 @@
 """The page's colours: six palettes in light and dark as tokens, Catppuccin by default, WCAG contrast in each,
-and a high-contrast set over all of them. The checks read page.html itself; theme_tokens.py only has to agree."""
+and a high-contrast set over all of them. The checks read the page as served; theme_tokens.py only has to agree."""
 import re
 import unittest
 
 import theme_tokens
 from support import signoff
 
-PAGE = (signoff.HERE / "page.html").read_text(encoding="utf-8").replace("\r\n", "\n")
+PAGE = signoff.page_source().replace("\r\n", "\n")
 START, END = "<!-- theme:", "<!-- /theme -->"
 # The closed list: an id may be added, never renamed or removed (a saved choice names one).
 PALETTES = ("catppuccin", "signoff", "rose-pine", "gruvbox", "tokyo-night", "dracula")

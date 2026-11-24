@@ -1,9 +1,9 @@
 Third-party notices
 
-Signoff's page (plugin/signoff/page.html) and its theme generator (tests/theme_tokens.py) contain colour values
-taken from the projects below. Some are blends of two colours of the same palette, and some are moved toward
-black, white or the palette's text colour to meet WCAG contrast; the page names each moved colour. The Signoff
-palette is Signoff's own.
+Signoff's page (plugin/signoff/page.html and page.css) and its theme generator (tests/theme_tokens.py) contain
+colour values taken from the projects below. Some are blends of two colours of the same palette, and some are
+moved toward black, white or the palette's text colour to meet WCAG contrast; the page names each moved colour.
+The Signoff palette is Signoff's own.
 
 Catppuccin (Latte, Mocha): colour values from https://github.com/catppuccin/palette
 Copyright (c) 2021 Catppuccin

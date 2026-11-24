@@ -140,7 +140,7 @@ class BoardRoute(unittest.TestCase):
         self.assertIn("frame-src 'self'", csp)
 
     def test_page_embeds_boards_sandboxed(self):
-        page = (signoff.HERE / "page.html").read_text(encoding="utf-8")
+        page = signoff.page_source()
         self.assertIn("frame.setAttribute('sandbox', 'allow-scripts')", page)
         self.assertIn("frame.setAttribute('referrerpolicy', 'no-referrer')", page)
         self.assertNotIn("allow-same-origin", page)

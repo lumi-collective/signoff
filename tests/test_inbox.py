@@ -1227,7 +1227,7 @@ class InboxPrefs(InboxTest):
             self.assertEqual(self.view(page)[0]["prefs"]["sort"], "oldest", raw)
 
     def test_the_lists_are_the_pages_and_the_generators(self):
-        page = (signoff.HERE / "page.html").read_text(encoding="utf-8")
+        page = signoff.page_source()
         self.assertEqual(tuple(re.findall(r"\{id: '([a-z-]+)'", page)), signoff.PALETTES)  # the picker's, in order
         self.assertIn("var THEMES = %s;" % json.dumps(list(signoff.THEMES)).replace('"', "'"), page)
         self.assertIn("var DENSITIES = %s;" % json.dumps(list(signoff.DENSITIES)).replace('"', "'"), page)

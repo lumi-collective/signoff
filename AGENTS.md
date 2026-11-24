@@ -60,9 +60,19 @@ Instructions for coding agents working on Signoff. The README says what it does 
   (`inbox_request`, which also takes an op's other fields; `signoff inbox rows`), and the request files (`read_request`, `request_line`; `signoff inbox requests|done`). Also
   `signoff plan` (the plan-review rule) and its fixed round, `plan_round`. The
   inbox needs Unix sockets, so it does not run on Windows yet.
-- `plugin/signoff/page.html`: the page. One static file, no build step, no external requests. The server fills in
-  `__NONCE__` and `__DATA__` on each request. Its colours sit between the `<!-- theme: -->` and `<!-- /theme -->`
-  markers, the output of `tests/theme_tokens.py`, pasted in by hand.
+- `plugin/signoff/page.html`: the page's template: its markup, the theme part, and a line `__PART:<name>__` for
+  each part, inside the template's own style and script elements. The parts are `page.css`, then the script in
+  `page-common.js` (labels, helpers, Appearance, the shell), `page-inbox.js` (the inbox list), `page-items.js` (a
+  round's page and the pieces of an item) and `page-rounds.js` (an item, the rounds, Focus, Done, past decisions,
+  keys). They are cut where braces balance but do not parse alone: together they are one script. The server
+  puts the page together once at start (`page_source()`; the list and its order fixed in `PAGE_PARTS`), each
+  placeholder line replaced by its file's text. The template must hold exactly those lines, once each and in that
+  order, each a line of its own, and no part a placeholder, `__NONCE__` or `__DATA__`: else, or with a part missing
+  or unreadable, the server stops at start (`cannot start`, exit 1). Tests read the page through `page_source()`
+  too; a test keeps each of the page's files under 256 KiB, as the plugin catalog holds a larger file for a
+  reviewer. No build step, no external requests. The server fills in `__NONCE__` and `__DATA__` in the template on
+  each request. The page's colours sit in `page.html`, between the `<!-- theme: -->` and `<!-- /theme -->` markers, the
+  output of `tests/theme_tokens.py`, pasted in by hand.
 - `THIRD_PARTY_NOTICES` and `plugin/THIRD_PARTY_NOTICES`: the same text, the credits and MIT text for the palettes'
   colours. The plugin copy is there because an install gets only `plugin/`; a test keeps the two equal.
 - `plugin/signoff/schema.json`: the decisions file's JSON Schema. A test keeps it in step with `signoff.py`.
@@ -718,10 +728,12 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
 - **The past-decisions page is read only.** No POST route answers there (405), nothing is written.
 - **The MCP server never returns a token or a start link**, and removes only its own temporary files.
 - **Agent text is never HTML.** The page uses `textContent` and DOM methods only: no `innerHTML`, no inline
-  `style` attribute, no inline event handler. A test greps the page for these.
+  `style` attribute, no inline event handler. A test greps the assembled page, every part in, for these.
 - **The CSP stays strict.** Every executable script and style element carries the nonce (the inert JSON data
-  block is the exception). Nothing loads from outside.
-- **Colours are theme tokens.** The page's colours are CSS custom properties, set only in the theme part: one
+  block is the exception). These elements are in `page.html` itself, never in a part (a test checks). Nothing
+  loads from outside.
+- **Colours are theme tokens.** The page's colours are CSS custom properties, set only in the theme part (in
+  `page.html`): one
   nonce'd style element per palette and mode, keyed on `data-palette` and `data-mode` on `<html>`, never an inline
   style or `cssText`. Every block sets the same tokens. No `data-palette` means Catppuccin; no `data-mode` means
   the system's `prefers-color-scheme`; the `#light` and `#dark` page hashes set `data-mode`. The palette ids are a

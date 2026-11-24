@@ -129,7 +129,7 @@ class Page(ServerTest):
         self.assertIn('"img/0"', body)
 
     def test_page_never_uses_inner_html(self):
-        page = (signoff.HERE / "page.html").read_text(encoding="utf-8")
+        page = signoff.page_source()
         for unsafe in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", " style=", "onclick=",
                        "setAttribute('style'", "cssText", 'src="http', 'href="http', "url(http", "@import", "fetch('http"):
             self.assertNotIn(unsafe, page)
@@ -137,7 +137,7 @@ class Page(ServerTest):
 
 class Additions(ServerTest):
     def test_accept_all_is_a_native_button_in_the_header(self):
-        page = (signoff.HERE / "page.html").read_text(encoding="utf-8")
+        page = signoff.page_source()
         header = page[page.index("<header>"):page.index("</header>")]
         button = re.search(r'<button type="button" id="accept-all">(.*?)</button>', header, re.S)
         self.assertIsNotNone(button)
@@ -156,7 +156,7 @@ class Additions(ServerTest):
         self.assertNotIn("<b>Synthetic", body)
         self.assertNotIn("<script>alert(1)", body)
         self.assertIn("\\u003cb\\u003eSynthetic", body)
-        page = (signoff.HERE / "page.html").read_text(encoding="utf-8")
+        page = signoff.page_source()
         self.assertIn("notice.textContent = d.notice", page)
 
     def test_markdown_structure_cannot_be_changed(self):

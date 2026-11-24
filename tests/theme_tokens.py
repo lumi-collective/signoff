@@ -4,7 +4,7 @@
     python3 -I -B tests/theme_tokens.py
 
 prints the part of plugin/signoff/page.html between its theme markers. Paste it there by hand when a colour
-changes; test_theme.py fails while the two differ, and measures every contrast pair on page.html itself.
+changes; test_theme.py fails while the two differ, and measures every contrast pair on the page as served.
 
 Each palette's raw colours are the upstream values (the source and key in a comment), mapped onto the page's
 tokens. A token that misses its WCAG 2.x pair is moved toward the palette's own text colour (a coloured role

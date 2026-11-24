@@ -1,7 +1,7 @@
 # Customize it with Claude
 
-Signoff is three files that matter, `plugin/signoff/signoff.py`, `plugin/signoff/page.html` and the skill. Fork it,
-then:
+Signoff is three things that matter: `plugin/signoff/signoff.py`, the page (`plugin/signoff/page.html` and the
+parts it names, beside it) and the skill. Fork it, then:
 
 ```
 git clone https://github.com/<you>/signoff && cd signoff

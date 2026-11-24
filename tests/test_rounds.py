@@ -5,9 +5,11 @@ import io
 import json
 import os
 import re
+import tempfile
 import threading
 import time
 import unittest
+from pathlib import Path
 from unittest import mock
 
 import support
@@ -651,14 +653,121 @@ class Limits(unittest.TestCase):
         self.assertEqual(self.run_.save(EMPTY)[0].status, 200)
 
 
-class Page(unittest.TestCase):
-    page = (signoff.HERE / "page.html").read_text(encoding="utf-8")
+class PageAssembly(unittest.TestCase):
+    """A page that cannot be assembled stops the run at start, before a port: never half a page."""
 
-    def test_the_page_stays_within_its_size_limit(self):
-        # 256 KiB for the one file every round and the inbox load; a feature that needs more has to make room first.
-        size, limit = (signoff.HERE / "page.html").stat().st_size, 262144
-        if size > limit:
-            self.fail("page.html is %d bytes, over its limit of %d" % (size, limit))
+    def setUp(self):
+        self.folder = Folder()
+        self._tmp = tempfile.TemporaryDirectory()
+        self.here = Path(self._tmp.name)
+        for name in ("page.html",) + signoff.PAGE_PARTS:
+            (self.here / name).write_bytes((signoff.HERE / name).read_bytes())
+
+    def tearDown(self):
+        self._tmp.cleanup()
+        self.folder.cleanup()
+
+    def edit(self, name, old, new):
+        path = self.here / name
+        text = path.read_text(encoding="utf-8")
+        self.assertIn(old, text)
+        path.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+    def start(self):
+        err = io.StringIO()
+        with mock.patch.object(signoff, "HERE", self.here), contextlib.redirect_stderr(err):
+            code = signoff.main([str(self.folder.target), "--no-open", "--timeout", "0.002"])
+        return code, err.getvalue()
+
+    def assertStops(self, *words):
+        code, err = self.start()
+        self.assertEqual(code, 1, err)
+        self.assertEqual(len(err.splitlines()), 1, err)
+        self.assertTrue(err.startswith("signoff: cannot start the server ("), err)
+        for word in words:
+            self.assertIn(word, err)
+        self.assertFalse(self.folder.answers.exists())
+
+    def test_the_copy_starts(self):
+        self.assertEqual(self.start()[0], 2)  # the idle timeout: it served
+
+    def test_a_missing_part(self):
+        (self.here / "page-rounds.js").rename(self.here / "elsewhere.js")
+        self.assertStops("page-rounds.js")
+
+    def test_a_missing_placeholder(self):
+        self.edit("page.html", "__PART:page-items.js__\n", "")
+        self.assertStops("__PART:page-items.js__")
+
+    def test_a_doubled_placeholder(self):
+        self.edit("page.html", "__PART:page.css__\n", "__PART:page.css__\n__PART:page.css__\n")
+        self.assertStops("__PART:page.css__")
+
+    def test_a_placeholder_left_over(self):
+        # An earlier part's placeholder inside a later part, and one the list does not name.
+        self.edit("page-rounds.js", "})();\n", "})();\n__PART:page.css__\n")
+        self.assertStops("__PART:")
+        self.edit("page-rounds.js", "__PART:page.css__\n", "")
+        self.edit("page.html", "</body>", "__PART:page-more.js__\n</body>")
+        self.assertStops("__PART:")
+
+    def test_a_placeholder_moved_into_a_part(self):
+        # The template is checked as it is, not once earlier parts are in it.
+        self.edit("page.html", "__PART:page-items.js__\n", "")
+        self.edit("page-common.js", "\n", "\n__PART:page-items.js__\n")
+        self.assertStops("__PART:page-items.js__")
+
+    def test_placeholders_out_of_order(self):
+        self.edit("page.html", "__PART:page-inbox.js__\n__PART:page-items.js__\n",
+                  "__PART:page-items.js__\n__PART:page-inbox.js__\n")
+        self.assertStops("__PART:page-items.js__")
+
+    def test_a_placeholder_not_on_a_line_of_its_own(self):
+        self.edit("page.html", "__PART:page.css__\n", "/* x */__PART:page.css__\n")
+        self.assertStops("__PART:page.css__")
+
+    def test_a_part_holding_what_the_server_fills_in(self):
+        # Only the template's own spots get the nonce and the agent's data, never one inside a part.
+        for mark in ("__NONCE__", "__DATA__"):
+            with self.subTest(mark=mark):
+                self.edit("page-inbox.js", "\n", "\n// %s\n" % mark)
+                self.assertStops("page-inbox.js", mark)
+                self.edit("page-inbox.js", "\n// %s\n" % mark, "\n")
+
+
+class Page(unittest.TestCase):
+    page = signoff.page_source()
+    PARTS = ("page.css", "page-common.js", "page-inbox.js", "page-items.js", "page-rounds.js")
+
+    def test_each_file_of_the_page_stays_within_its_size_limit(self):
+        # 256 KiB: the plugin catalog holds a larger file for a reviewer. The assembled page is never a file.
+        for name in ("page.html",) + signoff.PAGE_PARTS:
+            size, limit = (signoff.HERE / name).stat().st_size, 262144
+            if size > limit:
+                self.fail("%s is %d bytes, over its limit of %d" % (name, size, limit))
+
+    def test_the_page_is_its_template_with_each_part_in_once(self):
+        # The list and its order are fixed in the code, each part a file of the page's own folder.
+        self.assertEqual(signoff.PAGE_PARTS, self.PARTS)
+        here = signoff.HERE.resolve()
+        template = (here / "page.html").read_text(encoding="utf-8")
+        self.assertEqual(template.count("__PART:"), len(self.PARTS))
+        page = template
+        for name in self.PARTS:
+            path = here / name
+            self.assertEqual((path.name, path.resolve().parent), (name, here))
+            text = path.read_text(encoding="utf-8")
+            self.assertNotIn("__PART:", text, name)
+            # The nonce'd style and script elements are the template's, never a part's.
+            self.assertIsNone(re.search(r"</?(style|script)", text, re.I), name)
+            self.assertEqual(template.count("__PART:%s__\n" % name), 1, name)
+            page = page.replace("__PART:%s__\n" % name, text)
+        self.assertEqual(signoff.page_source(), page)
+        self.assertNotIn("__PART:", page)
+        style = '<style nonce="__NONCE__">\n__PART:page.css__\n</style>'
+        script = '<script nonce="__NONCE__">\n%s</script>' % "".join("__PART:%s__\n" % n for n in self.PARTS[1:])
+        self.assertIn(style, template)
+        self.assertIn(script, template)
 
     def test_tabs_follow_the_aria_pattern(self):
         for part in ('role="tablist"', "'tab'", "'tabpanel'", "aria-selected", "aria-controls", "aria-labelledby",
