@@ -1160,6 +1160,52 @@ class Inbox(unittest.TestCase):
             "vuln", "jinja2@2.10.0", "Please fix this vulnerability in this project: high severity "
             "(GHSA-462w-v97r-4m45, CVE-2019-10906); fixed in 2.10.1."))
 
+    def test_hand_over_a_ref_in_two_ecosystems_by_its_own(self):
+        """foo@1.0.0 of PyPI and of npm: a vuln request may name the ecosystem, a plain string of a listed finding
+        of that ref; its text then names it. Without it, the first listing's. (Named to run after the todo test,
+        which counts every request file in the shared home.)"""
+        path = os.path.join(self.home, "osv-scanner.json")
+
+        def package(eco, vid, fixed):
+            return {"package": {"name": "foo", "version": "1.0.0", "ecosystem": eco},
+                    "groups": [{"ids": [vid], "aliases": [], "max_severity": "8.6"}],
+                    "vulnerabilities": [{"id": vid, "affected": [{"package": {"name": "foo", "ecosystem": eco},
+                                                                  "ranges": [{"type": "ECOSYSTEM", "events": [
+                                                                      {"introduced": "0"}, {"fixed": fixed}]}]}]}]}
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"results": [{"source": {"path": os.path.join(self.project, "requirements.txt")}, "packages": [
+                package("PyPI", "PYSEC-1", "1.0.1"), package("npm", "GHSA-n", "2.0.0")]}]}, f)
+
+        def half_written():
+            with open(path, "w", encoding="utf-8") as f:
+                f.write('{"results": [')
+        self.addCleanup(half_written)
+        start, page = self.open()
+        vuln = {"kind": "vuln", "project": self.pid, "ref": "foo@1.0.0"}
+        for status, body in ((400, dict(vuln, ecosystem=7)), (400, dict(vuln, ecosystem=["npm"])),
+                             (400, dict(vuln, ecosystem="n pm")), (400, dict(vuln, ecosystem="")),
+                             (409, dict(vuln, ecosystem="Go")), (403, dict(vuln, ecosystem="npm"))):
+            before = self.requests()
+            headers = {"Origin": "http://evil.example"} if status == 403 else None
+            resp, data = self.save(page, body, headers, "request")
+            self.assertEqual((resp.status, self.requests()), (status, before), (body, data))
+        texts = {}
+        for eco in ("npm", "PyPI", None):
+            resp, data = self.save(page, dict(vuln, ecosystem=eco) if eco else vuln, path="request")
+            self.assertEqual(resp.status, 200, data)
+            with open(os.path.join(self.home, "requests", self.pid, json.loads(data)["id"] + ".json"),
+                      encoding="utf-8") as f:
+                saved = json.load(f)
+            self.assertEqual(saved.get("ecosystem"), eco)
+            texts[eco] = saved["text"]
+        self.assertEqual(texts, {
+            "npm": "Please fix this vulnerability in this project, in its npm package: high severity (GHSA-n); "
+                   "fixed in 2.0.0.",
+            "PyPI": "Please fix this vulnerability in this project, in its PyPI package: high severity (PYSEC-1); "
+                    "fixed in 1.0.1.",
+            None: "Please fix this vulnerability in this project, in its PyPI package: high severity (PYSEC-1); "
+                  "fixed in 1.0.1."})
+
     def scan_list(self):
         with open(self.scan_file, "rb") as f:
             return f.read()

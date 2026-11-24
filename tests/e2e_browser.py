@@ -3141,6 +3141,66 @@ def run_inbox(work):
                            "document.querySelector('#ib-detail h2').textContent + '|' + "
                            "document.querySelector('%sbutton.ib-main').getAttribute('aria-current')" % (off, off))
         check(label == "Not scanned (0)|Not scanned (0)|true", "the row should stay open at 0: %r" % label)
+        # Both sources on the project: osv-scanner lists lodash too and finds minimist. The open row has a line per
+        # source, each finding says where it came from, and Hand to agent names the finding's ecosystem.
+        def advisory(vid, score):
+            return {"vulnerabilities": [{"id": vid}], "groups": [{"ids": [vid], "aliases": [], "max_severity": score}]}
+        both = home / "osv-scanner.json"
+        both.write_text(json.dumps({"results": [{"source": {"path": str(root.resolve() / "package-lock.json")},
+                                                 "packages": [
+            dict(advisory("GHSA-35jh-r3h4-6jhm", "7.2"), package={"name": "lodash", "version": "4.17.20", "ecosystem": "npm"}),
+            dict(advisory("GHSA-xvch-5gv4-984h", "5.6"), package={"name": "minimist", "version": "1.2.5", "ecosystem": "npm"})]}]}),
+            encoding="utf-8")
+        row_of = ("(function () { return 1 + Array.prototype.findIndex.call(document.querySelectorAll('%sli.ib-row'), "
+                  "function (l) { return /known/.test(l.querySelector('.ib-title').textContent); }); })()" % osv)
+        lines = ("(function () { return [Array.prototype.map.call(document.querySelectorAll('#ib-detail .ib-src'), "
+                 "function (p) { return p.textContent; }), Array.prototype.map.call(document.querySelectorAll("
+                 "'#ib-detail .ib-vulns .ib-vuln-facts'), function (p) { return p.textContent; }), "
+                 "Array.prototype.map.call(document.querySelectorAll('#ib-detail .ib-vuln-note'), "
+                 "function (p) { return p.textContent; })]; })()")
+        browser.call("Page.navigate", url=browser.js("location.href"))
+        at = wait_for("the row of both sources", lambda: browser.js(row_of))
+        browser.click("%sli.ib-row:nth-of-type(%d) button.ib-main" % (osv, at))
+        shown = wait_for("its source lines", lambda: (lambda v: len(v[0]) == 2 and v)(browser.js(lines)))
+        when = r" · scanned \S.*$"  # the time as the row's own shows it
+        osvs = "osv" + chr(8209) + "scanner"  # a non-breaking hyphen (U+2011), so a phone's line never splits it
+        check(re.match(r"Uptick: 1 known vulnerability, high" + when, shown[0][0])
+              and re.match(osvs + r": 2 known vulnerabilities, worst high" + when, shown[0][1])
+              and shown[1:] == [["npm · GHSA-35jh-r3h4-6jhm · fixed in 4.17.21 · Uptick + " + osvs,
+                                 "npm · GHSA-xvch-5gv4-984h · no fix yet · " + osvs], []],
+              "a line per source and each finding's sources: %r" % shown)
+        browser.click("#ib-detail .ib-vulns li:nth-of-type(2) .ib-vuln-sent button")
+        wait_for("minimist handed over", lambda: browser.js(
+            "!!document.querySelector('#ib-detail .ib-vulns li:nth-of-type(2) .ib-vuln-sent .pill')"))
+        files = [json.loads(p.read_text(encoding="utf-8")) for p in (home / "requests" / pid).glob("*.json")]
+        check([(f["kind"], f.get("ecosystem")) for f in files if f["ref"] == "minimist@1.2.5"] == [("vuln", "npm")],
+              "Hand to agent names the finding's ecosystem: %r" % files)
+        # An old osv-scanner file: the row is Uptick's, and the note under osv-scanner's line blames osv-scanner only.
+        old = time.time() - 3 * 86400
+        os.utime(str(both), (old, old))
+        browser.call("Page.navigate", url=browser.js("location.href"))
+        at = wait_for("the row again", lambda: browser.js(row_of))
+        browser.click("%sli.ib-row:nth-of-type(%d) button.ib-main" % (osv, at))
+        shown = wait_for("its source lines", lambda: (lambda v: len(v[0]) == 2 and v)(browser.js(lines)))
+        check(re.match(r"Uptick: 1 known vulnerability, high" + when, shown[0][0])
+              and re.match(osvs + r": No recent data" + when, shown[0][1])
+              and shown[1:] == [["npm · GHSA-35jh-r3h4-6jhm · fixed in 4.17.21 · Uptick"], [
+                  "osv-scanner's file is more than two days old (or dated ahead of now): its findings are left out "
+                  "until it is written again."]], "the old source's own note: %r" % shown)
+        # The other way round: an old Uptick entry beside a fresh osv-scanner file. Uptick's own note, and only it.
+        (cache / "uptick" / "vulns.json").write_text(json.dumps({"schema": 1, "targets": {}, "repos": {
+            str(root.resolve()): {"at": old, "tried": old, "count": 0, "max": "", "level": "", "gaps": [], "error": "",
+                                  "hint": "", "prev": None, "details": []}}}), encoding="utf-8")
+        os.utime(str(both), None)
+        browser.call("Page.navigate", url=browser.js("location.href"))
+        at = wait_for("the row once more", lambda: browser.js(row_of))
+        browser.click("%sli.ib-row:nth-of-type(%d) button.ib-main" % (osv, at))
+        shown = wait_for("its source lines", lambda: (lambda v: len(v[0]) == 2 and v)(browser.js(lines)))
+        check(re.match(r"Uptick: No recent data" + when, shown[0][0])
+              and re.match(osvs + r": 2 known vulnerabilities, worst high" + when, shown[0][1])
+              and shown[2] == ["Uptick has no recent scan of this project (within two of its runs; two days for an "
+                               "older Uptick): its vulnerability scan is off, or has not run since."],
+              "Uptick's own note under its line: %r" % shown)
         # osv-scanner's JSON alone (Uptick's file cut short now): the section names it, the other project's finding
         # has its own row, and the project it does not list is not scanned, with no Scan button (that is Uptick's).
         (cache / "uptick" / "vulns.json").write_text("{", encoding="utf-8")
@@ -3157,12 +3217,13 @@ def run_inbox(work):
             "(function () { var t = Array.prototype.map.call(document.querySelectorAll('%s.ib-title'), "
             "function (n) { return n.textContent; }); return t.length === 2 && t; })()" % osv))
         note = browser.js("document.querySelector('%sh2 .ib-note').textContent" % osv)
-        check([note] + titles == ["from osv-scanner", "1 known vulnerability, high", "Not scanned (1)"],
+        check([note] + titles == ["from " + osvs, "1 known vulnerability, high", "Not scanned (1)"],
               "the section from osv-scanner alone: %r %r" % (note, titles))
         browser.click(osv + "button.ib-main")
         facts = wait_for("the osv-scanner finding", lambda: browser.js(
-            "(function () { var f = document.querySelector('#ib-detail .ib-vuln-facts'); return f && f.textContent; })()"))
-        check(facts == "PyPI · GHSA-462w-v97r-4m45 · GHSA-g3rq-g295-4j3m · a fix for each advisory",
+            "(function () { var f = document.querySelector('#ib-detail .ib-vulns .ib-vuln-facts'); "
+            "return f && f.textContent; })()"))
+        check(facts == "PyPI · GHSA-462w-v97r-4m45 · GHSA-g3rq-g295-4j3m · a fix for each advisory · " + osvs,
               "a finding fixed in a version per advisory: %r" % facts)
         browser.click(off + "button.ib-main")
         unscanned = wait_for("the unscanned project", lambda: browser.js(
@@ -3271,6 +3332,12 @@ def search_fixture(work):
             "severity": "7.2", "level": "high", "fixed": "4.17.21", "sources": ["package-lock.json"]}]}}}),
         encoding="utf-8")
     (config / "uptick" / "scan-repos.json").write_text(json.dumps({"repos": [str(ops.resolve())]}), encoding="utf-8")
+    # osv-scanner lists the same finding, so it comes from both sources and the search finds it by either name.
+    (home / "osv-scanner.json").write_text(json.dumps({"results": [{
+        "source": {"path": str(ops.resolve() / "package-lock.json")}, "packages": [{
+            "package": {"name": "lodash", "version": "4.17.20", "ecosystem": "npm"},
+            "vulnerabilities": [{"id": "GHSA-35jh-r3h4-6jhm"}],
+            "groups": [{"ids": ["GHSA-35jh-r3h4-6jhm"], "aliases": [], "max_severity": "7.2"}]}]}]}), encoding="utf-8")
     env = dict(os.environ, SIGNOFF_INBOX_HOME=str(home), XDG_CACHE_HOME=str(cache), XDG_CONFIG_HOME=str(config))
     script = [sys.executable, "-I", "-B", str(ROOT / "plugin" / "signoff" / "signoff.py")]
     return {"home": home, "env": env, "script": script, "topic": topic, "ops": ops, "ids": ids}
@@ -3353,6 +3420,7 @@ def run_inbox_search(work):
         check(found("kerlek elobb") == ["Rendezd át a régi ágakat"], "the text of a request on an item")
         check(found("lodash") == ["1 known vulnerability, high"], "a vulnerability's package name: %r" % browser.js(SEARCH_ROWS))
         check(found("ghsa-35jh") == ["1 known vulnerability, high"], "a vulnerability's advisory id")
+        check(found("osv-scanner") == ["1 known vulnerability, high"], "a finding by its source: %r" % browser.js(SEARCH_ROWS))
         check(sorted(found("docs")) == ["Frissítsd a bevezetőt", "Not scanned (1)", "Rename the glossary"],
               "a project name matches its rows: %r" % browser.js(SEARCH_ROWS))
         check(found("zzzz") == [] and browser.js("document.getElementById('ib-search-count').textContent") == "No matches"

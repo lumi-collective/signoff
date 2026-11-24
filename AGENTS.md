@@ -543,13 +543,26 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   ref}` for a finding: `ref` (`<name>@<version>`) must be a finding the list shows now (409 otherwise), and the
   text is the server's own, built from the finding's level, advisory ids and fixed version (for one `fixable`
   without a `fixed`, `FIX_EACH`), each checked against a plain pattern; no free text from Uptick's or osv-scanner's
-  file goes into it. It takes exactly `{kind: "vulns", project,
+  file goes into it. It also takes exactly `{kind: "vuln", project, ref, ecosystem}`: `ecosystem` a string that
+  matches the ecosystem pattern (400 otherwise) and is the ecosystem of a finding the list shows now with that `ref`
+  (409 otherwise), as the page sends it for a finding with a plain one (`eco`), so a `ref` listed in two
+  ecosystems goes to its own; without it, the text is that of the first listing of the `ref` that keeps its `ref`
+  (see below). Two ecosystems are two different values as the file has them, plain or not, or one of them missing
+  (the key the merge uses). A text names the finding's ecosystem (", in its <ecosystem> package") only when the list
+  shows its `ref` with two ecosystems, and only a plain one: an ecosystem that fails the pattern never enters a text;
+  else it is the text above, unchanged. A finding whose `ref` the list shows with two ecosystems and whose own is not
+  plain (or missing) gets no `ref` (shown, never handed over), as no request could name it; so does one whose name
+  starts with `/` or `~` or matches `_PATHLIKE` (a scheme or `@` before `/` or `~`, as in `://`, `file:/`, `a@/`; a
+  drive letter; scp-style `git@host:`; a `..` step), so no URL or path reaches the agent (Maven's `group:artifact`
+  passes).
+  It takes exactly `{kind: "vulns", project,
   count}` for all of a project's fixable findings (a finding the list shows now with a `ref`, and a `fixed` matching
-  the version pattern or `fixable`; the first listing of a `ref` counts; 409 with none), `count` a whole number, the number of
+  the version pattern or `fixable`; the first listing of each `ref` and ecosystem counts; 409 with none), `count` a whole number, the number of
   them the page showed (409, writing nothing, when the number now differs: a tab left open across a rescan): `ref`
-  the fixed `vulns`, the text the server's own, each such finding as `<ref> → <fixed>` (or `<ref> (<FIX_EACH>)`) in the list's order, as many
+  the fixed `vulns`, the text the server's own, each such finding as `<ref> → <fixed>` (or `<ref> (<FIX_EACH>)`;
+  `<ref> (<ecosystem>)` for `<ref>` when the list shows the `ref` with two ecosystems) in the list's order, as many
   as fit in `MAX_REQUEST_TEXT` with the frame, then how many more; and `refs`, the `ref` of each finding the text
-  names, never one counted in "more" (those stay listed, to hand over again). It takes exactly `{kind: "later", project, ref}`
+  names (a `ref` in two ecosystems twice), never one counted in "more" (those stay listed, to hand over again). It takes exactly `{kind: "later", project, ref}`
   for Later on a waiting row: `ref` must be an open item marked waiting now (409 otherwise), and the text is the
   server's own `LATER_TEXT` (park the item: take its marker off, keep it open). The route takes no `kind:
   "answer"` (400): the inbox alone writes one, once every round of an orphan group is done (by Done, `accept`, or
@@ -571,14 +584,18 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   over, unless it stops first: then the let-go look above does). A Done save to
   a group looks at the runs first, as `accept` does, so a run that ended since the last look counts as gone; a
   group that look lets go refuses it with 404 (`gone` for `accept`), writing nothing. The inbox
-  writes `requests/<project>/<id>.json` (`schema, id, kind, ref, text, at`, and `refs` on a `vulns` one; `id` 16
+  writes `requests/<project>/<id>.json` (`schema, id, kind, ref, text, at`, `refs` on a `vulns` one, and
+  `ecosystem` on a `vuln` one that named it; `id` 16
   hex digits, `kind` `todo`, `vuln`, `later`, `answer` or `vulns`; a `later` reaches the agent as a message on the
   todo item, an `answer` as one on the Signoff rounds, a `vulns` as one on the vulnerability findings), atomically,
   0600 in 0700 folders. A reader takes `refs` only as a list of at most `MAX_FINDINGS` refs that match the
-  patterns, and skips a file of a kind it does not know (so a session on an older plugin drops a `vulns` or `answer`
+  patterns (a URL or path name, as above, does not), and `ecosystem` only on a `vuln` request, as
+  a string that matches its pattern (else it skips the file; a reader before 0.5.0
+  ignores the key), and skips a file of a kind it does not know (so a session on an older plugin drops a `vulns` or `answer`
   request, which reaches the project only through a session on a plugin that knows it (its mod, or before 0.5.0 its
   monitor), running when it is written, or at a later SessionStart hand-over on such a plugin). The list page shows each item's, finding's and project's (`vulns`) recent
-  requests (text, time, done) and never an id, a path or `refs`. The agent marks one handled with
+  requests (text, time, done) and never an id, a path, `refs` or `ecosystem`; a finding's are those of its `ref`
+  and ecosystem, and those of its `ref` written without an `ecosystem` (older ones too). The agent marks one handled with
   `signoff inbox done <id>`, which writes an empty `<id>.done` beside it; nothing else writes there.
 - **The OSV section reads Uptick's files and osv-scanner's, and writes one only on a click.** Uptick's `vulns.json`
   (`$XDG_CACHE_HOME`, else `~/.cache`, then `uptick/`; at most `MAX_VULNS` bytes) and `scan-repos.json`
@@ -609,10 +626,16 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   followed, in order, by a plain `fixed`, and no `last_affected` or `limit` is there (the inbox compares no
   versions, so an open branch could be the installed one). They merge with Uptick's by `ref` and `ecosystem` (the
   `ids` of both, at most 5; the higher `level`; Uptick's `fixed` when it has one), and each finding carries `from`
-  (`uptick`, `osv-scanner`); the state is the most informative of the two (`found`, `partial`, `error`, `clean`,
+  (`uptick`, `osv-scanner`) and `eco` (its ecosystem when that matches the ecosystem pattern, else null); the state is the most informative of the two (`found`, `partial`, `error`, `clean`,
   `stale`, `off`), except that an osv-scanner file that is not fresh leaves `off` a project Uptick's file is there
-  for and its scan list leaves out (Not scanned, with Scan this project: the page's stale note, Uptick's words,
-  shows only for Uptick's own `stale`). The row's count is the larger of a fresh Uptick `count` and the number of
+  for and its scan list leaves out (Not scanned, with Scan this project). Beside it, `by_source` lists each source
+  whose file is there, Uptick first, as `{source, status, at, count, level}`: `source` `uptick` or `osv-scanner`,
+  `status` that source's own state before the merge (osv-scanner's `stale` also where the merged state is that
+  `off`), `at` its scan time (Uptick's `at`; osv-scanner's file time when the file lists the project), null when
+  there is none or it is ahead of now; `count` and `level` its own findings before the `MAX_FINDINGS` cut (Uptick's:
+  the larger of a fresh entry's `count` and its findings, the worst of its `level` and theirs; osv-scanner's: the
+  findings it lists, merged or not, and their worst level), 0 and `unknown` with none. Closed values only. A project's own row (not Not scanned) shows a line per entry, and under a
+  `stale` one that source's own note: Uptick's for Uptick, osv-scanner's for osv-scanner. The row's count is the larger of a fresh Uptick `count` and the number of
   findings, its time the newer scan. Findings (at most `MAX_FINDINGS`) only from a fresh source; with
   osv-scanner's among them they are sorted worst first (stable, so Uptick's first within a level), else Uptick's
   keep their order. Text from either file
@@ -763,7 +786,7 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   and context), plus, per row, a
   round's item titles (`items` on a round's row: at most `MAX_ROW_ITEMS` of `MAX_ROW_TEXT` characters each, titles
   only, never a file or folder name), a todo item's body and its requests' texts, a finding's package, version,
-  ids and fixed version, and the project names behind the Not scanned row. The rows not matching are hidden,
+  ecosystem, level, ids, fixed version and sources (`from`), and the project names behind the Not scanned row. The rows not matching are hidden,
   the groups holding a match open (a toggle click does nothing meanwhile), a sidebar pick ends the search, an
   empty field gives the list back as it was. `aria-live` on the count (`N matches`, `No matches`) and a Clear
   button. `/` (not while typing in a field) and Cmd+K (Ctrl+K off a Mac; from a field too) focus it (typing in

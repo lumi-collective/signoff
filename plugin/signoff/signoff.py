@@ -2427,6 +2427,7 @@ VULN_LEVELS = ("unknown", "low", "medium", "high", "critical")
 _PACKAGE = re.compile(r"[A-Za-z0-9@/._+~:-]{1,214}")
 _VERSION = re.compile(r"[A-Za-z0-9._+~:-]{1,64}")
 _ADVISORY = re.compile(r"[A-Za-z0-9._:-]{1,64}")
+_ECOSYSTEM = re.compile(r"[A-Za-z0-9._:-]{1,40}")  # npm, PyPI, crates.io, Debian:12; a request may name one
 # osv-scanner's advisory group score (max_severity, CVSS as text), and the GHSA words for a group without one.
 _CVSS = re.compile(r"[0-9]{1,2}(\.[0-9]{1,3})?")
 _GHSA_LEVELS = {"LOW": "low", "MODERATE": "medium", "HIGH": "high", "CRITICAL": "critical"}
@@ -2497,25 +2498,28 @@ def _seconds(v):
     return v if isinstance(v, (int, float)) and not isinstance(v, bool) and 0 <= v < 1e13 else 0
 
 
-def _vuln_text(d):
-    """What a vuln request says, from a finding's checked fields only: no free text from the file reaches a model."""
+def _vuln_text(d, eco=None):
+    """What a vuln request says, from a finding's checked fields only: no free text from the file reaches a model.
+    eco: its plain ecosystem, named when another listed finding has the same ref in another one."""
     level = d.get("level") if d.get("level") in VULN_LEVELS[1:] else None
     ids = [i for i in d.get("ids") or () if isinstance(i, str) and _ADVISORY.fullmatch(i)][:5] \
         if isinstance(d.get("ids"), list) else []
     fixed = d.get("fixed") if isinstance(d.get("fixed"), str) and _VERSION.fullmatch(d["fixed"]) else None
-    return "Please fix this vulnerability in this project%s%s; %s." % (
+    return "Please fix this vulnerability in this project%s%s%s; %s." % (
+        ", in its %s package" % eco if eco else "",
         ": %s severity" % level if level else "", " (%s)" % ", ".join(ids) if ids else "",
         "fixed in %s" % fixed if fixed else FIX_EACH if d.get("fixable") is True else "no fixed version is known yet")
 
 
 def _vulns_text(fixable):
-    """What a vulns request says, and how many findings it names: each fixable finding's checked ref and fixed
-    version (None: FIX_EACH), in the list's order, as many as fit in MAX_REQUEST_TEXT, then how many more. One pair
-    always fits: it is at most 346 characters."""
+    """What a vulns request says, and how many findings it names: each fixable finding's checked ref (with its
+    plain ecosystem as "<ref> (<ecosystem>)" when two listed findings share the ref) and fixed version (None:
+    FIX_EACH), in the list's order, as many as fit in MAX_REQUEST_TEXT, then how many more. One pair always fits:
+    it is at most 389 characters."""
     for n in range(len(fixable), 0, -1):
         rest = len(fixable) - n
         text = "Please fix these vulnerabilities in this project, each by updating to its fixed version: %s%s." % (
-            ", ".join("%s → %s" % f if f[1] else "%s (%s)" % (f[0], FIX_EACH) for f in fixable[:n]),
+            ", ".join("%s → %s" % f[:2] if f[1] else "%s (%s)" % (f[0], FIX_EACH) for f in fixable[:n]),
             ", and %d more" % rest if rest else "")
         if len(text) <= MAX_REQUEST_TEXT:
             return text, n
@@ -2637,10 +2641,22 @@ def _under(path, root):
     return os.path.commonpath([path, root]) == root
 
 
+# A URL or a local path in any spelling a lockfile may give: a scheme or `@` before a path (file:/, link:/, a@/, ://),
+# a drive letter, scp-style git@host:, or a `..` step. Maven's group:artifact passes.
+_PATHLIKE = re.compile(r"[:@][/~]|^[A-Za-z]:|^[\w.-]+@[\w.-]+:|(^|/)\.\.(/|$)")
+
+
+def _plain_name(name):
+    """A package name a request may carry: plain (_PACKAGE), and neither a URL (osv-scanner names a git dependency
+    by its URL) nor a local path, so neither reaches a model."""
+    return (isinstance(name, str) and _PACKAGE.fullmatch(name) is not None and not name.startswith(("/", "~"))
+            and _PATHLIKE.search(name) is None)
+
+
 def _finding_ref(v):
-    """True for a finding's ref as _osv makes it: <name>@<version>, each plain (_PACKAGE, _VERSION)."""
+    """True for a finding's ref as _osv makes it: <name>@<version>, each plain (_plain_name, _VERSION)."""
     name, _, version = v.rpartition("@") if isinstance(v, str) else ("", "", "")
-    return bool(_PACKAGE.fullmatch(name) and _VERSION.fullmatch(version))
+    return bool(_plain_name(name) and _VERSION.fullmatch(version))
 
 
 def _recent(path, max_age):
@@ -2815,17 +2831,21 @@ def read_request(path):
           and r.get("kind") in REQUEST_KINDS and isinstance(r.get("ref"), str) and isinstance(r.get("text"), str)
           and isinstance(r.get("at"), str) and SAVED_PATTERN.fullmatch(r["at"])
           and ("refs" not in r or isinstance(r["refs"], list) and len(r["refs"]) <= MAX_FINDINGS
-               and all(_finding_ref(x) for x in r["refs"])))
+               and all(_finding_ref(x) for x in r["refs"]))
+          and ("ecosystem" not in r or r["kind"] == "vuln" and isinstance(r["ecosystem"], str)
+               and _ECOSYSTEM.fullmatch(r["ecosystem"])))  # only a vuln request names one; else the file is skipped
     return r if ok else None
 
 
-def write_request(home, project, kind, ref, text, refs=None):
+def write_request(home, project, kind, ref, text, refs=None, ecosystem=None):
     """requests/<project>/<id>.json in the home, atomically, 0600 in 0700 folders, for the project's sessions (their
-    mods, or the next SessionStart hook). refs (a vulns request's findings) only when given. Returns the
-    request; raises OSError when it cannot be written."""
+    mods, or the next SessionStart hook). refs (a vulns request's findings) and ecosystem (the one a vuln request
+    named) only when given. Returns the request; raises OSError when it cannot be written."""
     r = {"schema": 1, "id": secrets.token_hex(8), "kind": kind, "ref": ref, "text": text, "at": utc_now()}
     if refs is not None:
         r["refs"] = refs
+    if ecosystem is not None:
+        r["ecosystem"] = ecosystem
     folder = home / "requests" / project
     folder.parent.mkdir(mode=0o700, exist_ok=True)
     folder.mkdir(mode=0o700, exist_ok=True)
@@ -3551,8 +3571,9 @@ class InboxServer(_Server):
 
     def _osv(self, p, lockfiles):
         """The project's vulnerability state from Uptick's files (AD-12) and osv-scanner's JSON in the home (AD-34),
-        read only, or None when neither is there: (the page's view, ref -> the text a vuln request carries, the
-        fixable findings' (ref, fixed or None) pairs a vulns request names, each ref once). lockfiles: _lockfiles'."""
+        read only, or None when neither is there: (the page's view, ref or (ref, ecosystem) -> the text a vuln
+        request carries, the fixable findings' (label, fixed or None, ref) a vulns request names, each ref and
+        ecosystem once). lockfiles: _lockfiles'."""
         found = uptick_file("XDG_CACHE_HOME", ".cache", "vulns.json")
         data = self._uptick(found, MAX_VULNS, _json_object) if found else None
         repos = data.get("repos") if data else None
@@ -3588,6 +3609,11 @@ class InboxServer(_Server):
         # A lockfile entry of another shape fails closed, as Uptick's gaps do: a partial scan, never clean.
         theirs = ("off" if not hits else "stale" if not recent else "partial" if any(bad for _, bad in hits)
                   else "found" if any(fs for fs, _ in hits) else "clean")
+        # Each source's own state and time, before they merge: closed values only, for the page's line per source.
+        by_source = [{"source": s, "status": st,
+                      "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t)) if 0 < t <= now else None}
+                     for s, st, t, there in (("uptick", status, at, isinstance(repos, dict)),
+                                             ("osv-scanner", theirs, scanned_at, scanned is not None)) if there]
         # An old osv-scanner file leaves a project Uptick does not scan off, so it stays in Not scanned with its Scan
         # button; the page's stale note, Uptick's words, then shows only where Uptick's own scan is old.
         if theirs == "stale" and status == "off" and isinstance(repos, dict):
@@ -3617,19 +3643,41 @@ class InboxServer(_Server):
                 m["fixed"] = d["fixed"]  # Uptick's fixed version when it has one
         if extra:  # osv-scanner's come in file order: worst first, so the cut never drops the worst (Uptick's are)
             merged.sort(key=lambda d: -VULN_LEVELS.index(d["level"] if d.get("level") in VULN_LEVELS else "unknown"))
+        # Each source's own count and worst level, before the cut: Uptick's from its fresh entry, osv-scanner's from
+        # its own findings (a merged finding's level may be the other source's).
+        uptick = [d for d in details if isinstance(d, dict)]
+        own = {"uptick": (max(int(_seconds(e.get("count"))) if fresh else 0, len(uptick)),
+                          ([e.get("level")] if fresh else []) + [d.get("level") for d in uptick]),
+               "osv-scanner": (sum("osv-scanner" in d["from"] for d in merged), [f["level"] for f in extra])}
+        for b in by_source:
+            b.update(count=own[b["source"]][0], level=_worst(own[b["source"]][1]) or "unknown")
+        listed, ecos = merged[:MAX_FINDINGS], {}
+        for d in listed:  # the plain ecosystem a request may name, else None; and each ref's ecosystems as merged
+            d["eco"] = d.get("ecosystem") if isinstance(d.get("ecosystem"), str) and _ECOSYSTEM.fullmatch(
+                d["ecosystem"]) else None
+            ecos.setdefault(d["ref"], set()).add(d.get("ecosystem") if isinstance(d.get("ecosystem"), str) else None)
+        # texts: ref -> its first listing's text (a request without an ecosystem), (ref, eco) -> that listing's.
+        # A text names the ecosystem only where the ref is listed in two: else today's text, byte for byte.
         findings, texts, fixable = [], {}, []
-        for d in merged[:MAX_FINDINGS]:
+        for d in listed:
+            # A name that is a URL or a path, or a ref in two ecosystems with this one not plain (no request could
+            # say which): shown only, never handed over.
+            if d["ref"] and (not _plain_name(d["name"]) or d["eco"] is None and len(ecos[d["ref"]]) > 1):
+                d["ref"] = None
             fixed = d["fixed"] if isinstance(d.get("fixed"), str) and _VERSION.fullmatch(d["fixed"]) else None
             d["fixable"] = bool(fixed) or d["fixable"]
-            if d["ref"] and d["ref"] not in texts:
-                texts[d["ref"]] = _vuln_text(d)
+            if d["ref"] and (d["ref"], d["eco"]) not in texts:
+                named = d["eco"] if len(ecos[d["ref"]]) > 1 else None
+                texts[d["ref"], d["eco"]] = _vuln_text(d, named)
+                texts.setdefault(d["ref"], texts[d["ref"], d["eco"]])
                 if d["fixable"]:
-                    fixable.append((d["ref"], fixed))
+                    fixable.append(("%s (%s)" % (d["ref"], named) if named else d["ref"], fixed, d["ref"]))
             findings.append({"ref": d["ref"], "name": shown(d.get("name"), 200), "version": shown(d.get("version"), 64),
                              "ecosystem": shown(d.get("ecosystem"), 40),
                              "level": d.get("level") if d.get("level") in VULN_LEVELS else "unknown",
                              "ids": [shown(i, 64) for i in _strs(d, "ids")][:5],
-                             "fixed": shown(d.get("fixed"), 64), "fixable": d["fixable"], "from": d["from"]})
+                             "fixed": shown(d.get("fixed"), 64), "fixable": d["fixable"], "from": d["from"],
+                             "eco": d["eco"]})
         stamps = [t for t in (at, scanned_at) if 0 < t <= now]
         return {"status": status,
                 "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(max(stamps))) if stamps else None,
@@ -3639,7 +3687,7 @@ class InboxServer(_Server):
                 # Scan this project adds to Uptick's list: only beside Uptick's file. from: the sources there.
                 "scan": isinstance(repos, dict),
                 "from": [s for s, there in (("uptick", isinstance(repos, dict)), ("osv-scanner", scanned is not None))
-                         if there]}, texts, fixable
+                         if there], "by_source": by_source}, texts, fixable
 
     def add_scan(self, raw):
         """Scan this project: add its folder to Uptick's scan-repos.json on the user's click (round-08). Every other
@@ -3706,7 +3754,8 @@ class InboxServer(_Server):
 
     def _requests(self, project):
         """(kind, ref) -> the project's recent requests on that todo item or finding, oldest first: text, at, and
-        done once the agent wrote <id>.done. shortcut: each look reads up to MAX_SHOWN_REQUESTS small files per
+        done once the agent wrote <id>.done; (kind, ref, ecosystem) for a vuln request that named its finding's
+        ecosystem. shortcut: each look reads up to MAX_SHOWN_REQUESTS small files per
         project; cache them by id (they never change) if a project gathers many."""
         folder = self.home / "requests" / project
         ids, done = request_ids(folder)
@@ -3716,8 +3765,8 @@ class InboxServer(_Server):
         for mtime, i in recent[:MAX_SHOWN_REQUESTS]:
             r = read_request(folder / (i + ".json")) if mtime >= cutoff else None
             if r:
-                found.setdefault((r["kind"], r["ref"]), []).append({"text": r["text"], "at": r["at"],
-                                                                    "done": i in done})
+                found.setdefault((r["kind"], r["ref"]) + ((r["ecosystem"],) if "ecosystem" in r else ()), []).append(
+                    {"text": r["text"], "at": r["at"], "done": i in done})
         for shown in found.values():
             shown.sort(key=lambda r: r["at"])
         return found
@@ -3738,10 +3787,14 @@ class InboxServer(_Server):
         kind = body["kind"] if shape == ["kind", "project", "ref"] and body["kind"] in ("vuln", "later") else "todo"
         if shape == ["count", "kind", "project"] and body["kind"] == "vulns":
             kind = "vulns"
+        if shape == ["ecosystem", "kind", "project", "ref"] and body["kind"] == "vuln":
+            kind = "vuln"  # one ref listed in two ecosystems: this one's
         if kind == "todo" and shape != ["project", "ref", "text"]:
             return 400, (b'bad request: send {"project", "ref", "text"}, or {"kind", "project", "ref"} with kind '
-                         b'"vuln" or "later", as strings; or {"kind": "vulns", "project", "count"} with count the '
-                         b'number of fixable findings shown\n')
+                         b'"vuln" (and optionally "ecosystem") or "later", as strings; or {"kind": "vulns", '
+                         b'"project", "count"} with count the number of fixable findings shown\n')
+        if "ecosystem" in body and not _ECOSYSTEM.fullmatch(body["ecosystem"]):
+            return 400, b"bad request: an ecosystem is a plain name (letters, digits, . _ : -), at most 40\n"
         text = body["text"].strip() if kind == "todo" else LATER_TEXT
         if kind == "todo" and (not text or len(text) > MAX_REQUEST_TEXT or not _typed_line(text)):
             return 400, b"bad request: a message is one line of 1 to 1000 characters\n"
@@ -3752,7 +3805,8 @@ class InboxServer(_Server):
                 return 404, b"no such project\n"
             ref, named = body.get("ref", "vulns"), None  # a vulns request names its findings in named
             if kind == "vuln":
-                text = (self._osv(p, self._lockfiles(known)) or ({}, {}, []))[1].get(body["ref"])
+                text = (self._osv(p, self._lockfiles(known)) or ({}, {}, []))[1].get(
+                    (body["ref"], body["ecosystem"]) if "ecosystem" in body else body["ref"])
                 if text is None:
                     return 409, b"that finding is no longer listed; reload the page\n"
             elif kind == "vulns":
@@ -3762,7 +3816,7 @@ class InboxServer(_Server):
                 if len(fixable) != body["count"]:  # a tab left open across a rescan: not what the user saw
                     return 409, b"the findings changed; reload the page\n"
                 text, n = _vulns_text(fixable)
-                named = [f[0] for f in fixable[:n]]  # handed over: only what the text names; the rest stay listed
+                named = [f[2] for f in fixable[:n]]  # handed over: only what the text names; the rest stay listed
             else:
                 # Any open item of a chain takes a message, its steps too; Later only one marked waiting.
                 path = project_todo(p)[0]
@@ -3772,7 +3826,7 @@ class InboxServer(_Server):
                     return 409, (b"that todo item no longer waits on you; reload the page\n" if kind == "later"
                                  else b"that todo item is no longer open; reload the page\n")
             try:
-                r = write_request(self.home, p["id"], kind, ref, text, named)
+                r = write_request(self.home, p["id"], kind, ref, text, named, body.get("ecosystem"))
             except OSError as e:
                 return 500, ("could not write the request (%s)\n" % (e.strerror or type(e).__name__)).encode("utf-8")
         return 200, json.dumps({"ok": True, "id": r["id"], "at": r["at"]}).encode("utf-8")
@@ -3959,7 +4013,9 @@ class InboxServer(_Server):
                 listed.append(dict(who, id=pid, file=file, error=error, todos=[row(t) for t in todos if not t["waiting"]]))
                 if osv:
                     for f in osv[0]["findings"]:
-                        f["requests"] = asked.get(("vuln", f["ref"]), []) if f["ref"] else []
+                        # Its ref's and ecosystem's, and its ref's from before a request named the ecosystem.
+                        f["requests"] = sorted(asked.get(("vuln", f["ref"]), []) + asked.get(
+                            ("vuln", f["ref"], f["eco"]), []), key=lambda q: q["at"]) if f["ref"] else []
                     listed[-1]["osv"] = dict(osv[0], requests=asked.get(("vulns", "vulns"), []))
             asking, idle = self._live(found, projects)
             waiting += asking

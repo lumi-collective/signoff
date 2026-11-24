@@ -52,7 +52,8 @@ before that; one left open comes back at a later session start. The user's Later
 
 A vulnerability finding the user hands over from the inbox's Vulnerabilities section comes the same way, on the
 vulnerability finding `"<package>@<version>"`, with a line the inbox wrote from the finding (level, advisory ids,
-fixed version). Find the package in the project's lockfiles, check the advisories, and propose or make the fix
+fixed version; "in its npm package", or `(npm)` after the package, when the project has it in two ecosystems: fix
+that one). Find the package in the project's lockfiles, check the advisories, and propose or make the fix
 as you would for the same request typed here; mark it done the same way. Hand all fixable over comes on the
 vulnerability findings `"vulns"`, naming each `<package>@<version> → <fixed version>` (or, when its advisories
 are fixed in different versions, "a fixed version exists for each advisory": check each one): fix the named ones, as

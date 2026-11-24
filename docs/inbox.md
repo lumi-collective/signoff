@@ -57,7 +57,7 @@ stands in for the list, with a button to the To do rows.
 **Search** is the field in the header (on a phone, a line below it). It filters as you type, over every view at once,
 ignoring case and accents (`ikonja` finds `Ikonjá`): a row matches when each word you typed is somewhere in its project
 name, title, short line, a round's item titles, a todo item's text and the messages on it, or a vulnerability's
-package, version and advisory ids. Only the matching rows show, under their project headings, and a closed To do
+package, version, advisory ids and the sources that list it (`osv-scanner`, `uptick`). Only the matching rows show, under their project headings, and a closed To do
 group opens when it holds one. The count beside the field says `3 matches`; Clear, or an empty field, gives the list
 back as it was. The search survives the page's own reload.
 
@@ -168,12 +168,23 @@ vulnerabilities*, *Partial scan* (lockfiles left out), *Scan failed* with Uptick
 when a source scans the project but none has a recent scan of it: Uptick lists it but has not scanned it within
 two of its runs (its `interval`, from Uptick 0.4.0; at most 30 days) or, from an older Uptick, in two days; or,
 without Uptick's file, osv-scanner's file (below) lists it but is older than two days.
-Findings never count as waiting on you. An open row lists
-each finding (package, version, level, advisory ids, the fixed version) with **Hand to agent**, which sends the
+Findings never count as waiting on you. An open row starts with a line per source whose file is there, each
+with that source's own state and scan time (*Uptick: No known vulnerabilities · scanned …*, *osv-scanner:
+No recent data · scanned …*), so you see which said what; a source's count is all it found, also past the 50
+findings the row lists. Under a source with no recent scan is a note
+in its own words, also when the row's state comes from the other source. A project in *Not scanned* (below) has
+no such lines or notes. The row then lists
+each finding (package, version, level, advisory ids, the fixed version, and the sources that list it) with **Hand to agent**, which sends the
 project's agent a request as above, its `ref` the package and version (`lodash@4.17.20`) and its text written by
-the inbox from those fields. Above the list, **Hand all fixable over (N)** sends one request for the N findings
+the inbox from those fields. The request also names the finding's ecosystem (`npm`), when it is a plain word:
+when the list shows the same package and version in two ecosystems, each button sends its own finding, and the
+text says which ecosystem's package to fix. A finding there whose ecosystem is not a plain word (a space in it,
+say) or is missing has no button, as no request could say which one it is; with two such ecosystems, neither has
+one. Nor does a finding whose name is a URL or a local path (osv-scanner names a git dependency by its URL), so
+neither reaches the agent. Above the list, **Hand all fixable over (N)** sends one request for the N findings
 with a fixed version: its `ref` is `vulns`, its text names each as `lodash@4.17.20 → 4.17.21` (or, for one whose
-advisories are fixed in different versions, `jinja2@2.10.0 (a fixed version exists for each advisory)`) in the list's order,
+advisories are fixed in different versions, `jinja2@2.10.0 (a fixed version exists for each advisory)`; for a
+package and version listed in two ecosystems, `foo@1.0.0 (npm) → 2.0.0`, each once) in the list's order,
 as many as fit in 1,000 characters, then how many more, and the file lists the named ones in `refs`. Only those
 are handed over: the rest stay listed, to hand over after the next scan. The click sends the count the page showed,
 and when the list has changed since (a tab left open across a rescan) the inbox refuses it and asks for a reload.
@@ -212,9 +223,11 @@ and with none it is *Not scanned* for this source, never *No known vulnerabiliti
 short, not osv-scanner's JSON or over 16 MiB counts as no source. A package entry of another shape than
 osv-scanner 2.7.1 writes (a key it does not know, from another version, say) makes the project a *Partial scan*,
 never *No known vulnerabilities*; the keys 2.7.1 adds beside the package (a dev dependency's group, licenses) are
-fine. Its findings join Uptick's by package, version and ecosystem (the advisory ids of both, the
+fine. Tried offline with 2.7.1 on npm, `requirements.txt`, `poetry.lock` and `pom.xml` files, a git dependency,
+and a git repository (with `--include-git-root`), whose package has only a commit, no name or version: such a
+finding shows, and is never handed over. Its findings join Uptick's by package, version and ecosystem (the advisory ids of both, the
 higher level, Uptick's fixed version when it has one), the row lists them worst first, and it shows the most
-telling state of the two. A finding whose advisories are fixed in different versions says *a fix for each
+telling state of the two, with each source's own line inside. A finding whose advisories are fixed in different versions says *a fix for each
 advisory*, and so does its request; **Hand all fixable over** takes it too. An advisory with a version range left
 open (a branch with no fixed version yet) counts as having no fix, as the inbox does not compare versions to see
 which branch is installed. **Scan this project** stays Uptick's: it shows only when Uptick's file is there.

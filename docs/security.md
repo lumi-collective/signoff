@@ -112,9 +112,11 @@ For its Vulnerabilities section the inbox reads Uptick's `vulns.json` and scan l
 Signoff home: the output of an osv-scanner scan you ran yourself ([how](inbox.md#the-inbox)). It never runs a
 scan and sends nothing anywhere. Text from those files reaches the page as one line each, capped, with the
 project's folder and your home shown by name, and never a lockfile's path. A finding you hand over reaches the
-project's agent only as its package and version, level, advisory ids and fixed version, each checked against a
-plain pattern (or the inbox's own words that a fixed version exists for each advisory); never an advisory's
-summary, details or any other free text from either file. Whoever can write the Signoff home can put findings
+project's agent only as its package and version, level, advisory ids and fixed version, and its ecosystem when the
+list shows the same package and version in two, each checked against a plain pattern (or the inbox's own words
+that a fixed version exists for each advisory); never an advisory's
+summary, details or any other free text from either file. A package named by a URL or a local path is shown and
+never handed over. Whoever can write the Signoff home can put findings
 there, as they can put requests.
 
 **Leaves your machine:** nothing from Signoff. The server listens on `127.0.0.1` only. The page loads no fonts,

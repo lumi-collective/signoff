@@ -935,7 +935,8 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
       numValue: '{t}, value', elsewhere: 'Decided elsewhere',
       stakes_high: 'High stakes', stakes_medium: 'Medium stakes', stakes_low: 'Low stakes', highShort: 'high stakes',
       irreversible: 'Cannot be undone', undoShort: 'irreversible', settledEarlier: 'Settled earlier',
-      change: 'Change', fold: 'Hide options', handAll: 'Hand all fixable over ({n})',
+      change: 'Change', fold: 'Hide options', handAll: 'Hand all fixable over ({n})', osv_off: 'Not scanned',
+      osvScanStale: 'osv-scanner\'s file is more than two days old (or dated ahead of now): its findings are left out until it is written again.',
       lnAdd: 'added', lnDel: 'removed', lnOld: 'Old line', lnNew: 'New line', lnNum: 'Line', lnSign: 'Change', lnText: 'Text',
       lnNote: 'Note on line {n} of {f}', lnFull: 'At most 50 line notes on an item.', lnStale: 'This file changed since. Line {n} said:',
       lnHint: 'Press a line number to add a note.'},
@@ -2124,6 +2125,8 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
       if (o.status === 'partial') return L.osv_partial + (o.count ? ': ' + found : '');
       return o.status === 'found' ? found : L['osv_' + o.status] || L.osv_stale;
     }
+    // the sources' own names; osv-scanner's hyphen non-breaking, so a narrow line never splits the name
+    function src(a) { return a.join(' + ').replace('uptick', 'Uptick').replace('-', String.fromCharCode(8209)); }
     function hander(box, body, label, reqs) {  // one finding's and all fixable's: the same pills, post and note
       var sent = el('div', 'ib-vuln-sent'), status = el('p', 'ib-msg-status'), hand = body ? el('button', '', label) : null;
       if (hand) sent.append(hand);
@@ -2148,15 +2151,16 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
     function finding(p, f, box) {
       var li = el('li', 'ib-vuln'), head = el('div', 'ib-vuln-head');
       head.append(el('strong', 'ib-vuln-name', f.name + ' ' + f.version), el('span', 'pill lvl-' + f.level, f.level));
-      var facts = (f.ecosystem ? [f.ecosystem] : []).concat(f.ids, [f.fixed ? fmt(L.fixedIn, {v: f.fixed}) : f.fixable ? L.fixEach : L.noFix]);
+      var facts = (f.ecosystem ? [f.ecosystem] : []).concat(f.ids, [f.fixed ? fmt(L.fixedIn, {v: f.fixed}) : f.fixable ? L.fixEach : L.noFix, src(f.from)]);
       li.append(head, el('p', 'ib-vuln-facts', facts.join(' · ')));
-      hander(li, f.ref ? {kind: 'vuln', project: p.id, ref: f.ref} : null, L.hand, f.requests);
+      // eco: its plain ecosystem, else null (left out of the JSON), so a ref listed in two goes to this one
+      hander(li, f.ref ? {kind: 'vuln', project: p.id, ref: f.ref, ecosystem: f.eco || undefined} : null, L.hand, f.requests);
       box.append(li);
     }
     var scanned = projects.filter(function (p) { return p.osv; });
     var findings = scanned.reduce(function (n, p) { return n + p.osv.findings.length; }, 0);
     if (scanned.length) {
-      s = section(L.osvHead, findings, fmt(L.osvNote, {s: scanned[0].osv.from.join(' + ').replace('uptick', 'Uptick')}), '', 'osv');
+      s = section(L.osvHead, findings, fmt(L.osvNote, {s: src(scanned[0].osv.from)}), '', 'osv');
       // Projects off the scan list share one row, last; every other state keeps its own row.
       var off = scanned.filter(function (p) { return p.osv.status === 'off'; });
       scanned.filter(function (p) { return p.osv.status !== 'off'; }).forEach(function (p) {
@@ -2164,11 +2168,15 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
         row(s, p, {kind: L.osv, cls: worry ? 'k-w' : 'k-t', glyph: worry ? '▲' : '△', title: osvLabel(o),
                    find: function () {
                      return [o.hint].concat(o.findings.map(function (f) {
-                       return [f.name, f.version, f.ecosystem, f.level, f.fixed].concat(f.ids).join(' ');
+                       return [f.name, f.version, f.ecosystem, f.level, f.fixed].concat(f.ids, f.from).join(' ');
                      }));
                    }, when: o.at ? fmt(L.scanned, {t: since(o.at)}) : '', fill: function (box) {
-          var note = {stale: o.scan && L.osvStaleNote, partial: L.osvPartialNote}[o.status];
-          if (note) box.append(el('p', 'ib-vuln-note', note));
+          o.by_source.forEach(function (b) {  // each source's own state, count and worst; a stale note names only the old source
+            b.error = o.error;  // Uptick's: the only source with one
+            box.append(el('p', 'ib-vuln-facts ib-src', src([b.source]) + ': ' + osvLabel(b) + (b.at ? ' · ' + fmt(L.scanned, {t: since(b.at)}) : '')));
+            if (b.status === 'stale') box.append(el('p', 'ib-vuln-note', b.source === 'uptick' ? L.osvStaleNote : L.osvScanStale));
+          });
+          if (o.status === 'partial') box.append(el('p', 'ib-vuln-note', L.osvPartialNote));
           if (o.hint) box.append(el('p', 'ib-vuln-note', o.hint));
           if (o.fixable) hander(box.appendChild(el('div', 'ib-vuln-all')), {kind: 'vulns', project: p.id,
             count: o.fixable}, fmt(L.handAll, {n: o.fixable}), o.requests);  // what it shows, or 409
