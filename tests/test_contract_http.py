@@ -1127,6 +1127,39 @@ class Inbox(unittest.TestCase):
         before = self.requests()
         refused(404)  # a closed pair writes nothing more
 
+    def test_hand_over_a_finding_only_osv_scanner_lists(self):
+        """osv-scanner's JSON in the home: its finding goes to the agent as Uptick's do, under today's rules."""
+        path = os.path.join(self.home, "osv-scanner.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"results": [{"source": {"path": os.path.join(self.project, "requirements.txt")}, "packages": [{
+                "package": {"name": "jinja2", "version": "2.10.0", "ecosystem": "PyPI"},
+                "groups": [{"ids": ["GHSA-462w-v97r-4m45"], "aliases": ["CVE-2019-10906"], "max_severity": "8.6"}],
+                "vulnerabilities": [{"id": "GHSA-462w-v97r-4m45", "affected": [{
+                    "package": {"name": "jinja2", "ecosystem": "PyPI"},
+                    "ranges": [{"type": "ECOSYSTEM", "events": [{"introduced": "0"}, {"fixed": "2.10.1"}]}]}]}]}]}]}, f)
+
+        def half_written():  # no source again for the other tests: a file cut short counts as none
+            with open(path, "w", encoding="utf-8") as f:
+                f.write('{"results": [')
+        self.addCleanup(half_written)
+        start, page = self.open()
+        vuln = {"kind": "vuln", "project": self.pid, "ref": "jinja2@2.10.0"}
+        for status, headers in ((403, {"Host": "evil.example"}), (403, {"Origin": "http://evil.example"}),
+                                (403, {"Sec-Fetch-Site": "cross-site"}), (415, {"Content-Type": "text/plain"})):
+            before = self.requests()
+            resp, data = self.save(page, vuln, headers, "request")
+            self.assertEqual((resp.status, self.requests()), (status, before), (headers, data))
+        resp, data = self.save(page, dict(vuln, ref="jinja2@2.10.1"), path="request")
+        self.assertEqual(resp.status, 409, data)
+        resp, data = self.save(page, vuln, path="request")
+        self.assertEqual(resp.status, 200, data)
+        with open(os.path.join(self.home, "requests", self.pid, json.loads(data)["id"] + ".json"),
+                  encoding="utf-8") as f:
+            saved = json.load(f)
+        self.assertEqual((saved["kind"], saved["ref"], saved["text"]), (
+            "vuln", "jinja2@2.10.0", "Please fix this vulnerability in this project: high severity "
+            "(GHSA-462w-v97r-4m45, CVE-2019-10906); fixed in 2.10.1."))
+
     def scan_list(self):
         with open(self.scan_file, "rb") as f:
             return f.read()

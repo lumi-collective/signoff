@@ -151,8 +151,9 @@ you can type a message to the project's agent; the agent gets it as your words. 
 the agent, in a fixed line the inbox writes, to take its waiting mark off and keep it open. An item and the items
 indented under it show as one row with its steps counted, and an item that names a decisions round open in the
 inbox links to it. When Uptick's vulnerability
-scan is on, the inbox also shows each project's known vulnerabilities from Uptick's scan file, can hand a finding
-to the project's agent, and offers Scan this project for a project Uptick does not scan yet.
+scan is on, or you keep osv-scanner's output in the inbox's folder, the inbox also shows each project's known
+vulnerabilities from those files and can hand a finding to the project's agent; beside Uptick's scan file it
+offers Scan this project for a project Uptick does not scan yet.
 
 ## What it reads and writes
 
@@ -185,7 +186,8 @@ over is the same kind of file (the package and version, and a line the inbox wri
 Later (the item's first line and the inbox's fixed line), and so is the note the inbox writes once every round of a
 run that had ended, or that stopped before it handed the answers over, is finished (the topic folder, the round names and the inbox's fixed text, none of your answers). The inbox
 reads Uptick's scan file (vulns.json in Uptick's cache folder) and Uptick's scan list (scan-repos.json in
-Uptick's config folder). Only when you click Scan this project does it write that list: it adds the project's
+Uptick's config folder), and osv-scanner.json in its own folder, the JSON of an osv-scanner scan you ran there
+yourself. Only when you click Scan this project does it write that list: it adds the project's
 folder path and keeps everything else in it. The mod writes nothing.
 Signoff deletes nothing, except a socket file a stopped inbox left in that folder.
 
@@ -195,6 +197,7 @@ Nothing from Signoff itself. The page loads nothing from the internet, Signoff s
 the server answers only on 127.0.0.1. A live mockup is the agent's own HTML in a sandboxed frame; its
 script could still send data out over WebRTC, so the skill tells the agent to put nothing secret in one.
 A project you add with Scan this project is scanned by Uptick, not Signoff: Uptick's next check sends the package
-names and versions in its lockfiles to osv.dev.
+names and versions in its lockfiles to osv.dev. Signoff never runs osv-scanner either; the scan you run sends
+what osv-scanner sends.
 
 Full documentation, the file format and source: https://github.com/lumi-collective/signoff

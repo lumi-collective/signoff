@@ -2415,9 +2415,9 @@ HANDOVER_HEAD = ("Signoff inbox: the user left the messages below for this proje
                  "not handled yet. Tell the user about them in your first reply, and handle each once the user says "
                  "so.")
 HEX16 = re.compile(r"[0-9a-f]{16}")  # a project id, a request id
-OSV_FRESH = 2 * 86400  # Uptick's scan of a project counts as recent this long without its interval (AD-12)
+OSV_FRESH = 2 * 86400  # Uptick's scan without its interval, and osv-scanner's file, count as recent this long
 OSV_FRESH_MAX = 30 * 86400  # at most this, however long Uptick's interval says
-MAX_VULNS = 16 * 1024 * 1024  # Uptick's vulns.json, with every scanned target's findings
+MAX_VULNS = 16 * 1024 * 1024  # Uptick's vulns.json, with every scanned target's findings; osv-scanner's JSON too
 MAX_SCAN_LIST = 1024 * 1024  # Uptick's scan-repos.json
 MAX_FINDINGS = 50  # per project on the list page
 MAX_ROW_ITEMS = 60  # item titles a round's row carries for the list's search
@@ -2427,6 +2427,10 @@ VULN_LEVELS = ("unknown", "low", "medium", "high", "critical")
 _PACKAGE = re.compile(r"[A-Za-z0-9@/._+~:-]{1,214}")
 _VERSION = re.compile(r"[A-Za-z0-9._+~:-]{1,64}")
 _ADVISORY = re.compile(r"[A-Za-z0-9._:-]{1,64}")
+# osv-scanner's advisory group score (max_severity, CVSS as text), and the GHSA words for a group without one.
+_CVSS = re.compile(r"[0-9]{1,2}(\.[0-9]{1,3})?")
+_GHSA_LEVELS = {"LOW": "low", "MODERATE": "medium", "HIGH": "high", "CRITICAL": "critical"}
+FIX_EACH = "a fixed version exists for each advisory"  # a finding whose advisories are fixed in different versions
 
 
 def _read_file(path, limit):
@@ -2501,19 +2505,136 @@ def _vuln_text(d):
     fixed = d.get("fixed") if isinstance(d.get("fixed"), str) and _VERSION.fullmatch(d["fixed"]) else None
     return "Please fix this vulnerability in this project%s%s; %s." % (
         ": %s severity" % level if level else "", " (%s)" % ", ".join(ids) if ids else "",
-        "fixed in %s" % fixed if fixed else "no fixed version is known yet")
+        "fixed in %s" % fixed if fixed else FIX_EACH if d.get("fixable") is True else "no fixed version is known yet")
 
 
 def _vulns_text(fixable):
     """What a vulns request says, and how many findings it names: each fixable finding's checked ref and fixed
-    version, in the list's order, as many as fit in MAX_REQUEST_TEXT, then how many more. One pair always fits: it
-    is at most 346 characters."""
+    version (None: FIX_EACH), in the list's order, as many as fit in MAX_REQUEST_TEXT, then how many more. One pair
+    always fits: it is at most 346 characters."""
     for n in range(len(fixable), 0, -1):
         rest = len(fixable) - n
         text = "Please fix these vulnerabilities in this project, each by updating to its fixed version: %s%s." % (
-            ", ".join("%s → %s" % f for f in fixable[:n]), ", and %d more" % rest if rest else "")
+            ", ".join("%s → %s" % f if f[1] else "%s (%s)" % (f[0], FIX_EACH) for f in fixable[:n]),
+            ", and %d more" % rest if rest else "")
         if len(text) <= MAX_REQUEST_TEXT:
             return text, n
+
+
+def _dicts(d, key):
+    """The dicts in d[key] when that is a list: any level of osv-scanner's JSON may hold anything."""
+    v = d.get(key) if isinstance(d, dict) else None
+    return [x for x in v if isinstance(x, dict)] if isinstance(v, list) else []
+
+
+def _strs(d, key):
+    v = d.get(key) if isinstance(d, dict) else None
+    return [x for x in v if isinstance(x, str)] if isinstance(v, list) else []
+
+
+def _worst(levels):
+    return max((v for v in levels if v in VULN_LEVELS), key=VULN_LEVELS.index, default=None)
+
+
+def _real(path):
+    try:
+        os.fsencode(path)  # a lone surrogate no file system takes: 3.9's realpath lets it through
+        return os.path.realpath(path)
+    except (ValueError, OSError, RecursionError):  # that, a NUL, or a link chain 3.9's realpath recurses down
+        return None
+
+
+def _cvss_level(score):
+    """osv-scanner's max_severity, a CVSS score as text ("7.5"), as a level, or None for no usable score."""
+    x = float(score) if isinstance(score, str) and _CVSS.fullmatch(score) else 0
+    return None if not 0 < x <= 10 else "critical" if x >= 9 else "high" if x >= 7 else "medium" if x >= 4 else "low"
+
+
+def _osv_finding(e):
+    """One package of osv-scanner's JSON: (a finding in Uptick's shape, or None for one without advisories;
+    whether the entry is of another shape than osv-scanner 2.7.1 writes, which fails closed: a partial scan, never
+    clean). Its level is its worst group's (the CVSS score, else the GHSA words of the group's own advisories), its
+    ids the groups' ids and aliases (plain ones, at most 5). fixed is the one plain version every advisory's ranges
+    agree on, from its affected entry for this very package and a version range only (a GIT range's fixed is a
+    commit); fixable, that every advisory has such a version."""
+    if not isinstance(e, dict):
+        return None, True
+    pkg = e.get("package") if isinstance(e.get("package"), dict) else {}
+    name, version, eco = (pkg.get(k) for k in ("name", "version", "ecosystem"))
+    groups, vulns = _dicts(e, "groups"), _dicts(e, "vulnerabilities")
+    # 2.7.1 writes a clean package as {package} and one with advisories as {package, groups, vulnerabilities},
+    # beside keys the inbox does not read: dependency_groups (a dev dependency), licenses, license_violations.
+    keys = set(e) - {"dependency_groups", "licenses", "license_violations"}
+    bad = not (keys in ({"package"}, {"package", "groups", "vulnerabilities"})
+               and all(isinstance(v, str) for v in (name, version, eco))
+               and all(isinstance(e[k], list) and e[k] and len(_dicts(e, k)) == len(e[k])
+                       for k in keys & {"groups", "vulnerabilities"}))
+    if not groups and not vulns:
+        return None, bad  # a clean package, as --all-packages lists it
+
+    def word(v):
+        w = v.get("database_specific").get("severity") if isinstance(v.get("database_specific"), dict) else None
+        return _GHSA_LEVELS.get(w) if isinstance(w, str) else None
+    words = {v["id"]: word(v) for v in vulns if isinstance(v.get("id"), str)}
+    level = _worst([_cvss_level(g.get("max_severity")) or _worst(words.get(i) for i in _strs(g, "ids"))
+                    for g in groups] if groups else [word(v) for v in vulns]) or "unknown"
+    ids = []
+    for i in (i for g in groups for i in _strs(g, "ids") + _strs(g, "aliases")):
+        if len(ids) == 5:
+            break  # a list a million long costs no more than five
+        if _ADVISORY.fullmatch(i) and i not in ids:
+            ids.append(i)
+    mine = isinstance(name, str) and isinstance(eco, str)
+
+    def fixed_in(v):
+        # Without comparing versions the inbox cannot tell which range holds the installed one, so an advisory has
+        # a fix only when in each of its ranges every introduced is followed by a plain fixed (none left open, no
+        # last_affected or limit): else "fixed in" could name another branch's version, a downgrade.
+        ranges = [r for a in _dicts(v, "affected") if mine and isinstance(a.get("package"), dict)
+                  and a["package"].get("name") == name and a["package"].get("ecosystem") == eco
+                  for r in _dicts(a, "ranges") if r.get("type") in ("ECOSYSTEM", "SEMVER")]
+        found, closed = set(), bool(ranges)
+        for r in ranges:
+            opened = False
+            for ev in _dicts(r, "events"):
+                if "last_affected" in ev or "limit" in ev:
+                    closed = False
+                elif "introduced" in ev:
+                    opened = True
+                elif isinstance(ev.get("fixed"), str) and _VERSION.fullmatch(ev["fixed"]):
+                    found.add(ev["fixed"])
+                    opened = False
+            closed = closed and not opened
+        return found if closed else set()
+    fixes = [fixed_in(v) for v in vulns]
+    fixable, one = bool(fixes) and all(fixes), set().union(*fixes)
+    return {"name": name, "version": version, "ecosystem": eco, "level": level, "ids": ids,
+            "fixed": one.pop() if fixable and len(one) == 1 else None, "fixable": fixable,
+            "from": ["osv-scanner"]}, bad
+
+
+def _osv_scanner(raw):
+    """osv-scanner's JSON (scan source --format json --all-packages) as [(the real path of a lockfile it scanned,
+    that file's packages with advisories as findings, whether an entry of it is of another shape than 2.7.1's)], or
+    None when it is no such JSON (missing, cut short, too large). A path that is not absolute, or the file system
+    cannot take, matches no project."""
+    data = _json_object(raw)
+    if not data or not isinstance(data.get("results"), list):
+        return None
+    found = []
+    for r in _dicts(data, "results"):
+        path = r.get("source").get("path") if isinstance(r.get("source"), dict) else None
+        path = _real(path) if isinstance(path, str) and os.path.isabs(path) and "\0" not in path else None
+        if path:
+            packages = r.get("packages")
+            read = [_osv_finding(e) for e in packages] if isinstance(packages, list) else [(None, True)]
+            found.append((path, [f for f, _ in read if f], any(bad for _, bad in read)))
+    return found
+
+
+def _under(path, root):
+    """Whether a real path is root or under it, by whole names (/project-other is not under /project)."""
+    return os.path.commonpath([path, root]) == root
 
 
 def _finding_ref(v):
@@ -2941,6 +3062,7 @@ class InboxServer(_Server):
             self.number = secrets.randbelow(MAX_NUMBER - 1) + 1
             self.app_target = None  # (a rows reply's numbers, monotonic time) the app's next app_open takes, once
             self.uptick_cache = {}  # path -> (stat key, what it parsed to)
+            self.lockfiles = (None, [], {})  # osv-scanner's parsed file, the roots, the lockfiles by owner (_lockfiles)
             self.done_cache = {}  # answers path -> (stat key, whether it says done), for the orphan look
             self.round_locks = _RoundLocks()
             self.control = _control_socket(home / "inbox.sock")
@@ -3399,7 +3521,8 @@ class InboxServer(_Server):
         return cached[1]
 
     def _uptick(self, path, limit, parse):
-        """One of Uptick's files, parsed, read again only when it changed (the inbox looks every STATE_EVERY s)."""
+        """One of Uptick's files or osv-scanner's, parsed, read again only when it changed (the inbox looks every
+        STATE_EVERY s)."""
         try:
             st = os.stat(str(path))
         except OSError:
@@ -3410,16 +3533,33 @@ class InboxServer(_Server):
             cached = self.uptick_cache[path] = (key, parse(_read_file(path, limit)))
         return cached[1]
 
-    def _osv(self, p):
-        """The project's vulnerability state from Uptick's files, read only (AD-12), or None when Uptick keeps no
-        vulns.json (its scan is off): (the page's view, ref -> the text a vuln request carries, the fixable findings'
-        (ref, fixed) pairs a vulns request names, each ref once)."""
+    def _lockfiles(self, projects):
+        """osv-scanner's JSON in the home (None when there is none) and its lockfiles' findings by the real root of
+        the known project that holds each, the longest such root: a nested project's lockfile is never its parent's.
+        Worked out again only when the file or a project's real root changed, as the inbox looks every STATE_EVERY s."""
+        scanned = self._uptick(self.home / "osv-scanner.json", MAX_VULNS, _osv_scanner)
+        roots = sorted({r for r in map(_real, (q["root"] for q in projects.values())) if r}, key=len,
+                       reverse=True) if scanned else []
+        if self.lockfiles[0] is not scanned or self.lockfiles[1] != roots:
+            owned = {}
+            for path, fs, bad in scanned or ():
+                owner = next((r for r in roots if _under(path, r)), None)
+                if owner:
+                    owned.setdefault(owner, []).append((fs, bad))
+            self.lockfiles = (scanned, roots, owned)
+        return scanned, self.lockfiles[2]
+
+    def _osv(self, p, lockfiles):
+        """The project's vulnerability state from Uptick's files (AD-12) and osv-scanner's JSON in the home (AD-34),
+        read only, or None when neither is there: (the page's view, ref -> the text a vuln request carries, the
+        fixable findings' (ref, fixed or None) pairs a vulns request names, each ref once). lockfiles: _lockfiles'."""
         found = uptick_file("XDG_CACHE_HOME", ".cache", "vulns.json")
         data = self._uptick(found, MAX_VULNS, _json_object) if found else None
         repos = data.get("repos") if data else None
-        if not isinstance(repos, dict) or not os.path.isdir(p["root"]):  # a folder gone is no project to scan
+        scanned, owned = lockfiles
+        if not isinstance(repos, dict) and scanned is None or not os.path.isdir(p["root"]):  # gone: nothing to scan
             return None
-        listed = uptick_file("XDG_CONFIG_HOME", ".config", "scan-repos.json")
+        listed = uptick_file("XDG_CONFIG_HOME", ".config", "scan-repos.json") if isinstance(repos, dict) else None
         root, now, home = p["root"], time.time(), os.path.expanduser("~")
 
         def shown(v, limit):  # one line, capped, and the project's and the user's folders by name only
@@ -3432,7 +3572,7 @@ class InboxServer(_Server):
         e = e if isinstance(e, dict) else {}
         at = _seconds(e.get("at"))
         # Recent: within two of Uptick's runs (interval.ok, the target's own first), so one missed run is no gap.
-        ok = next((i["ok"] for i in (e.get("interval"), data.get("interval")) if isinstance(i, dict)
+        ok = next((i["ok"] for i in (e.get("interval"), (data or {}).get("interval")) if isinstance(i, dict)
                    and type(i.get("ok")) is int and i["ok"] > 0), None)
         window = min(2 * ok, OSV_FRESH_MAX) if ok else OSV_FRESH
         # A time ahead of now (a clock set back, milliseconds) is no recent scan either: never "no known" from it.
@@ -3442,28 +3582,64 @@ class InboxServer(_Server):
                   else "stale" if not fresh
                   else "partial" if e.get("gaps")
                   else "found" if _seconds(e.get("count")) else "clean")
-        findings, texts, fixable = [], {}, []
+        hits = owned.get(_real(root), [])
+        scanned_at = (_mtime(self.home / "osv-scanner.json") or 0) / 1e9 if hits else 0  # the JSON has no time
+        recent = scanned_at > 0 and 0 <= now - scanned_at <= OSV_FRESH
+        # A lockfile entry of another shape fails closed, as Uptick's gaps do: a partial scan, never clean.
+        theirs = ("off" if not hits else "stale" if not recent else "partial" if any(bad for _, bad in hits)
+                  else "found" if any(fs for fs, _ in hits) else "clean")
+        # An old osv-scanner file leaves a project Uptick does not scan off, so it stays in Not scanned with its Scan
+        # button; the page's stale note, Uptick's words, then shows only where Uptick's own scan is old.
+        if theirs == "stale" and status == "off" and isinstance(repos, dict):
+            theirs = "off"
+        status = max(status, theirs, key=("off", "stale", "clean", "error", "partial", "found").index)  # most telling
+        # Uptick's findings as they are (a ref twice stays twice); osv-scanner's merge into the first of their ref and
+        # ecosystem (an npm fix never lands on a PyPI package of that name and version).
         details = e.get("details") if fresh and isinstance(e.get("details"), list) else []
-        for d in [d for d in details if isinstance(d, dict)][:MAX_FINDINGS]:
+        extra = [f for fs, _ in hits for f in fs] if recent else []
+        merged, first = [], {}
+        for d in [dict(d, fixable=False, **{"from": ["uptick"]}) for d in details if isinstance(d, dict)][
+                :MAX_FINDINGS] + extra:
             name, version = d.get("name"), d.get("version")
             ref = ("%s@%s" % (name, version) if isinstance(name, str) and isinstance(version, str)
                    and _PACKAGE.fullmatch(name) and _VERSION.fullmatch(version) else None)
-            if ref and ref not in texts:
-                texts[ref] = _vuln_text(d)
-                if isinstance(d.get("fixed"), str) and _VERSION.fullmatch(d["fixed"]):
-                    fixable.append((ref, d["fixed"]))
-            findings.append({"ref": ref, "name": shown(name, 200), "version": shown(version, 64),
+            key = (ref, d.get("ecosystem") if isinstance(d.get("ecosystem"), str) else None)
+            m = first.get(key) if ref and d["from"] == ["osv-scanner"] else None
+            if m is None:
+                merged.append(dict(d, ref=ref))  # a copy: osv-scanner's findings are cached
+                first.setdefault(key, merged[-1])
+                continue
+            ids = _strs(m, "ids")
+            m.update(ids=(ids + [i for i in d["ids"] if i not in ids])[:5], level=_worst([m.get("level"), d["level"]]),
+                     fixable=m["fixable"] or d["fixable"], **{"from": m["from"] + [s for s in d["from"]
+                                                                                    if s not in m["from"]]})
+            if d["fixed"] and not (isinstance(m.get("fixed"), str) and _VERSION.fullmatch(m["fixed"])):
+                m["fixed"] = d["fixed"]  # Uptick's fixed version when it has one
+        if extra:  # osv-scanner's come in file order: worst first, so the cut never drops the worst (Uptick's are)
+            merged.sort(key=lambda d: -VULN_LEVELS.index(d["level"] if d.get("level") in VULN_LEVELS else "unknown"))
+        findings, texts, fixable = [], {}, []
+        for d in merged[:MAX_FINDINGS]:
+            fixed = d["fixed"] if isinstance(d.get("fixed"), str) and _VERSION.fullmatch(d["fixed"]) else None
+            d["fixable"] = bool(fixed) or d["fixable"]
+            if d["ref"] and d["ref"] not in texts:
+                texts[d["ref"]] = _vuln_text(d)
+                if d["fixable"]:
+                    fixable.append((d["ref"], fixed))
+            findings.append({"ref": d["ref"], "name": shown(d.get("name"), 200), "version": shown(d.get("version"), 64),
                              "ecosystem": shown(d.get("ecosystem"), 40),
                              "level": d.get("level") if d.get("level") in VULN_LEVELS else "unknown",
-                             "ids": [shown(i, 64) for i in (d.get("ids") if isinstance(d.get("ids"), list) else [])
-                                     if isinstance(i, str)][:5],
-                             "fixed": shown(d.get("fixed"), 64)})
-        level = e.get("level")
+                             "ids": [shown(i, 64) for i in _strs(d, "ids")][:5],
+                             "fixed": shown(d.get("fixed"), 64), "fixable": d["fixable"], "from": d["from"]})
+        stamps = [t for t in (at, scanned_at) if 0 < t <= now]
         return {"status": status,
-                "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(at)) if 0 < at <= now else None,
-                "count": int(_seconds(e.get("count"))), "level": level if level in VULN_LEVELS else "",
-                "error": error, "hint": shown(e.get("hint"), 200), "findings": findings,
-                "fixable": len(fixable)}, texts, fixable
+                "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(max(stamps))) if stamps else None,
+                "count": max(int(_seconds(e.get("count"))) if fresh else 0, len(merged)),
+                "level": _worst(([e.get("level")] if fresh else []) + [d.get("level") for d in merged]) or "",
+                "error": error, "hint": shown(e.get("hint"), 200), "findings": findings, "fixable": len(fixable),
+                # Scan this project adds to Uptick's list: only beside Uptick's file. from: the sources there.
+                "scan": isinstance(repos, dict),
+                "from": [s for s, there in (("uptick", isinstance(repos, dict)), ("osv-scanner", scanned is not None))
+                         if there]}, texts, fixable
 
     def add_scan(self, raw):
         """Scan this project: add its folder to Uptick's scan-repos.json on the user's click (round-08). Every other
@@ -3570,16 +3746,17 @@ class InboxServer(_Server):
         if kind == "todo" and (not text or len(text) > MAX_REQUEST_TEXT or not _typed_line(text)):
             return 400, b"bad request: a message is one line of 1 to 1000 characters\n"
         with self.scan_lock:  # _projects, the todo cache and Uptick's files, as a look uses them
-            p = self._projects().get(body["project"]) if HEX16.fullmatch(body["project"]) else None
+            known = self._projects()
+            p = known.get(body["project"]) if HEX16.fullmatch(body["project"]) else None
             if p is None:
                 return 404, b"no such project\n"
             ref, named = body.get("ref", "vulns"), None  # a vulns request names its findings in named
             if kind == "vuln":
-                text = (self._osv(p) or ({}, {}, []))[1].get(body["ref"])
+                text = (self._osv(p, self._lockfiles(known)) or ({}, {}, []))[1].get(body["ref"])
                 if text is None:
                     return 409, b"that finding is no longer listed; reload the page\n"
             elif kind == "vulns":
-                fixable = (self._osv(p) or ({}, {}, []))[2]
+                fixable = (self._osv(p, self._lockfiles(known)) or ({}, {}, []))[2]
                 if not fixable:
                     return 409, b"no fixable finding is listed; reload the page\n"
                 if len(fixable) != body["count"]:  # a tab left open across a rescan: not what the user saw
@@ -3758,8 +3935,9 @@ class InboxServer(_Server):
                         # What a todo item may name to link here: its topic folder and file, in its own project.
                         opened.setdefault((g.entry.get("project"), r.path.parent.name + "/" + r.path.name),
                                           "run/%d/" % n)
+            lockfiles = self._lockfiles(projects)
             for pid, p in sorted(projects.items(), key=lambda kv: kv[1]["name"].lower()):
-                (path, file, bad), osv = project_todo(p), self._osv(p)
+                (path, file, bad), osv = project_todo(p), self._osv(p, lockfiles)
                 if file is None and osv is None:
                     continue
                 todos, error = self._todos(path) if path else ([], bad)

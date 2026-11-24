@@ -74,7 +74,10 @@ Instructions for coding agents working on Signoff. The README says what it does 
 - `tests/`: unittest suites. `support.py` makes a temporary topic folder (one file, or `round-NN.json`
   rounds) and runs a server on a thread. It points `SIGNOFF_INBOX_HOME` at a missing folder for every test and
   child process, so a run is the plain run unless a test passes its own home; `XDG_CACHE_HOME` and
-  `XDG_CONFIG_HOME` likewise, so no test reads or writes the user's Uptick files. `line_rule.json` pins how a
+  `XDG_CONFIG_HOME` likewise, so no test reads or writes the user's Uptick files. `osv_scanner.json` is a real
+  osv-scanner 2.7.1 output (`--all-packages`) on synthetic lockfiles: the results and package entries as 2.7.1
+  writes them (a `purl`, a dev dependency's `dependency_groups`), the advisories cut to the keys the inbox reads
+  (no summary, details or other free text), its paths a `{root}` the test fills in. `line_rule.json` pins how a
   line note counts an attachment's lines (`attachment_lines`), read by the server's tests; the page's count must match it. `test_contract_http.py` checks
   the security and run contract against the command line as a separate process, over HTTP, its exit code and
   stdout only; `SIGNOFF_CONTRACT_CMD` (POSIX shell words: forward slashes in a Windows path) swaps in another
@@ -538,12 +541,13 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   that line (the page then no longer shows the request on the item; the agent still has the text), and two open
   items with the same first line share their requests. The same route takes exactly `{kind: "vuln", project,
   ref}` for a finding: `ref` (`<name>@<version>`) must be a finding the list shows now (409 otherwise), and the
-  text is the server's own, built from the finding's level, advisory ids and fixed version, each checked against a
-  plain pattern; no free text from Uptick's file goes into it. It takes exactly `{kind: "vulns", project,
-  count}` for all of a project's fixable findings (a finding the list shows now with a `ref` and a `fixed` matching
-  the version pattern; the first listing of a `ref` counts; 409 with none), `count` a whole number, the number of
+  text is the server's own, built from the finding's level, advisory ids and fixed version (for one `fixable`
+  without a `fixed`, `FIX_EACH`), each checked against a plain pattern; no free text from Uptick's or osv-scanner's
+  file goes into it. It takes exactly `{kind: "vulns", project,
+  count}` for all of a project's fixable findings (a finding the list shows now with a `ref`, and a `fixed` matching
+  the version pattern or `fixable`; the first listing of a `ref` counts; 409 with none), `count` a whole number, the number of
   them the page showed (409, writing nothing, when the number now differs: a tab left open across a rescan): `ref`
-  the fixed `vulns`, the text the server's own, each such finding as `<ref> → <fixed>` in the list's order, as many
+  the fixed `vulns`, the text the server's own, each such finding as `<ref> → <fixed>` (or `<ref> (<FIX_EACH>)`) in the list's order, as many
   as fit in `MAX_REQUEST_TEXT` with the frame, then how many more; and `refs`, the `ref` of each finding the text
   names, never one counted in "more" (those stay listed, to hand over again). It takes exactly `{kind: "later", project, ref}`
   for Later on a waiting row: `ref` must be an open item marked waiting now (409 otherwise), and the text is the
@@ -576,18 +580,44 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   monitor), running when it is written, or at a later SessionStart hand-over on such a plugin). The list page shows each item's, finding's and project's (`vulns`) recent
   requests (text, time, done) and never an id, a path or `refs`. The agent marks one handled with
   `signoff inbox done <id>`, which writes an empty `<id>.done` beside it; nothing else writes there.
-- **The OSV section reads Uptick's files and writes one only on a click.** Uptick's `vulns.json`
+- **The OSV section reads Uptick's files and osv-scanner's, and writes one only on a click.** Uptick's `vulns.json`
   (`$XDG_CACHE_HOME`, else `~/.cache`, then `uptick/`; at most `MAX_VULNS` bytes) and `scan-repos.json`
   (`$XDG_CONFIG_HOME`, else `~/.config`, then `uptick/`), found as Uptick finds them; a relative base counts as
-  absent. Without a readable `vulns.json`, or for a project whose folder is gone, there is no section (and a scan
-  of that project gets 404). A project matches an entry and a list line by
+  absent. Without a readable `vulns.json` or `osv-scanner.json`, or for a project whose folder is gone, there is no
+  section; Scan this project shows only beside a readable `vulns.json` (`scan` in the page data), and a scan of a
+  project whose folder is gone gets 404. A project matches an entry and a list line by
   `os.path.samefile`. Its window: twice Uptick's `interval.ok` (a positive integer of seconds, the entry's own before
   the file's top-level one; at most `OSV_FRESH_MAX`), else `OSV_FRESH`. Its state: not on the list `off`; no entry
   `stale`; an `error` tried within the window `error`; `at` (Unix seconds) older than the window, 0 or ahead of now
   `stale`; `gaps` (a non-empty list) `partial`; a count `found`;
-  else `clean` (the page's "No known vulnerabilities"). Findings (at most `MAX_FINDINGS`) only from a fresh `at`.
-  Text from the file reaches the page one line, capped, with the project's folder and the user's home replaced
-  by names; `sources` never. Findings never count in Waiting on you or `state.json`. `POST /<page>/scan` takes
+  else `clean` (the page's "No known vulnerabilities"). osv-scanner's JSON is `<home>/osv-scanner.json` (at most
+  `MAX_VULNS`, a regular file, read again only when its mtime, size or inode changed; missing, unreadable or not
+  JSON with a `results` list, it is no source), fresh while its mtime is within `OSV_FRESH` and not ahead of now. A
+  project matches a `results[].source.path` (absolute) whose real path is inside its real root, the longest root
+  of the known projects winning; with none, that source is `off` for it, never `clean`. It fails closed: a result
+  without a `packages` list, or a package entry other than `{package}` (clean) or `{package, groups,
+  vulnerabilities}` (two non-empty lists of objects) with a string `name`, `version` and `ecosystem`, makes that
+  source `partial` for the project, never `clean`. The other keys 2.7.1 writes on an entry, `dependency_groups`
+  (a dev dependency), `licenses` and `license_violations`, are ignored; any other key is another shape. Its findings take
+  Uptick's shape (`name, version, ecosystem, level, ids, fixed`, and `fixable`), one per package with advisories:
+  `level` the worst of its groups' `max_severity` (a CVSS score as text: 9 or more critical, 7 high, 4 medium,
+  above 0 low), else of the GHSA words (`database_specific.severity`, `MODERATE` as medium) of the group's own
+  advisories, else `unknown`; `ids` the groups' `ids` and `aliases` that match the advisory pattern, the first 5
+  (collected only until there are five); `fixed` the one version that every advisory's `ECOSYSTEM` or `SEMVER`
+  ranges, in its `affected` entry for that very package (name and ecosystem), agree on, and `fixable` when each
+  advisory has such a version. An advisory has one only when in each of those ranges every `introduced` is
+  followed, in order, by a plain `fixed`, and no `last_affected` or `limit` is there (the inbox compares no
+  versions, so an open branch could be the installed one). They merge with Uptick's by `ref` and `ecosystem` (the
+  `ids` of both, at most 5; the higher `level`; Uptick's `fixed` when it has one), and each finding carries `from`
+  (`uptick`, `osv-scanner`); the state is the most informative of the two (`found`, `partial`, `error`, `clean`,
+  `stale`, `off`), except that an osv-scanner file that is not fresh leaves `off` a project Uptick's file is there
+  for and its scan list leaves out (Not scanned, with Scan this project: the page's stale note, Uptick's words,
+  shows only for Uptick's own `stale`). The row's count is the larger of a fresh Uptick `count` and the number of
+  findings, its time the newer scan. Findings (at most `MAX_FINDINGS`) only from a fresh source; with
+  osv-scanner's among them they are sorted worst first (stable, so Uptick's first within a level), else Uptick's
+  keep their order. Text from either file
+  reaches the page one line, capped, with the project's folder and the user's home replaced by names; `sources`
+  and a `source.path` never. Findings never count in Waiting on you or `state.json`. `POST /<page>/scan` takes
   exactly `{project}`: it adds the project's real path to `scan-repos.json`, keeping every other entry and key,
   and makes `uptick/` (0700) when absent; the file it writes is 0600, its JSON ASCII-escaped. It leaves the file
   alone (409) when it is a link, not JSON with a `repos` list, or over `MAX_SCAN_LIST` bytes; it reads the file again just before the atomic replace and starts over when it changed

@@ -108,6 +108,15 @@ that both look at one home, not a limit on what runs). It serves
 nothing, and every three seconds it reads the inbox's `state.json` and takes `inbox.lock` for a moment to see that
 the inbox still runs.
 
+For its Vulnerabilities section the inbox reads Uptick's `vulns.json` and scan list, and `osv-scanner.json` in the
+Signoff home: the output of an osv-scanner scan you ran yourself ([how](inbox.md#the-inbox)). It never runs a
+scan and sends nothing anywhere. Text from those files reaches the page as one line each, capped, with the
+project's folder and your home shown by name, and never a lockfile's path. A finding you hand over reaches the
+project's agent only as its package and version, level, advisory ids and fixed version, each checked against a
+plain pattern (or the inbox's own words that a fixed version exists for each advisory); never an advisory's
+summary, details or any other free text from either file. Whoever can write the Signoff home can put findings
+there, as they can put requests.
+
 **Leaves your machine:** nothing from Signoff. The server listens on `127.0.0.1` only. The page loads no fonts,
 scripts or styles from anywhere, and neither can a board; their Content-Security-Policies block it. A board's own
 script could still send data out over WebRTC, which no page policy blocks, so boards hold synthetic data only.

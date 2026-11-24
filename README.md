@@ -162,8 +162,9 @@ Ask the agent "what did we decide before?" and it opens the same page. See [Past
 
 The inbox is one browser tab for every project. It lists the open rounds of runs that wait in the background, the
 todo items an agent marked as waiting on you, and the Claude Code sessions that wait on you for a permission or an
-answer. When [Uptick](https://github.com/lumi-collective/uptick) keeps its vulnerability scan file, it also shows
-each project's known vulnerabilities. Ask the agent to open the Signoff inbox. A round opens on the usual page in
+answer. When [Uptick](https://github.com/lumi-collective/uptick) keeps its vulnerability scan file, or you keep
+the output of your own osv-scanner scan in the Signoff home, it also shows each project's known vulnerabilities.
+Ask the agent to open the Signoff inbox. A round opens on the usual page in
 the same tab; Done there writes the answers file, and the waiting run wakes its agent. On an open todo item you can
 send a message to the project's agent. The inbox listens on `127.0.0.1` with the same rules as a run, never runs a
 command from a todo file, and does not run on Windows yet. Everything about it is in

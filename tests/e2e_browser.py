@@ -2591,7 +2591,8 @@ def run_inbox(work):
     Then a waiting run's round and a todo item marked waiting on you. The item opens beside the list to its Markdown: the
     agent's HTML is text, only the https link is a link, and Copy puts the block's text on the clipboard exactly. A
     message typed on it becomes a request file for the project's session, and shows as sent. The round opens from the list in the same tab, and Done there wakes the waiting run (exit 0, its answers path). Then the OSV
-    section: Scan this project adds the project to Uptick's scan list, and a finding goes to the agent as a request.
+    section: Scan this project adds the project to Uptick's scan list, and a finding goes to the agent as a request;
+    with osv-scanner's JSON alone, the section names it and its finding has a row.
     Waiting on you is grouped by project under a summary line, the other open items closed behind a count row per
     project; a chain is one row with its steps, Later and Open round."""
     sys.path.insert(0, str(ROOT / "plugin" / "signoff"))
@@ -3140,6 +3141,35 @@ def run_inbox(work):
                            "document.querySelector('#ib-detail h2').textContent + '|' + "
                            "document.querySelector('%sbutton.ib-main').getAttribute('aria-current')" % (off, off))
         check(label == "Not scanned (0)|Not scanned (0)|true", "the row should stay open at 0: %r" % label)
+        # osv-scanner's JSON alone (Uptick's file cut short now): the section names it, the other project's finding
+        # has its own row, and the project it does not list is not scanned, with no Scan button (that is Uptick's).
+        (cache / "uptick" / "vulns.json").write_text("{", encoding="utf-8")
+        advisories = [{"id": vid, "affected": [{"package": {"name": "jinja2", "ecosystem": "PyPI"}, "ranges": [
+            {"type": "ECOSYSTEM", "events": [{"introduced": "0"}, {"fixed": fixed}]}]}]}
+            for vid, fixed in (("GHSA-462w-v97r-4m45", "2.10.1"), ("GHSA-g3rq-g295-4j3m", "2.11.3"))]
+        (home / "osv-scanner.json").write_text(json.dumps({"results": [{
+            "source": {"path": str(other.resolve() / "requirements.txt")}, "packages": [{
+                "package": {"name": "jinja2", "version": "2.10.0", "ecosystem": "PyPI"}, "vulnerabilities": advisories,
+                "groups": [{"ids": [a["id"]], "aliases": [], "max_severity": s}
+                           for a, s in zip(advisories, ("8.6", "6.9"))]}]}]}), encoding="utf-8")
+        browser.call("Page.navigate", url=browser.js("location.href"))
+        titles = wait_for("osv-scanner's row", lambda: browser.js(
+            "(function () { var t = Array.prototype.map.call(document.querySelectorAll('%s.ib-title'), "
+            "function (n) { return n.textContent; }); return t.length === 2 && t; })()" % osv))
+        note = browser.js("document.querySelector('%sh2 .ib-note').textContent" % osv)
+        check([note] + titles == ["from osv-scanner", "1 known vulnerability, high", "Not scanned (1)"],
+              "the section from osv-scanner alone: %r %r" % (note, titles))
+        browser.click(osv + "button.ib-main")
+        facts = wait_for("the osv-scanner finding", lambda: browser.js(
+            "(function () { var f = document.querySelector('#ib-detail .ib-vuln-facts'); return f && f.textContent; })()"))
+        check(facts == "PyPI · GHSA-462w-v97r-4m45 · GHSA-g3rq-g295-4j3m · a fix for each advisory",
+              "a finding fixed in a version per advisory: %r" % facts)
+        browser.click(off + "button.ib-main")
+        unscanned = wait_for("the unscanned project", lambda: browser.js(
+            "(function () { var n = document.querySelector('#ib-detail .ib-vuln-name'); return n && [n.textContent, "
+            "document.querySelectorAll('#ib-detail .ib-vulns button').length, "
+            "document.querySelectorAll('#ib-detail .ib-vuln-note').length]; })()"))
+        check(unscanned == ["inbox-project", 0, 0], "no Scan this project and no Uptick note: %r" % unscanned)
         # A phone: a row opens as a bottom sheet with the rest inert, Esc closes it and focus goes back to the row;
         # the sidebar is a drawer, Esc closes it and focus goes back to its button.
         browser.call("Emulation.setDeviceMetricsOverride", width=390, height=844, deviceScaleFactor=1, mobile=True)

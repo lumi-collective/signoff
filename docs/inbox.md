@@ -161,24 +161,63 @@ agent to check the answers first. The request route takes no `answer` from a pag
 
 **Vulnerabilities** shows each project's state from [Uptick](https://github.com/lumi-collective/uptick)'s
 vulnerability scan, when Uptick keeps its scan file (`${XDG_CACHE_HOME:-~/.cache}/uptick/vulns.json`, written once
-`vulns` is in its kinds); without that file the section is not there. The inbox only reads it, and a project
+`vulns` is in its kinds), and from osv-scanner's output you keep in the Signoff home (below); without either file
+the section is not there. The inbox only reads it, and a project
 matches its entry by its real path. A row says *N known vulnerabilities* with the worst level, *No known
 vulnerabilities*, *Partial scan* (lockfiles left out), *Scan failed* with Uptick's reason, or *No recent data*
-when Uptick has not scanned the project within two of its runs (its `interval`, from Uptick 0.4.0; at most 30 days)
-or, from an older Uptick, in two days. Findings never count as waiting on you. An open row lists
+when a source scans the project but none has a recent scan of it: Uptick lists it but has not scanned it within
+two of its runs (its `interval`, from Uptick 0.4.0; at most 30 days) or, from an older Uptick, in two days; or,
+without Uptick's file, osv-scanner's file (below) lists it but is older than two days.
+Findings never count as waiting on you. An open row lists
 each finding (package, version, level, advisory ids, the fixed version) with **Hand to agent**, which sends the
 project's agent a request as above, its `ref` the package and version (`lodash@4.17.20`) and its text written by
 the inbox from those fields. Above the list, **Hand all fixable over (N)** sends one request for the N findings
-with a fixed version: its `ref` is `vulns`, its text names each as `lodash@4.17.20 → 4.17.21` in the list's order,
+with a fixed version: its `ref` is `vulns`, its text names each as `lodash@4.17.20 → 4.17.21` (or, for one whose
+advisories are fixed in different versions, `jinja2@2.10.0 (a fixed version exists for each advisory)`) in the list's order,
 as many as fit in 1,000 characters, then how many more, and the file lists the named ones in `refs`. Only those
 are handed over: the rest stay listed, to hand over after the next scan. The click sends the count the page showed,
 and when the list has changed since (a tab left open across a rescan) the inbox refuses it and asks for a reload.
 A session still on
 an older plugin skips a request of this kind; the page shows it all the same, and a new session of the project
-gets it at its start when no other session of the project is open, as above. A project not on Uptick's scan list (`${XDG_CONFIG_HOME:-~/.config}/uptick/scan-repos.json`)
-goes into one collapsed row, *Not scanned (N)*, which lists those projects, each with **Scan this project**: a
+gets it at its start when no other session of the project is open, as above. A project that no source scans
+goes into one collapsed row, *Not scanned (N)*: one not on Uptick's scan list
+(`${XDG_CONFIG_HOME:-~/.config}/uptick/scan-repos.json`) that osv-scanner's file does not list, or lists in a file
+older than two days while Uptick's file is there. The row lists those projects; while Uptick's
+scan file is there, each has **Scan this project**: a
 click adds the project's folder to that list and keeps everything else in it. Uptick's next check then sends the
 package names and versions in the project's lockfiles to osv.dev. The inbox does not touch a list that is a link, is not a JSON `repos` list, or is over 1 MiB.
+
+**osv-scanner** is a second source, for when you run [osv-scanner](https://github.com/google/osv-scanner) yourself:
+keep its JSON as `osv-scanner.json` in the Signoff home, the folder `signoff inbox home` prints. Scan with
+`--all-packages`, which also lists a lockfile with nothing found; without it such a project looks unscanned.
+Write into a temporary file and rename it when osv-scanner exits 0 (nothing found) or 1 (findings), so the inbox
+never reads a file cut short, and a failed scan leaves the last one in place:
+
+```bash
+home=$(signoff inbox home) || exit
+osv-scanner scan source -r ~/projects --format json --all-packages --output-file "$home/osv-scanner.json.tmp"
+[ $? -le 1 ] && mv "$home/osv-scanner.json.tmp" "$home/osv-scanner.json"
+```
+
+`signoff` is the plugin's command, on the path of a Claude Code session's shell. Elsewhere, as in a cron job, set
+`home` to the folder itself: on macOS `$HOME/Library/Application Support/signoff`, on Linux
+`${XDG_STATE_HOME:-$HOME/.local/state}/signoff`.
+
+Signoff never runs it. What osv-scanner sends is its own: among other things the package names and versions it
+finds go to osv.dev, and for a manifest such as `requirements.txt` it also looks up the dependencies, by default
+at deps.dev (its help names `--data-source` and `--no-resolve`, which turns that off); its documentation has the
+rest. The inbox reads the file again only when it changed, and takes it as recent for two days from the file's
+time. A project gets the lockfiles inside its folder (by real path; a project inside another one keeps its own),
+and with none it is *Not scanned* for this source, never *No known vulnerabilities*. A file that is missing, cut
+short, not osv-scanner's JSON or over 16 MiB counts as no source. A package entry of another shape than
+osv-scanner 2.7.1 writes (a key it does not know, from another version, say) makes the project a *Partial scan*,
+never *No known vulnerabilities*; the keys 2.7.1 adds beside the package (a dev dependency's group, licenses) are
+fine. Its findings join Uptick's by package, version and ecosystem (the advisory ids of both, the
+higher level, Uptick's fixed version when it has one), the row lists them worst first, and it shows the most
+telling state of the two. A finding whose advisories are fixed in different versions says *a fix for each
+advisory*, and so does its request; **Hand all fixable over** takes it too. An advisory with a version range left
+open (a branch with no fixed version yet) counts as having no fix, as the inbox does not compare versions to see
+which branch is installed. **Scan this project** stays Uptick's: it shows only when Uptick's file is there.
 
 The inbox listens on `127.0.0.1` with the same rules as a run. Start links come only from its control socket,
 `inbox.sock` in the home (readable by you only): each works once, within two minutes, and opens its own page,

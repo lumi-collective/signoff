@@ -915,7 +915,7 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
       msgPlaceholder: 'A message for this project\'s agent',
       send: 'Send', msgSent: 'sent {t}', msgDone: 'done', msgNote: 'Sent. The project\'s open session gets it now; with none open, the next one gets it when it starts.',
       msgFailed: 'Not sent: {m}', msgOffline: 'Not sent: the inbox is not answering.',
-      osvHead: 'Vulnerabilities', osvNote: 'from Uptick\'s scan', osv: 'OSV', scanned: 'scanned {t}',
+      osvHead: 'Vulnerabilities', osvNote: 'from {s}', osv: 'OSV', scanned: 'scanned {t}',
       osv_found: '{n} known vulnerabilities, worst {l}', osv_one: '1 known vulnerability, {l}',
       osv_clean: 'No known vulnerabilities', osv_partial: 'Partial scan', osv_stale: 'No recent data',
       osv_error: 'Scan failed: {e}', osv_off_n: 'Not scanned ({n})',
@@ -924,7 +924,7 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
       osvOffNote: 'Uptick does not scan these projects. Scan this project adds one to Uptick\'s scan list; Uptick\'s next check sends the package names and versions in its lockfiles to osv.dev.',
       scan: 'Scan this project', scanAdded: 'Added to Uptick\'s scan list. Its next check scans the project.',
       scanFailed: 'Not added: {m}', hand: 'Hand to agent', handed: 'handed over {t}', fixedIn: 'fixed in {v}',
-      noFix: 'no fix yet', handFailed: 'Not handed over: {m}', notAnswering: 'the inbox is not answering',
+      noFix: 'no fix yet', fixEach: 'a fix for each advisory', handFailed: 'Not handed over: {m}', notAnswering: 'the inbox is not answering',
       agentRecommends: 'Agent recommends', outline: 'In this round', itemOf: 'Item {i} of {n}', roundOf: 'Round {i} of {n}',
       answersN: '{n} answers', signNote: 'Done sends every answer to the agent.', stChanged: 'changed',
       kItemShort: 'item', kOptionShort: 'option', kLeave: 'leave Focus or close the sidebar; or this list',
@@ -1007,7 +1007,7 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
       numValue: '{t}, érték', elsewhere: 'Máshol eldőlt',
       stakes_high: 'Nagy tét', stakes_medium: 'Közepes tét', stakes_low: 'Kis tét', highShort: 'nagy tét',
       irreversible: 'Nem vonható vissza', undoShort: 'végleges', settledEarlier: 'Korábban eldőlt',
-      change: 'Módosítás', fold: 'Opciók elrejtése', handAll: 'Minden javítható átadása ({n})',
+      change: 'Módosítás', fold: 'Opciók elrejtése', handAll: 'Minden javítható átadása ({n})', osvNote: 'forrás: {s}',
       lnAdd: 'hozzáadva', lnDel: 'törölve', lnOld: 'Régi sor', lnNew: 'Új sor', lnNum: 'Sor', lnSign: 'Változás', lnText: 'Szöveg',
       lnNote: 'Megjegyzés: {f}, {n}. sor', lnFull: 'Egy tételen legfeljebb 50 sor-megjegyzés lehet.', lnStale: 'A fájl azóta változott. A {n}. sor ez volt:',
       lnHint: 'Egy sorszámot megnyomva megjegyzést írhatsz a sorhoz.'}
@@ -2108,8 +2108,8 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
     });
     grouped(s, true);
     done(s, L.nothingOpen);
-    // Each project's vulnerabilities from Uptick's vulns.json (AD-12): never counted as waiting. A finding goes to
-    // the project's agent as a request; a project not on Uptick's scan list can be added to it.
+    // Each project's vulnerabilities, from Uptick's or osv-scanner's file: never counted as waiting. A finding goes
+    // to the project's agent as a request; a project not on Uptick's scan list can be added to it.
     function post(path, body, status, failed, done) {
       return fetch(path, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)})
         .then(function (r) {
@@ -2148,7 +2148,7 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
     function finding(p, f, box) {
       var li = el('li', 'ib-vuln'), head = el('div', 'ib-vuln-head');
       head.append(el('strong', 'ib-vuln-name', f.name + ' ' + f.version), el('span', 'pill lvl-' + f.level, f.level));
-      var facts = (f.ecosystem ? [f.ecosystem] : []).concat(f.ids, [f.fixed ? fmt(L.fixedIn, {v: f.fixed}) : L.noFix]);
+      var facts = (f.ecosystem ? [f.ecosystem] : []).concat(f.ids, [f.fixed ? fmt(L.fixedIn, {v: f.fixed}) : f.fixable ? L.fixEach : L.noFix]);
       li.append(head, el('p', 'ib-vuln-facts', facts.join(' · ')));
       hander(li, f.ref ? {kind: 'vuln', project: p.id, ref: f.ref} : null, L.hand, f.requests);
       box.append(li);
@@ -2156,7 +2156,7 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
     var scanned = projects.filter(function (p) { return p.osv; });
     var findings = scanned.reduce(function (n, p) { return n + p.osv.findings.length; }, 0);
     if (scanned.length) {
-      s = section(L.osvHead, findings, L.osvNote, '', 'osv');
+      s = section(L.osvHead, findings, fmt(L.osvNote, {s: scanned[0].osv.from.join(' + ').replace('uptick', 'Uptick')}), '', 'osv');
       // Projects off the scan list share one row, last; every other state keeps its own row.
       var off = scanned.filter(function (p) { return p.osv.status === 'off'; });
       scanned.filter(function (p) { return p.osv.status !== 'off'; }).forEach(function (p) {
@@ -2167,7 +2167,7 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
                        return [f.name, f.version, f.ecosystem, f.level, f.fixed].concat(f.ids).join(' ');
                      }));
                    }, when: o.at ? fmt(L.scanned, {t: since(o.at)}) : '', fill: function (box) {
-          var note = {stale: L.osvStaleNote, partial: L.osvPartialNote}[o.status];
+          var note = {stale: o.scan && L.osvStaleNote, partial: L.osvPartialNote}[o.status];
           if (note) box.append(el('p', 'ib-vuln-note', note));
           if (o.hint) box.append(el('p', 'ib-vuln-note', o.hint));
           if (o.fixable) hander(box.appendChild(el('div', 'ib-vuln-all')), {kind: 'vulns', project: p.id,
@@ -2184,7 +2184,7 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
         var offLeft = off.length, offRow = row(s, {mono: '', name: ''}, {kind: L.osv, cls: 'k-t', glyph: '△',
           title: fmt(L.osv_off_n, {n: offLeft}), projects: off.map(function (p) { return p.id; }),
           find: function () { return off.map(function (p) { return p.name; }); }, fill: function (box) {
-          box.append(el('p', 'ib-vuln-note', L.osvOffNote));
+          if (off[0].osv.scan) box.append(el('p', 'ib-vuln-note', L.osvOffNote));
           var ul = el('ul', 'ib-vulns');
           off.forEach(function (p) {
             var li = el('li', 'ib-vuln'), head = el('div', 'ib-vuln-head'), sent = el('div', 'ib-vuln-sent');
@@ -2202,7 +2202,7 @@ h3 .badge{margin:0;vertical-align:2px;white-space:nowrap}
                 offRow.title.textContent = offRow.heading.textContent = fmt(L.osv_off_n, {n: --offLeft});
               }).then(function () { scan.disabled = false; });
             });
-            sent.append(scan);
+            if (p.osv.scan) sent.append(scan);
             li.append(head, sent, status);
             ul.append(li);
           });
