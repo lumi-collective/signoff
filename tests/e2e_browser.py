@@ -3619,6 +3619,85 @@ def run_offer(work):
         end_inbox(inbox, script, env, home)
 
 
+PLAN_ANSWER = """(function () {
+  var c = document.querySelector('.item[data-item=plan]'), a = c && c.querySelector('details.attach');
+  return !!c && [Array.prototype.map.call(c.querySelectorAll('input[type=radio]'), function (i) {
+    var l = i.closest('label') || document.querySelector('label[for="' + i.id + '"]');
+    return [i.id, i.checked, l ? l.textContent.trim() : null]; }), !!a && a.open,
+    !!c.querySelector('.rec')];
+})()"""
+
+
+def run_plan(work):
+    """A Plan review round as `signoff plan` writes it (the mod's command), answered in the browser as a person does:
+    Approve the plan, then Done. The command prints the answers path and exits 0, and the answers file holds what the
+    mod's readAnswer takes as an approval: done true, a saved time, the plan item's choice approve and source user,
+    beside a plan-01.md that holds the plan as sent, its end trimmed."""
+    sys.path.insert(0, str(ROOT / "plugin" / "signoff"))
+    import signoff
+    home, root = work / "plan-home", work / "plan-project"
+    (root / ".git").mkdir(parents=True)
+    topic = root / ".signoff" / "2026-11-24-plan-e2e1"
+    plan = "# Plan\n\n1. Read the tests\n2. Change the code"
+    env = dict(os.environ, SIGNOFF_INBOX_HOME=str(home))
+    script = [sys.executable, "-I", "-B", str(ROOT / "plugin" / "signoff" / "signoff.py")]
+    inbox_err, out, err = [], [], []
+    inbox = spawn(script + ["inbox", "serve"], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                  universal_newlines=True, encoding="utf-8", errors="replace")
+    threading.Thread(target=pump, args=(inbox.stderr, inbox_err), daemon=True).start()
+
+    def ask(op, **fields):
+        check(inbox.poll() is None, "the inbox exited: %s" % "".join(inbox_err))
+        try:
+            return signoff.inbox_request(home, op, **fields)
+        except OSError:
+            return None
+    wait_for("the inbox's control socket", lambda: ask("offer"))
+    waiter = spawn(script + ["plan", "--topic", topic.name, "--folder", ".signoff"], cwd=str(root), env=env,
+                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True,
+                   encoding="utf-8", errors="replace")
+    waiter.stdin.write(plan + "\n\n")
+    waiter.stdin.close()
+    for stream, sink in ((waiter.stdout, out), (waiter.stderr, err)):
+        threading.Thread(target=pump, args=(stream, sink), daemon=True).start()
+    browser = Browser(str(work / "profile-plan"))
+    try:
+        project = signoff.project_id(root.resolve())
+        rows = wait_for("the plan round in the inbox", lambda: (lambda r: r and r.get("rounds") and r)(
+            ask("rows", project=project)))
+        check([r["title"] for r in rows["rounds"]] == ["Plan"], "the inbox should list the plan round: %r" % rows)
+        row = rows["rounds"][0]
+        link = ask("open", run=row["run"], round=row["round"], item=row["item"], inbox=rows["inbox"])["link"]
+        browser.call("Emulation.setDeviceMetricsOverride", width=1280, height=900, deviceScaleFactor=1, mobile=False)
+        browser.call("Page.enable")
+        browser.call("Page.navigate", url=link)
+        wait_for("the plan round in Focus", lambda: browser.js(
+            "document.body.classList.contains('focusing') && !!document.querySelector('.item.cur[data-item=plan]')"))
+        press(browser, "Escape", "Escape", 27)
+        shown = wait_for("the plan item", lambda: browser.js(PLAN_ANSWER))
+        # Each label leads with its key's digit.
+        check(shown == [[["r0-i0-o0", False, "1Approve the plan"], ["r0-i0-o1", False, "2Ask for changes"]], True, False],
+              "the plan round: two options, none preselected, the plan open, no recommendation: %r" % shown)
+        browser.click("#r0-i0-o0")
+        browser.click("#done")
+        answers = finished(waiter, out, err, [topic / "round-01.answers.json"])[0]
+        got = answers["answers"]["plan"]
+        # As register.tsx's readAnswer reads it: done true, saved the inbox's clock, choice approve, source user.
+        check(answers["done"] is True and isinstance(answers["saved"], str)
+              and re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", answers["saved"])
+              and got["choice"] == "approve" and got["source"] == "user",
+              "the answers the mod takes as an approval: %r" % answers)
+        check((topic / "plan-01.md").read_text(encoding="utf-8") == plan, "plan-01.md should hold the plan as sent")
+        check((topic / "round-01.answers.json").stat().st_size <= 4 * 1024 * 1024, "the mod reads up to 4 MiB")
+    except E2EError:
+        sys.stderr.write("--- inbox stderr ---\n" + "".join(inbox_err) + "--- plan stderr ---\n" + "".join(err))
+        raise
+    finally:
+        kill(browser.proc)
+        kill(waiter)
+        end_inbox(inbox, script, env, home)
+
+
 def run_round_age(work):
     """A round asked three days ago and a fresh one, each waited on by a run started now: the old row carries the
     2-day pill (from the round file's time, not the run's start, so both rows read "just now") and its open row the
@@ -3758,6 +3837,7 @@ def run():
         run_inbox_search(work)
         run_live(work)
         run_offer(work)
+        run_plan(work)
         run_round_age(work)
     topic = work / "2026-01-05-settings"
     topic.mkdir()
@@ -3947,6 +4027,8 @@ def main():
              "following the order; "
              "an answer from a notification: the socket's offer, its start link opens the item in Focus (a hash naming "
              "nothing is ignored), accept wakes the waiting run, exit 0, source notification; "
+             "a plan round from signoff plan: two options, none preselected, the plan open, Approve and Done, exit 0, "
+             "the answers the mod takes as an approval; "
              "a round asked 3 days ago: the 2-day pill on its row (from the file's time, the clock on the run's "
              "start) and the note in its open row, its page's opening time, pill and note, in Focus too; its context "
              "on the row's second line, in its open row, found by the search and at the top of its page; ") +

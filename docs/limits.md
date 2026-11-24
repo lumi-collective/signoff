@@ -20,8 +20,12 @@
 
 Plan review (how it works, and every case that gets Claude Code's own dialog: [Plan review](running.md#plan-review)):
 
-- It takes only the main conversation's plan. A subagent's plan, or a teammate's, gets Claude Code's own dialog
-  (by the code: a call with an agent id; neither was tried by hand).
+- It takes only the main conversation's plan. A call that carries an agent id gets Claude Code's own dialog: a
+  subagent's does, and so does a teammate's that runs inside the lead's session. A teammate in a split pane is a
+  `claude` process of its own, so its plan may be taken over as that session's own; that was not tried.
+- Whoever can write your answers or plan file, or get a start link of the inbox, can approve, and that approval
+  ends plan mode with no dialog; in plan mode Claude Code by default leaves a Bash write to its auto mode
+  classifier. See [the security model](security.md#what-runs-and-what-leaves-your-machine).
 - Under an organization's managed guard that runs no `classic` hooks of a mod, Claude Code's dialog asks once more
   after an approval. How plan review behaves there was not measured.
 - A Done that lands while the mod reloads (its waiting command gone, the next one not started yet) may reach the

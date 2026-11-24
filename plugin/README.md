@@ -106,7 +106,8 @@ the mod sets none). That request names no tool call, so the mod takes the one re
 that exact plan, from the main conversation, while the call it let through waits, and only when no hook beneath it
 (your own settings hooks, other mods) gives a decision or a block, which goes back unchanged; any other gets Claude
 Code's own dialog. That uses the approval up, also when the plan is rejected. A rejection in Claude Code's own
-dialog (not an Esc there), or a prompt you send outside plan mode, ends a kept approval. Whoever can write your
+dialog (not an Esc there), a prompt you send outside plan mode, or turning the Plan review setting off ends a
+kept approval; otherwise it waits as long as plan mode does. Whoever can write your
 answers or plan file, or get a start link of the inbox, can approve, and that approval ends plan mode with no
 dialog; in plan mode Claude Code by default leaves a Bash write to its auto mode classifier, and with that off a
 Bash command you allowed by a rule may still write (measured on Claude Code 2.1.323 and 2.1.330, with rules for
@@ -119,11 +120,8 @@ Code's session state until the review is over and an
 approved plan went to that dialog. The mod sends one message at a time: a message from the inbox waits while the
 plan review's message does. The Plan
 review setting in /config turns this off (off); the default is inbox. Only the main conversation's plan is
-reviewed: a subagent's goes to Claude Code's own dialog. The plan review was tried by hand in the terminal on macOS in
-November 2026: on Claude Code 2.1.323, a plan held back, answered and the agent woken, with Ask for changes, an
-Esc, /clear and quitting; then, on 2.1.323 and 2.1.330, an approved plan going through with no second dialog, the
-approvals written by a script rather than on the page. In the desktop app's Code tab and the VS Code extension's panel
-only its mechanism was tried, with a probe; the plan review itself is not tried there yet.
+reviewed: a subagent's goes to Claude Code's own dialog. The plan review was tried by hand only in the terminal on
+macOS; in the desktop app and VS Code it is not tried yet (the repository's README has the details).
 
 Open and the /signoff:open command open a panel beside the chat. They run the signoff command's inbox rows once,
 which asks the running inbox for this project's open rounds and their open questions (numbers and one-line titles;

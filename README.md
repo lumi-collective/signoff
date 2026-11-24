@@ -249,6 +249,8 @@ The rules in full: [docs/security.md](docs/security.md#security-model). The scop
   restart.
 - Marks are rectangles on pictures, not on boards.
 - Plan review takes only the main conversation's plan: a subagent's gets Claude Code's own dialog.
+- Whoever can write a plan review's answers or plan file, or get a start link of the inbox, can approve the plan,
+  and that ends plan mode with no dialog ([why, and what holds it back](docs/security.md#what-runs-and-what-leaves-your-machine)).
 
 All of them, with the plan review's: [docs/limits.md](docs/limits.md).
 

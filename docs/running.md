@@ -128,24 +128,32 @@ a Plan review round in the inbox. The agent is told the plan waits and ends its 
 refused ExitPlanMode. You approve it there, or ask for changes with a comment and line notes, and press Done. The
 agent then gets a message that says it comes from the Signoff plugin: after an approval it calls ExitPlanMode again
 with the same plan, the mod answers Claude Code's permission request for that call, and plan mode ends with no
-second dialog, in the mode Claude Code picks (the one from before plan mode, measured in the terminal and the
-desktop app); after anything else it reads your notes and revises. If you
+second dialog, in the mode Claude Code picks: the one from before plan mode (default, accept edits and auto in the
+terminal, auto in the desktop app; bypass permissions as that mode was not tried). After anything else it reads
+your notes and revises. If you
 stopped the agent with Esc meanwhile, a notice says your answer is saved: send any message and the agent gets it.
 
-The mod answers only the one permission request for that exact plan, from the main conversation, that comes while
-the call it let through waits (the request names no tool call, so the mod binds it by time), and only when no hook
-beneath it (your own settings hooks, other mods) gives a decision or a block; theirs goes first. Any other request
-gets Claude Code's own dialog, as does that call after a reload of the mod while it waits (an approval itself is
-kept in Claude Code's session state and survives a reload), and under an organization's managed guard that runs no
-`classic` hooks of a mod (Claude Code's dialog then asks once more; this was not measured). After a `/cd` into
+The mod answers only one permission request: for that exact plan, from the main conversation, while the call it
+let through waits, and only when no hook of yours or of another mod beneath it decides or blocks. How it binds that
+request is in [the security model](security.md#what-runs-and-what-leaves-your-machine). Any other request gets
+Claude Code's own dialog, as does that call after a reload of the mod while it waits (an approval itself is kept in
+Claude Code's session state and survives a reload, except the reload that turning the Plan review setting off
+causes), and under an organization's managed guard that runs no `classic` hooks of a mod (Claude Code's dialog then
+asks once more; this was not measured). After a `/cd` into
 another project the same plan is a new review there (Claude Code's own dialog where the inbox knows no project),
 and when the round's plan file no longer holds the plan, the
 answer is no approval: the agent is told it could not be read, and a new review follows. A rejection in Claude
-Code's own dialog (not an Esc there), or a prompt you send outside plan mode, ends an approval that waits; a
-`/rewind` does not.
+Code's own dialog (not an Esc there), a prompt you send outside plan mode, or turning the Plan review setting off
+ends an approval that waits; a `/rewind` does not. An approval waits as long as plan mode does: to take it back,
+leave plan mode and send a message, or use `/clear`.
+
+Whoever can write your answers or plan file, or get a start link of the inbox, can approve, and that approval ends
+plan mode with no dialog; in plan mode Claude Code by default leaves a Bash write to its auto mode classifier. The
+details: [the security model](security.md#what-runs-and-what-leaves-your-machine).
 
 A plan you approve in Claude Code's own dialog instead (the inbox had stopped, say) ends the review. So do
-`/clear`, `/resume` and quitting or restarting Claude Code: the round then stays in the inbox and no longer
+`/clear`, `/resume`, quitting or restarting Claude Code, and turning the Plan review setting off (which reloads the
+mod): the round then stays in the inbox and no longer
 approves anything. When you answer it
 then, the answer reaches the project's sessions as a message from the inbox and approves nothing. An approval is
 good for one call: rejected in Claude Code's own dialog, or interrupted, it is used up. A review that could not

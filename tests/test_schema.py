@@ -1397,7 +1397,7 @@ class SchemaFile(unittest.TestCase):
                                            {"id": "revise", "label": "Ask for changes"}])
         self.assertEqual(item["attachments"], [{"src": "plan-07.md", "caption": "The plan", "open": True}])
         self.assertNotIn("recommended", item)
-        for words in ("picks itself", "may ask once more", "Ask for changes"):
+        for words in ("the mode you were in before plan mode", "may ask once more", "Ask for changes"):
             self.assertIn(words, item["description"])
         self.assertEqual(decisions["items"][0]["attachments"][0]["text"], "# The plan\n")
         # Every key is one schema.json names, every value of a closed list in it.

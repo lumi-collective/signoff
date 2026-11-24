@@ -147,8 +147,8 @@ PLAN_TITLE, PLAN_TAB, PLAN_CONTEXT, PLAN_QUESTION, PLAN_CAPTION = (
     "Plan review", "Plan", "Plan mode", "Approve this plan?", "The plan")
 PLAN_DESCRIPTION = ("The agent's plan is attached below. Approve it, or choose \"Ask for changes\" and say what in the "
                     "comment or in notes on the plan's lines: they go back to the agent. After an approval, Claude "
-                    "Code leaves plan mode in the mode it picks itself, as when you leave plan mode yourself. On some "
-                    "setups Claude Code may ask once more.")
+                    "Code leaves plan mode with no dialog and goes back to the mode you were in before plan mode, "
+                    "auto mode too. On some setups Claude Code may ask once more.")
 PLAN_OPTIONS = (("approve", "Approve the plan"), ("revise", "Ask for changes"))
 PLAN_LOG = "signoff plan"  # an outcome file's log: the past-decisions page shows "logged in <log>"
 PLAN_REPLACED = "replaced by round-%02d"
