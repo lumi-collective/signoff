@@ -86,6 +86,11 @@
   takes a new note. **Private** covers the notes, the Summary lists each under its item (file, line and comment),
   the past-decisions search finds their comments, and a done round and the past-decisions page show them without
   the numbers to press or the fields.
+- **A Plan review round** is the one the plugin writes when Claude leaves plan mode while the inbox runs (see
+  [Plan review](running.md#plan-review)). It has one question, marked **Agent waits on this**: the plan is attached
+  and open, its lines take notes, and the two options are Approve the plan and Ask for changes, with a comment.
+  There is no recommendation, so nothing is preselected. What you write goes back to the agent from the answers
+  file; the message that wakes it holds none of your words.
 - **Commands.** A command the agent asks you to run before you decide shows under the item's text as a code
   block, as in the inbox: its language, a **Copy** button that copies it exactly, and a hint under one that
   deletes with a relative path, whatever its language. A long line wraps, a command is at most 4000 characters

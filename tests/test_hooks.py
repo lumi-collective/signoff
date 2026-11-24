@@ -1,4 +1,5 @@
 """The plugin hooks (`signoff inbox hook`), the home resolver and `signoff inbox home`."""
+import contextlib
 import hashlib
 import json
 import os
@@ -17,6 +18,7 @@ from support import ROOT, signoff
 
 SCRIPT = str(ROOT / "plugin" / "signoff" / "signoff.py")
 HOOK_SH = ROOT / "plugin" / "hooks" / "hook.sh"
+MOD_TEST = ROOT / "plugin" / "hooks" / "register.test.tsx"
 SENTINELS = ("SENTINEL-PROMPT", "SENTINEL-PATH", "SENTINEL-MSG", "SENTINEL-TOKEN", "SENTINEL-INPUT",
              "SENTINEL-RESPONSE")
 BG_VARS = ("CLAUDE_JOB_DIR", "CLAUDE_CODE_SESSION_ATTENDED")
@@ -930,6 +932,65 @@ class HookFastPath(unittest.TestCase):
         env = self.lock("Darwin", "darwin", 600)
         (self.bin / "find").unlink()
         self.assertTrue(self.started(dict(env, PATH=str(self.bin))))  # /bin has find where /bin is /usr/bin
+
+
+def project_root_cases():
+    """The case table the mod's kit test runs against its copy of project_root(), read out of that test file."""
+    text = MOD_TEST.read_text(encoding="utf-8")
+    block = text.split("// project_root cases: begin\n", 1)[1].split("// project_root cases: end", 1)[0]
+    return json.loads(block[block.index("= [") + 2:])
+
+
+@unittest.skipIf(sys.platform == "win32", "links need extra rights on Windows")
+class ProjectRootInStep(unittest.TestCase):
+    """project_root() and the mod's copy of it (projectRoot in register.tsx) on one table: the kit runs it against the
+    mod, this test against signoff.py, so a change to one side alone fails one of the two."""
+
+    def test_the_table_holds_every_arm(self):
+        cases = project_root_cases()
+        kinds = {(path.rsplit("/", 1)[1], kind) for c in cases for path, kind in c["markers"].items()}
+        self.assertEqual(kinds, {(".git", "dir"), (".git", "file"), (".signoff", "dir"), (".signoff", "link"),
+                                 (".signoff", "file")})
+        self.assertTrue(any("home" in c for c in cases))
+        self.assertTrue(any("/.git" in c["markers"] for c in cases))
+        self.assertTrue(any(c["root"] is None for c in cases))
+
+    def test_project_root_agrees_with_the_table(self):
+        exists = Path.exists
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, HOME=str(Path(tmp) / "home")):
+            if signoff.project_root(tmp) is not None:  # the cases with no root would find the one around TMPDIR
+                self.skipTest("the temporary folder lies inside a project")
+        for c in project_root_cases():
+            with self.subTest(c["why"]), tempfile.TemporaryDirectory() as tmp:
+                base = Path(tmp).resolve()
+
+                def at(path):
+                    return base / path.lstrip("/")
+
+                (base / "work" / "elsewhere").mkdir(parents=True)
+                start = at(c.get("from", "/work/demo/src"))
+                start.mkdir(parents=True, exist_ok=True)
+                top = False
+                for path, kind in c["markers"].items():
+                    if path == "/.git":
+                        top = True  # the real top folder: never planted, only seen through Path.exists
+                        continue
+                    p = at(path)
+                    p.parent.mkdir(parents=True, exist_ok=True)
+                    if kind == "dir":
+                        p.mkdir()
+                    elif kind == "file":
+                        p.write_bytes(b"")
+                    else:
+                        p.symlink_to(base / "work" / "elsewhere", target_is_directory=True)
+
+                def seen(self, *args, **kwargs):
+                    return str(self) == "/.git" or exists(self, *args, **kwargs)
+
+                at_top = mock.patch.object(signoff.Path, "exists", seen) if top else contextlib.nullcontext()
+                with mock.patch.dict(os.environ, HOME=str(at(c.get("home", "/home/test")))), at_top:
+                    found = signoff.project_root(start)
+                self.assertEqual(found, at(c["root"]) if c["root"] else None)
 
 
 @unittest.skipIf(sys.platform == "win32", "the sh launcher is tested on POSIX")

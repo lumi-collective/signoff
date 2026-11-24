@@ -25,7 +25,9 @@ writes the answers file, and the waiting run picks it up and wakes its agent. A 
 or died before it was answered (and that has no outcome file) stays there for up to 14 days, counted like the others;
 its answers file is written as usual. Its row (**Run ended**) and its page say that the Signoff run that asked has
 ended and the answer goes to the project's sessions: once its rounds are done, the inbox sends the agent a
-message about them (see below). A round another Signoff run has open on its own page shows read only. A Claude Code session that waits on you for a permission or an answer to its
+message about them (see below). A round another Signoff run has open on its own page shows read only. A plan
+review's round ([Plan review](running.md#plan-review)) waits here like any other; it has no recommendation, so a
+notification never offers to answer it, and only counts it. A Claude Code session that waits on you for a permission or an answer to its
 question (from about six seconds after it asks) is a row too, with its project and how long it has waited; the
 inbox does not answer it for you. Its row says to go to its terminal, or, for a background session (`claude
 --bg`), gives `claude attach <id>` to copy. **Answered** lists the rounds answered in the last day: *sent*, or *working* once

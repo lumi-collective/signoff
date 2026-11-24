@@ -26,3 +26,16 @@ Signoff prints what went wrong on stderr, starting with `signoff:`. Its exit cod
 - **"Changed in another tab or window, so this tab can no longer save" (409).** Another tab or window of the
   same run, or a second run on the same folder, saved first. Copy any text you have not saved, reload, and go
   on. Run one Signoff per topic at a time.
+- **A plan went to Claude Code's own dialog, not to Signoff.** Plan review needs a running inbox and the Plan
+  review setting not off, in an interactive session (not `claude -p`) and not on Windows; it takes only the main
+  conversation's plan, so a subagent's always gets the dialog. Ask the agent to open the Signoff inbox, or check the
+  setting in `/config`. The other cases: [Plan review](running.md#plan-review).
+- **"the Signoff review did not run, so the plan is not approved".** The command the mod starts for a review ended
+  without an answer. One cause is an inbox started before you updated the plugin, which does not show the round:
+  restart it (`signoff inbox stop`, then `signoff inbox open`). Until the inbox restarts or the mod loads again,
+  plans get Claude Code's own dialog.
+- **Claude Code asked once more after you approved in Signoff.** The mod answers only the one permission request it
+  expects for that plan. The dialog asks when the mod was reloaded while the call waited, when a permission hook of
+  yours or another mod blocked the request (a decision of theirs goes as they gave it), or under an organization's managed guard that runs no `classic`
+  hooks of a mod (not measured). Answer it as you would without Signoff. The full list:
+  [Plan review](running.md#plan-review).

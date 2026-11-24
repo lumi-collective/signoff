@@ -101,15 +101,16 @@ it also checks that the round's plan file holds the plan it kept. It sends the s
 the plugin, with fixed text and that file's path, none of your words. The agent reads your comment and line notes
 from the file.
 After an approval the same plan goes on once, and the mod answers Claude Code's permission request for it, so no
-dialog asks and Claude Code picks the mode. That request names no tool call, so the mod takes the one request for
+dialog asks and Claude Code picks the mode (in the terminal and the desktop app, the one from before plan mode;
+the mod sets none). That request names no tool call, so the mod takes the one request for
 that exact plan, from the main conversation, while the call it let through waits, and only when no hook beneath it
 (your own settings hooks, other mods) gives a decision or a block, which goes back unchanged; any other gets Claude
 Code's own dialog. That uses the approval up, also when the plan is rejected. A rejection in Claude Code's own
 dialog (not an Esc there), or a prompt you send outside plan mode, ends a kept approval. Whoever can write your
 answers or plan file, or get a start link of the inbox, can approve, and that approval ends plan mode with no
 dialog; in plan mode Claude Code by default leaves a Bash write to its auto mode classifier, and with that off a
-Bash command you allowed by a rule may still write (measured on Claude Code 2.1.323 and 2.1.330, for a write the
-prompt said you asked for). Write and Edit did not write there, in a run that answered no prompt, so an ask was not
+Bash command you allowed by a rule may still write (measured on Claude Code 2.1.323 and 2.1.330, with rules for
+python3, cp and tee, for a write the prompt said you asked for). Write and Edit did not write there, in a run that answered no prompt, so an ask was not
 told from a deny; Claude Code's own plan file is written in plan mode with no ask. Other installed plugins' mods are
 trusted. After an Esc, the message waits for your
 next turn, and a notice says so. The mod stops that command at /clear, at /resume and when you approve a plan in
@@ -117,7 +118,12 @@ Claude Code's own dialog, and quitting or restarting Claude Code ends it too. It
 Code's session state until the review is over and an
 approved plan went to that dialog. The mod sends one message at a time: a message from the inbox waits while the
 plan review's message does. The Plan
-review setting in /config turns this off (off); the default is inbox.
+review setting in /config turns this off (off); the default is inbox. Only the main conversation's plan is
+reviewed: a subagent's goes to Claude Code's own dialog. The plan review was tried by hand in the terminal on macOS in
+November 2026: on Claude Code 2.1.323, a plan held back, answered and the agent woken, with Ask for changes, an
+Esc, /clear and quitting; then, on 2.1.323 and 2.1.330, an approved plan going through with no second dialog, the
+approvals written by a script rather than on the page. In the desktop app's Code tab and the VS Code extension's panel
+only its mechanism was tried, with a probe; the plan review itself is not tried there yet.
 
 Open and the /signoff:open command open a panel beside the chat. They run the signoff command's inbox rows once,
 which asks the running inbox for this project's open rounds and their open questions (numbers and one-line titles;
@@ -154,7 +160,9 @@ to the project's agent, and offers Scan this project for a project Uptick does n
 It reads the decisions files and the pictures, live mockups and text attachments they list, inside the topic
 folder, and the palette and light or dark the inbox kept, when there is one.
 It writes your answers next to them, as JSON and as Markdown, and a .gitignore in that folder if there is
-none. An answer you mark Private stays in the JSON for the agent, which is asked not to repeat it; the
+none. For a plan review, the signoff command writes the plan (plan-NN.md) and its round in a topic folder of the
+decisions folder, and an outcome file for each round of that topic it closes.
+An answer you mark Private stays in the JSON for the agent, which is asked not to repeat it; the
 Markdown copy leaves it out. It is not encrypted. With the Notes folder setting in /config set to a folder of
 your own (an absolute path outside the project and not under a dot folder; empty, the default, is off; not on
 Windows yet), a run that ends with Done also

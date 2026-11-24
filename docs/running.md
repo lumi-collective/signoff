@@ -138,7 +138,8 @@ beneath it (your own settings hooks, other mods) gives a decision or a block; th
 gets Claude Code's own dialog, as does that call after a reload of the mod while it waits (an approval itself is
 kept in Claude Code's session state and survives a reload), and under an organization's managed guard that runs no
 `classic` hooks of a mod (Claude Code's dialog then asks once more; this was not measured). After a `/cd` into
-another project the same plan is a new review there, and when the round's plan file no longer holds the plan, the
+another project the same plan is a new review there (Claude Code's own dialog where the inbox knows no project),
+and when the round's plan file no longer holds the plan, the
 answer is no approval: the agent is told it could not be read, and a new review follows. A rejection in Claude
 Code's own dialog (not an Esc there), or a prompt you send outside plan mode, ends an approval that waits; a
 `/rewind` does not.

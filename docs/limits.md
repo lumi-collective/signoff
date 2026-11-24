@@ -17,3 +17,15 @@
 - Every round in a folder must be valid, done ones included: a broken earlier round stops the run. The
   past-decisions page is the lenient view.
 - Marks are rectangles on pictures, not on boards.
+
+Plan review (how it works, and every case that gets Claude Code's own dialog: [Plan review](running.md#plan-review)):
+
+- It takes only the main conversation's plan. A subagent's plan, or a teammate's, gets Claude Code's own dialog
+  (by the code: a call with an agent id; neither was tried by hand).
+- Under an organization's managed guard that runs no `classic` hooks of a mod, Claude Code's dialog asks once more
+  after an approval. How plan review behaves there was not measured.
+- A Done that lands while the mod reloads (its waiting command gone, the next one not started yet) may reach the
+  agent twice: as a message from the inbox and as the review's own message.
+- A session that ends during a review leaves its round in the inbox. Your answer to it then reaches the project's
+  sessions as a message from the inbox, and approves nothing.
+- A `/rewind` does not end an approval that waits.

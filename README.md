@@ -53,6 +53,16 @@ sets that number, from 0 (no batch in the terminal) to 4.
 In the clip above, a small script stands in for the person at the browser (`media/demo/answer.py`): the terminal
 has no browser. It sends the same requests the page does.
 
+**Plan review.** While the [inbox](#the-inbox) runs, a plan waits on you in Signoff when Claude leaves plan mode
+(`ExitPlanMode`) in the main conversation. The plan is open on a Plan review round, where you can note single
+lines. You choose Approve the plan or Ask for changes, with a comment if you like, and press Done; there is no
+recommendation. Then the agent gets a message from the Signoff plugin. After Approve it calls ExitPlanMode again,
+that exact plan goes through once with no second dialog, and Claude Code goes back to the mode from before plan
+mode (the plugin sets none; seen in the terminal and the desktop app). After Ask for changes the agent reads your comment and notes and revises. If you
+pressed Esc meanwhile, the message waits for your next turn, and a notice says so. Set the plugin's Plan review
+option in `/config` to off to keep Claude Code's own dialog. Where it falls back to that dialog, and what it does
+not cover: [Plan review](docs/running.md#plan-review).
+
 ## Requirements
 
 Use Claude Code from the stable channel or newer.
@@ -79,6 +89,8 @@ Use Claude Code from the stable channel or newer.
 | Windows | Tried in a real Claude Code session: the page opened in Chrome and the answer reached the session. The test suite and the browser check also run in CI. |
 | Linux | The test suite runs in CI, with Python 3.9 and 3.13. A browser check runs there too: the server and the page in headless Chrome, with real mouse clicks, from the start link to Done (see [Development and tests](docs/development.md#development-and-tests)). Not tried in a real Claude Code session yet. |
 | Desktop app, VS Code extension | The mod tried on macOS on 2026-11-15, in the desktop app's Code tab and the VS Code extension's own panel: the line above the prompt, the panel beside the chat, the notice and the status line all showed, and the mod ran Signoff's command (`signoff inbox home`). A round run from there not tried yet. |
+| Plan review, terminal | Tried by hand on macOS. On 2026-11-22, on Claude Code 2.1.323: the plan held back and put on a round, the agent woken by the answer, Ask for changes, an Esc during the review, `/clear`, and quitting with a review open. On 2026-11-23, on 2.1.323 and 2.1.330: an approved plan went through with no second dialog, back in the mode from before plan mode (default and auto on both, accept edits on 2.1.323). Those approvals were written by a script, not on the page. |
+| Plan review, desktop app and VS Code | Only the mechanism, with a probe mod, on 2026-11-15: the plan reached the mod, the refusal kept plan mode, and the mod's message started a turn. In the desktop app, the answer the plan review now gives let the plan through with no dialog, back in auto mode. The plan review as built: not tried there yet. |
 | claude.ai (web, mobile) and Cowork | Not supported: the plugin does not install there. |
 | Chrome | Tested, headless, driven over the DevTools protocol. |
 | Firefox, Safari | Tested on macOS on 2026-11-14: the inbox page, a synthetic round, and the answers file written with `done: true`. Not tried on other systems. |
@@ -197,13 +209,15 @@ the app can find it. Other ways to build it, and the details: [docs/inbox.md](do
   setting moves the count to the status line or turns it off. The mod also hands an open session the messages you
   send its project from the inbox: it lists the project's `requests/` folder when its time changed, and only for a
   message it has not handed over runs `signoff inbox requests`, whose lines it sends as one prompt from the plugin
-  (also with the `hint` off). No background process stays in a session but a plan review's waiter while that review
-  is open (see [docs/security.md](docs/security.md)). The inbox and the macOS app are extra processes only when you
-  start them.
+  (also with the `hint` off). For a plan review the mod starts `signoff plan` with the plan on its stdin, never in
+  an argument; that command writes the plan as `plan-NN.md` and its round into a topic folder of your decisions
+  folder, and waits on that round until you answer. No other background process stays in a session (see
+  [docs/security.md](docs/security.md)). The inbox and the macOS app are extra processes only when you start them.
 - **Leaves your machine:** nothing from Signoff. The server listens on `127.0.0.1` only, the page loads nothing
   from outside, and there is no telemetry and no update check. A board's own script could still send data out over
   WebRTC, so boards hold synthetic data only.
 - **Written to disk:** the answers files, their Markdown copies and, when the folder has none, a `.gitignore`;
+  for a plan review, the plan and its round (and an outcome file for each round of the topic it closes);
   once the inbox has run, also locks, run notes, the hooks' notes of projects and sessions (no prompt or message)
   and the inbox's own files, all in the Signoff home; outside it, only on your click, Uptick's list of projects to
   scan, and with the Notes folder setting, a note per round done, in that folder (which may be synced by another
@@ -234,8 +248,9 @@ The rules in full: [docs/security.md](docs/security.md#security-model). The scop
 - Pictures, boards and attachments are read at start; changing a round's files while the page is open needs a
   restart.
 - Marks are rectangles on pictures, not on boards.
+- Plan review takes only the main conversation's plan: a subagent's gets Claude Code's own dialog.
 
-All of them: [docs/limits.md](docs/limits.md).
+All of them, with the plan review's: [docs/limits.md](docs/limits.md).
 
 ## Documentation
 

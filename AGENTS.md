@@ -118,7 +118,11 @@ Instructions for coding agents working on Signoff. The README says what it does 
   `inbox open --app` with its app opener (`APP_OPEN`) swapped for a stand-in and its app folders (`APP_DIRS`)
   for temporary ones: no test runs the real `open` or finds an installed app.
   `test_hooks.py` covers the hooks, the SessionStart hand-over, `inbox requests`,
-  `inbox done` and `hook.sh`.
+  `inbox done` and `hook.sh`. It also runs the mod's case table of project roots (the strict JSON between the two
+  `project_root cases` lines of `register.test.tsx`, which the kit runs against the mod's `projectRoot`) against
+  `project_root()`, so the copy and the original stay in step: a change to one needs the same change to the
+  other and to the table. The top folder's row pins only Python (in the kit's file table the mod would ask for
+  `//.git` there).
 - `examples/demo/`: synthetic decisions with mockups: `decisions.json` as one round, and the same questions as
   `round-01.json` to `round-04.json`, the source of the screenshots in the README and `docs/`; `boards/` holds a board.
 - `examples/history/`: a synthetic project for `--history`, its answers and outcome files committed.
@@ -378,7 +382,8 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   `trimEnd()` cut it) of at most `MAX_ATTACHMENT` in UTF-8; else `next(e)`, also with a review open. It then denies
   with fixed text (no path), keeps `{topic, text, phase, wake}` in `$.state` (`plan`), in review also `since` (the
   clock at the take-over, before the child), `after` (the highest round or plan number in the topic folder then, as
-  `signoff plan` numbers them, the folder found as it finds a relative one; absent when it cannot be known) and
+  `signoff plan` numbers them, the folder found as it finds a relative one, by a copy of `project_root()` that one
+  case table keeps in step (see `test_hooks.py` above); absent when it cannot be known) and
   `root` (that session root), all as they were through every respawn, an approval keeping `root`, the topic `<local date>-plan-<those 8>` from the session's first take-over, and starts `signoff plan`
   in that root, as every respawn does, with the plan on stdin and never in argv. The decisions, a child's end and a respawn run one at a time. While the
   child runs, any call gets the deny and that a review is already open, with no new round; with a review and no
@@ -417,7 +422,7 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   the wake, except such an answer's wake that still waits its turn behind a hand-over or another wake (this load's
   `isWakeDue`): another text then gets that fixed deny too, and the wake follows. A load takes no wake kept with
   another session's topic. An approval lets that exact text through once, in its root only (after a `/cd` into
-  another project the same text is a new review there): the state is made idle and the wake dropped before
+  another project the same text is a new review there; Claude Code's own dialog where the inbox knows no project): the state is made idle and the wake dropped before
   `await next(e)`, so two calls or a reload during the dialog get no second pass, and a rejected pass ends and
   stops nothing else (a review begun meanwhile stays). It passes only when that write took the approval and no
   interrupt came after it; else the call takes Claude Code's own path. While the passing call's `next(e)` runs,
@@ -428,7 +433,7 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   other, the plan equal to the approved text after the same trim and `planFilePath` as the passing call carried
   it, and only when the hooks beneath it (mods below, the user's settings hooks) give no `decision` and no
   `block` of their own, which go back unchanged; anything else they return (a `preventContinuation`) stays beside
-  the allow. Any other request, a later one and one with no window open get `next(e)`, Claude
+  the allow (Claude Code did not stop on a `continue: false` there, measured headless on 2.1.323 and 2.1.330). Any other request, a later one and one with no window open get `next(e)`, Claude
   Code's own dialog. Two same-text calls whose windows overlap cannot be told apart (measured once in three runs
   on 2.1.323), and either gets the same approved plan once. A call past its hook budget (the `.catch`) closes an
   open window, and a decision under way meanwhile opens none. A kept approval ends at a rejection in Claude Code's

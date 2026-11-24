@@ -40,8 +40,11 @@ or is too long, is not sent; a later session
 start with no other live session of the project hands it over). Whoever can write the home's `requests/` folder
 can put such a line before the agent; that folder is the user's own, in the 0700 home, as before.
 
-For a plan review (the `plan` setting, on by default while an inbox lives) the mod refuses the `ExitPlanMode` call
-with fixed text and runs `signoff plan --topic <date>-plan-<session> --folder <folder> [--resume]` in the session's
+For a plan review (the `plan` setting, on by default while an inbox lives) the mod has three hooks more: a tool hook
+on `ExitPlanMode`, a permission hook (Claude Code's `PermissionRequest`), which answers only the request described
+below, and a prompt hook (`UserPromptSubmit`), which reads only the prompt's permission mode, to end a kept
+approval when you left plan mode, and passes the prompt on unchanged. The tool hook refuses a main conversation's `ExitPlanMode` call with fixed text and runs
+`signoff plan --topic <date>-plan-<session> --folder <folder> [--resume]` in the session's
 root, with the plan on stdin and never in an argument. That process waits until you answer (at a reload of the mod
 it is started again with `--resume` in the root the review began in, and when what that finds is an answer older
 than the review, by its round's number, by the file's time or by its `saved`, the mod takes no answer from it and
@@ -50,22 +53,27 @@ command finds it: from the session's root up to the nearest folder with a `.git`
 stopped by `/clear`, `/resume` or an approval in Claude Code's own dialog, and ends when you quit or restart Claude
 Code. A root or folder setting with a control, format or separator character gets no plan review. The mod takes
 from it one line, the answers path, checked to be one line in that topic folder, and reads only `done`, `saved` and
-the plan item's `choice` and `source` from that file (4 MiB at most; a larger or unreadable one is no approval),
-and for an approval that round's `plan-NN.md`, which must hold exactly the plan it kept: what you saw. To
+the plan item's `choice` and `source` from that file (4 MiB at most; a larger or unreadable one is no approval).
+Only `done: true` with `choice` `approve` and `source` `user` is an approval, what the page saves when you press
+Done; it also needs that round's `plan-NN.md`, which must hold exactly the plan it kept: what you saw. To
 the session it sends fixed text and that path, never your words. An approval lets that exact plan text through
 once, in the session root the review began in, and is used up before Claude Code's dialog opens. The mod then
 answers that dialog's permission request itself (`allow`, with the request's own input and no mode, so Claude Code
 picks the mode). The request names no tool call, so the mod binds it by time: the one request for that exact plan,
 from the main conversation and with only the tool's known keys, that comes while the passing call waits, and only
 when no hook beneath it (your own settings hooks, other mods) gives a decision or a block, which goes back unchanged
-(what else they return stays beside the allow); any other request
+(what else they return stays beside the allow; Claude Code did not stop on a `continue: false` there, measured
+headless on 2.1.323 and 2.1.330); any other request
 gets Claude Code's own dialog. Two calls of the same plan at the same moment cannot be told apart, and either gets
 it once. A later rejection in Claude Code's own dialog (not an Esc there), or a prompt you send outside plan mode,
-ends a kept approval; a `/rewind` does not. Under a managed guard that runs no `classic` hooks, Claude Code's dialog asks
-after the approval (not measured). Whoever can write the answers or plan file, or get a start link of the inbox,
+ends a kept approval; a `/rewind` does not. Under a managed guard that runs no `classic` hooks of a mod, the tool
+hook still takes the plan over, and Claude Code's dialog asks after the approval (not measured). With
+`allowManagedModsOnly`, which runs no hook of a mod you installed, nothing is taken over, and plans get Claude
+Code's own dialog (not measured). Whoever can write the answers or plan file, or get a start link of the inbox,
 can approve, and that approval ends plan mode with no dialog. In plan mode Claude Code by default leaves a Bash
 write to the auto mode classifier (`useAutoModeDuringPlan`), and with that off a Bash command you allowed by a rule
-may still write (measured on Claude Code 2.1.323 and 2.1.330, for a write the prompt said you asked for). Write and
+may still write (measured on Claude Code 2.1.323 and 2.1.330, with rules for `python3`, `cp` and `tee`, for a
+write the prompt said you asked for). Write and
 Edit did not write there, in a run that answered no prompt, so an ask was not told from a deny; Claude Code's own
 plan file is written in plan mode with no ask. Other plugins' mods you installed are trusted: they can write the mod's session state and rewrite a
 tool's input.
@@ -105,6 +113,9 @@ script could still send data out over WebRTC, which no page policy blocks, so bo
 There is no telemetry and no update check.
 
 **Written to disk:** the answers files, their Markdown copies and, when the folder has none, a `.gitignore`;
+for a plan review, `signoff plan` writes the plan as `plan-NN.md` and its `round-NN.json` in the topic folder, each
+created new and never through a link, and an outcome file for each round of the topic it closes (its older open rounds, or its own when the
+inbox is older than the plugin);
 once the inbox has run, also the round locks, the run notes and the hooks' project and session notes and
 `waiting.flag` described under [the exit codes](running.md#running-it-yourself), and the inbox's own files and requests described in [the inbox's page](inbox.md#the-inbox), with the `.done`
 marks agents write; with the macOS app installed, the hooks' `launcher` link in the home; on your click, Uptick's scan list; with `--notes` (the Notes folder setting), a note per round done in that run, created in your notes folder and never written over ([the checks](running.md#notes-folder)). A folder another app syncs sends the notes where that app sends them. The mod and `signoff inbox requests` write nothing. The

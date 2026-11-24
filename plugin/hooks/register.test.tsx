@@ -4106,3 +4106,41 @@ for (const [why, options] of [
     expect(w.plan && 'after' in w.plan).toBe(false)
   })
 }
+
+// The mod's projectRoot and project_root() in signoff.py, on one table: tests/test_hooks.py runs the same cases
+// against signoff.py, so a change on one side alone fails there or here (the top folder's row pins Python only: at
+// / the mod would ask the kit for `//.git`). Keep the table strict JSON. A marker is a folder (dir), a file or a
+// link to a folder; the session folder is `from`, ROOT/src when absent; `root` null: none.
+type RootCase = { why: string; home?: string; from?: string; markers: Record<string, 'dir' | 'file' | 'link'>; root: string | null }
+// project_root cases: begin
+const PROJECT_ROOT_CASES: RootCase[] = [
+  {"why": "a .git folder marks the project", "markers": {"/work/demo/.git": "dir"}, "root": "/work/demo"},
+  {"why": "a .git file, as a worktree has, marks it too", "markers": {"/work/demo/.git": "file"}, "root": "/work/demo"},
+  {"why": "the nearest marker wins: a .signoff folder under an outer repository", "markers": {"/work/.git": "dir", "/work/demo/.signoff": "dir"}, "root": "/work/demo"},
+  {"why": "a .signoff that is a link marks nothing", "markers": {"/work/.git": "dir", "/work/demo/.signoff": "link"}, "root": "/work"},
+  {"why": "a .signoff that is a file marks nothing", "markers": {"/work/.git": "dir", "/work/demo/.signoff": "file"}, "root": "/work"},
+  {"why": "the session folder itself can be the root", "from": "/work/demo/src", "markers": {"/work/demo/src/.signoff": "dir", "/work/demo/.git": "dir"}, "root": "/work/demo/src"},
+  {"why": "the home folder is never one, and the look goes on above it", "home": "/work/demo", "markers": {"/work/demo/.git": "dir", "/work/.git": "file"}, "root": "/work"},
+  {"why": "a home folder above the project is skipped too", "home": "/work", "markers": {"/work/.git": "dir"}, "root": null},
+  {"why": "no marker up to the top", "markers": {}, "root": null},
+  {"why": "the top folder is never one", "markers": {"/.git": "dir"}, "root": null}
+]
+// project_root cases: end
+
+for (const c of PROJECT_ROOT_CASES) {
+  test(`the mod finds the project root as project_root() does: ${c.why}`, { options: { folder: 'notes' } }, async ($, on) => {
+    // A relative folder that is no marker, so the round planted at the expected root marks nothing itself.
+    const links: Record<string, string> = {}
+    for (const [path, kind] of Object.entries(c.markers)) if (kind === 'link') links[path] = '/work/elsewhere'
+    const { w, after } = world(on, { env: { HOME: c.home ?? HOME, SIGNOFF_INBOX_HOME: SO }, cwd: c.from ?? `${ROOT}/src`, links })
+    delete w.files[`${ROOT}/.git`]
+    for (const [path, kind] of Object.entries(c.markers)) {
+      // The kit's file table knows a folder, or a link's target, by what it holds.
+      w.files[kind === 'file' ? path : `${path}/HEAD`] = { text: '', mtimeMs: NOW }
+    }
+    if (c.root) w.files[`${c.root}/notes/${TOPIC}/round-03.json`] = { text: '{}', mtimeMs: NOW }
+    await reviewing($, w, after)
+    if (c.root) expect(w.plan?.after).toBe(3)
+    else expect(w.plan && 'after' in w.plan).toBe(false)
+  })
+}

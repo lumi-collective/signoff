@@ -1286,6 +1286,39 @@ class CliPlan(unittest.TestCase):
         self.answer(6, choice="revise")
         self.handed_over(proc, 6)
 
+    def test_the_past_decisions_page_opens_a_plan_topic(self):
+        # Old rounds stay readable: a topic as two plan reviews leave it, the first replaced, the second answered.
+        self.live()
+        first = self.start(self.argv())
+        self.waiting(first, 1)
+        first.kill()
+        first.communicate(timeout=20)  # its pid gone, so the next call closes its round
+        revised = b"# Plan\n\n1. Read\n2. Write"
+        second = self.start(self.argv(), stdin=revised + b"\n")
+        self.waiting(second, 2)
+        note = {"att": 0, "line": 3, "quote": "1. Read", "comment": "Read the tests first"}
+        record = done_record({"plan": {"choice": "revise", "comment": "Smaller steps", "source": "user",
+                                       "lines": [note]}})
+        write_outside(self.topic / "round-02.answers.json", record)
+        self.handed_over(second, 2)
+        server = signoff.make_history_server(self.project)
+        self.addCleanup(server.server_close)
+        view = server.view()
+        self.assertNotIn(str(self.base), json.dumps(view))
+        e = {x["file"]: x for x in view["entries"] if x["topic"] == PLAN_TOPIC}
+        self.assertEqual(sorted(e), ["round-01.json", "round-02.json"])
+        for name, plan in (("round-01.json", PLAN_KEPT), ("round-02.json", revised)):
+            self.assertEqual((e[name]["title"], e[name]["error"], e[name]["warning"]), ("Plan review", None, None), name)
+            attachment = e[name]["decisions"]["items"][0]["attachments"][0]
+            self.assertEqual((attachment["src"], attachment["text"]),
+                             ("plan-%s.md" % name[6:8], plan.decode("utf-8")), name)
+        self.assertEqual((e["round-01.json"]["status"], e["round-01.json"]["outcome"]),
+                         ("new", outcome_of("replaced by round-02")))
+        answered = e["round-02.json"]
+        self.assertEqual((answered["status"], answered["outcome"]), ("done", None))
+        plan = answered["answers"]["answers"]["plan"]
+        self.assertEqual((plan["choice"], plan["comment"], plan["lines"]), ("revise", "Smaller steps", [note]))
+
     def test_an_older_round_a_live_run_waits_on_is_left_alone(self):
         self.seed(1)
         self.seed(2)
