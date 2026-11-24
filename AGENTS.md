@@ -76,8 +76,6 @@ Instructions for coding agents working on Signoff. The README says what it does 
 - `THIRD_PARTY_NOTICES` and `plugin/THIRD_PARTY_NOTICES`: the same text, the credits and MIT text for the palettes'
   colours. The plugin copy is there because an install gets only `plugin/`; a test keeps the two equal.
 - `plugin/signoff/schema.json`: the decisions file's JSON Schema. A test keeps it in step with `signoff.py`.
-- `plugin/signoff/mcp_server.py`: the MCP server for other agents (stdio JSON-RPC, two non-blocking tools). Not
-  registered by the plugin.
 - `tests/theme_tokens.py`: the palettes' upstream colours mapped onto the page's tokens, with the contrast
   fixes; `python3 -I -B tests/theme_tokens.py` prints the page's theme part. Not needed at run time.
   `test_theme.py` fails while the page and its output differ, and measures its list of pairs on the page itself.
@@ -726,7 +724,6 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   Every board response carries `BOARD_CSP` (`sandbox allow-scripts`, nothing loaded from outside),
   and the page embeds it with `sandbox="allow-scripts"` and never `allow-same-origin`.
 - **The past-decisions page is read only.** No POST route answers there (405), nothing is written.
-- **The MCP server never returns a token or a start link**, and removes only its own temporary files.
 - **Agent text is never HTML.** The page uses `textContent` and DOM methods only: no `innerHTML`, no inline
   `style` attribute, no inline event handler. A test greps the assembled page, every part in, for these.
 - **The CSP stays strict.** Every executable script and style element carries the nonce (the inert JSON data
@@ -1111,8 +1108,7 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   says `no browser opened` under its link). In an SSH session (`SSH_CONNECTION` or `SSH_TTY` set and not empty)
   with no `BROWSER` set (VS Code's Remote-SSH terminal sets one that opens the link on the user's computer),
   a run, `--history` and `inbox open` try no browser (`ssh_without_browser()`) and print the link on stderr with
-  the `no browser opened` line the skills key on; the MCP server, with its own copy of the rule (a test keeps
-  the two equal), then hands out its link file, as with `open_browser: false`. Nothing else changes there; the mod's panel rows never read `inbox open`'s stderr, so over SSH a row opens
+  the `no browser opened` line the skills key on. Nothing else changes there; the mod's panel rows never read `inbox open`'s stderr, so over SSH a row opens
   nothing visible (a known limit, as on any machine without a browser). A browser a run or `open` starts gets `/dev/null` for each of
   stdout and stderr that is not a terminal (`_open_browser`), so it writes nothing there and holds no caller's
   pipe open (on Linux the stdlib starts `xdg-open` or `gio` with them). `signoff plan` is no exception: its one

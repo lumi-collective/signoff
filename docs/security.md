@@ -131,8 +131,7 @@ inbox is older than the plugin);
 once the inbox has run, also the round locks, the run notes and the hooks' project and session notes and
 `waiting.flag` described under [the exit codes](running.md#running-it-yourself), and the inbox's own files and requests described in [the inbox's page](inbox.md#the-inbox), with the `.done`
 marks agents write; with the macOS app installed, the hooks' `launcher` link in the home; on your click, Uptick's scan list; with `--notes` (the Notes folder setting), a note per round done in that run, created in your notes folder and never written over ([the checks](running.md#notes-folder)). A folder another app syncs sends the notes where that app sends them. The mod and `signoff inbox requests` write nothing. The
-past-decisions page writes nothing. Nothing is deleted, with two narrow exceptions: the MCP server removes its own
-temporary files, and a starting inbox removes the socket a stopped inbox left in the Signoff home, and only that.
+past-decisions page writes nothing. Nothing is deleted, with one narrow exception: a starting inbox removes the socket a stopped inbox left in the Signoff home, and only that.
 The `launcher` link, when it points elsewhere, is replaced by renaming a new link over it.
 
 ## Security model
