@@ -238,20 +238,6 @@ func openInbox(launcher, home string) (string, int, error) {
 // askInbox checks the home and inbox.json before it asks the control socket for a start link, then checks the link.
 // A file written halfway through a restart fails the port check, and the caller asks again.
 func askInbox(home string) (string, int, error) {
-	return checkedLink(home, controlOpen)
-}
-
-// pendingLink asks the running inbox for the start link to the target `signoff inbox open --app` left for this app,
-// with askInbox's checks: "" (and no error) when none waits.
-func pendingLink(home string) (string, int, error) {
-	link, port, err := checkedLink(home, controlPending)
-	if err == errNone {
-		return "", 0, nil
-	}
-	return link, port, err
-}
-
-func checkedLink(home string, ask func(sock string) (string, error)) (string, int, error) {
 	if err := ownFolder(home); err != nil {
 		return "", 0, err
 	}
@@ -259,7 +245,7 @@ func checkedLink(home string, ask func(sock string) (string, error)) (string, in
 	if err != nil {
 		return "", 0, err
 	}
-	link, err := ask(filepath.Join(home, "inbox.sock"))
+	link, err := controlOpen(filepath.Join(home, "inbox.sock"))
 	if err != nil {
 		return "", 0, err
 	}
@@ -316,30 +302,6 @@ func controlOpen(sock string) (string, error) {
 		return "", errors.New("the inbox gave no link")
 	}
 	return *reply.Link, nil
-}
-
-var errNone = errors.New("no target waits for the app")
-
-// controlPending takes the app's pending target from the inbox (app_open): its start link, to that item in Focus or
-// to the list when it is gone. errNone when none waits.
-func controlPending(sock string) (string, error) {
-	line, err := control(sock, map[string]string{"op": "app_open"})
-	if err != nil {
-		return "", err
-	}
-	var reply map[string]json.RawMessage
-	if json.Unmarshal(line, &reply) != nil {
-		return "", errors.New("the inbox gave no answer this app knows")
-	}
-	raw, ok := reply["link"]
-	if ok && string(raw) == "null" {
-		return "", errNone
-	}
-	var link string
-	if !ok || json.Unmarshal(raw, &link) != nil || link == "" {
-		return "", errors.New("the inbox gave no link")
-	}
-	return link, nil
 }
 
 // inboxPort reads inbox.json and returns the inbox's port, once its schema is one this app knows.

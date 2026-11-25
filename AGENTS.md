@@ -92,13 +92,11 @@ Instructions for coding agents working on Signoff. The README says what it does 
   server process itself (a
   launcher that execs, as `plugin/bin/signoff` does): the suite stops it with kill, SIGINT, SIGTERM and SIGHUP. Its `Inbox` class
   starts `<command> inbox serve` and takes start links from the control socket; its `InboxOldOps` class starts
-  another for a `runs/` entry it writes by hand (a waiter with the suite's own pid) and checks that `offer` and
-  `accept` get the unknown-request reply and write nothing, and that a plain `open` with an `offer` key gives the
-  list's link; its `InboxRows` class starts a third for a project's `runs/` entry and asks
-  it for `rows`, on the socket and through `<command> inbox rows <folder>`, and for `open` with a row's target,
-  on the socket and through `<command> inbox open --run <n> --focus <round>/<item> --inbox <k>`, and for
-  `app_target` and `app_open` on the socket only (`--app` runs `open -a`, and an app started that way gets none
-  of the suite's environment); its `InboxTodoPath` class starts a fourth for projects whose `todo` key names a
+  another for a `runs/` entry it writes by hand (a waiter with the suite's own pid) and checks that `offer`,
+  `accept`, `app_target` and `app_open` get the unknown-request reply and write nothing, and that a plain `open`
+  with an `offer` key gives the list's link; its `InboxRows` class starts a third for a project's `runs/` entry and
+  asks it for `rows`, on the socket and through `<command> inbox rows <folder>`, and for `open` with a row's target,
+  on the socket and through `<command> inbox open --run <n> --focus <round>/<item> --inbox <k>`; its `InboxTodoPath` class starts a fourth for projects whose `todo` key names a
   file inside the root, or one out of it (`..`, an absolute path, a link), too big or not a file, and checks the
   list page and messages; its `InboxRequests` class writes request files into the home by hand and runs `<command>
   inbox requests <folder> <project> <id>…` with no inbox (its JSON line, the ids gone, its refusals, a folder in
@@ -122,8 +120,7 @@ Instructions for coding agents working on Signoff. The README says what it does 
   inbox in process: the `todo.md` reader and the `todo` key, the Markdown tree, routes, pairs, locks, the waiter it wakes, messages,
   the theme it keeps, the ops it no longer knows, the panel's rows and their targets, the
   `elsewhere` op (its refusals, any other error, rows with a mark, a round lock the command held), and
-  `inbox open --app` with its app opener (`APP_OPEN`) swapped for a stand-in and its app folders (`APP_DIRS`)
-  for temporary ones: no test runs the real `open` or finds an installed app.
+  `inbox open --app`, a usage error, run with the process starters and the browser stubbed.
   `test_hooks.py` covers the hooks, the SessionStart hand-over, `inbox requests`,
   `inbox done` and `hook.sh`. It also runs the mod's case table of project roots (the strict JSON between the two
   `project_root cases` lines of `register.test.tsx`, which the kit runs against the mod's `projectRoot`) against
@@ -226,11 +223,11 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
 - **The inbox hands out start links only on its control socket.** `inbox.sock` in the Signoff home: a Unix
   socket, 0600, in the 0700 home; one JSON line in (`{"op": "open"}`, `{"op": "stop"}`,
   `{"op": "rows", "project": <id>}`,
-  `{"op": "open", "run": <n>, "round": <n>, "item": <n>, "inbox": <n>}`, the same four with `"op": "app_target"`,
-  `{"op": "app_open"}`, or `{"op": "elsewhere", "round": <path>, "item": <id>, "note": <text>}` (see the
-  elsewhere rule); at
+  `{"op": "open", "run": <n>, "round": <n>, "item": <n>, "inbox": <n>}`, or `{"op": "elsewhere", "round": <path>,
+  "item": <id>, "note": <text>}` (see the elsewhere rule); at
   most 4 KiB), one out. Any other op gets the unknown-request reply, `{error}` with no link or token: so do
-  `offer` and `accept`, which a 0.3.0 or 0.4.0 app still sends. A plain `open` ignores keys it does not know, so
+  `offer` and `accept`, which a 0.3.0 or 0.4.0 app still sends, and `app_target` and `app_open`, which a 0.4.0
+  panel's App button and its app send. A plain `open` ignores keys it does not know, so
   such an app's `{"op": "open", "offer": <id>}` gets the list's link. Each `open`
   makes a pair: a start link that works once within `START_TTL` seconds, and the page token it
   opens, closed after `PAGE_IDLE` seconds without a request. A second use, or a late first one, gets 410 (404 once
@@ -272,29 +269,8 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   once, in any order; plain decimal numbers) asks for it, starting an inbox as `open` does (a new one has another
   number, so its link is the list's). The mod runs it for a row:
   an item's row opens that item, a round's row its `item`, All projects the plain `open`. A rows reply that lists
-  a round without `item`, or rounds without `inbox`, is another shape to the mod.
-- **A panel row for the app is kept in the inbox's memory, never in a URL.** `app_target` takes exactly `run`,
-  `round`, `item` and `inbox` (the panel row rule's numbers, and no other key; else `{error}`) and answers
-  `{ok: true}`: the inbox keeps that one target for the app, in memory only, the last one kept winning, for
-  `APP_TARGET_TTL` (60) seconds of awake time, as a launch takes seconds. `app_open` (no other key) takes it
-  once: `{link}`, a start link as `open` with those
-  numbers gives (that item in Focus, or the list when it is gone, done or from another inbox), or `{link: null}`
-  when none waits (a late one, a used one, an inbox restarted since). Nothing else takes it. `signoff inbox open
-  --app --run <n> --focus <round>/<item> --inbox <k>` (macOS only; the four in any order, without `--no-open`)
-  first finds the app where the mod looks (`APP_DIRS`): the first `Signoff.app` in `/Applications`, then
-  `~/Applications`, that is a folder (not a link) owned by the user or root, whose `Contents/Info.plist` has
-  `CFBundleIdentifier` `io.github.lumi-collective.signoff.inbox`; with none it exits 1 and keeps nothing. Then it
-  keeps the target, and runs `/usr/bin/open -a <that app's path>` (`APP_OPEN`) with no other argument, so it
-  starts the copy it checked, not another one Launch Services knows. When that fails or runs past
-  `APP_OPEN_TIMEOUT` (20) seconds, within the mod's 30 for the whole command, it takes the target back with
-  `app_open` (the link is dropped, never printed; it takes whatever target waits). Its check is stricter than the
-  mod's (which follows a link and checks no owner), so a linked or another user's copy gets an App button whose
-  press says the app did not open. With no inbox answering, or one
-  that refuses the target (one stderr line), it opens the app all the same, which shows what it showed. It never starts an inbox.
-  `signoff inbox open --app` with no target (macOS only; not with `--no-open`) finds the app the same way, asks a
-  live inbox for `app_open` and drops the link (so a target an earlier press kept is not used; no inbox answering
-  is ignored), keeps nothing, and runs the same `open -a`; the app then shows what it showed.
-  There is no URL scheme: it would let any web page open the app.
+  a round without `item`, or rounds without `inbox`, is another shape to the mod. `--app` (which 0.4.0's panel
+  sent) is an argument it does not know: the usage error, before anything runs.
 - **`state.json` counts what waits, with no text.** The inbox alone writes it in the home, atomically, 0600:
   `schema, at, waiting, projects[{id, monogram, waiting}]`. `waiting` is the number of rows in Waiting on you
   (open rounds of live runs, orphan rounds, todo chains whose top item or a step is marked waiting, each once, and live sessions waiting on the
@@ -340,11 +316,7 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   projects, `q` Close. A pane that is not placed draws the same tree in the band, with no hotkey and Close on its
   heading row, until the engine places it (a wider terminal): one surface draws the list at a time, and the count
   row steps aside while the pane is shown. Each row runs `signoff inbox open` with its target (see the panel row
-  rule) and All projects the plain one. When the opening found the app (`Signoff.app` in `/Applications` or
-  `~/Applications` whose `Info.plist` names the bundle id, read through `$.fs`, never on a look), each round
-  and item row ends in an App button with no hotkey (Tab and Enter, or a click),
-  which runs `signoff inbox open --app` with the row's target, and so does All projects (or Open the inbox),
-  whose App button runs it with no target. All of these run one at a time (a
+  rule) and All projects the plain one. All of these run one at a time (a
   press while one runs does nothing), and read only its exit code, never its stdout or
   stderr (a start link may be there), and an error only by its name; the command's line goes to a toast, not the
   conversation (the command's output row would go into the model's requests). For origin `sdk`, as with
@@ -982,11 +954,9 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   or path in its title, body or identifier (`waiting`), and no user info (no `Data`). It has no actions, and the
   app registers no category. Any response to a banner only opens the window (a hidden one gets a fresh start link), also one to a
   banner a 0.3.0 or 0.4.0 app left in Notification Center (`offer-<k>`, Accept & send, Other answer…): the app
-  never asks the inbox for `offer` or `accept`.
-  When the app comes up (its start, and a reopen: a Dock click or `open -a` while it runs), and only then, the
-  main window first asks a live inbox for `app_open`; a link (checked as any start link) loads into it, before
-  the shown window's no-reload path, and none, an error reply or a failed ask leaves
-  today's behaviour. The menu bar panel, its menu and a banner never take the target.
+  never asks the inbox for `offer` or `accept`. Coming up (its start, and a reopen: a Dock click or `open -a`
+  while it runs) only shows the window: it asks the inbox for `open` and nothing else, never `app_open`
+  (`inbox_test.go` parses the source for every op it sends).
   The app never sends a choice. Quitting the app leaves the inbox running.
 - **stdout is answers paths and nothing else**, one per line, in tab order. Agents parse it. Messages go to
   stderr (`--notes` too: its notes print nothing on stdout, and each refusal or failure is one stderr line starting
@@ -994,8 +964,7 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   `signoff inbox hook` prints nothing but the SessionStart hand-over, `signoff inbox requests <folder> <project> <id>…` prints one JSON line, its
   reply, for the mod, and `signoff inbox rows <folder>` prints one JSON line, the `rows` reply (for a folder outside any
   project `{"rounds": [], "more": 0}`), for the mod. `signoff elsewhere` and `signoff inbox serve|open|stop|done`
-  print nothing on stdout
-  (`open --app` no link on stderr either); `open --no-open` prints its start
+  print nothing on stdout; `open --no-open` prints its start
   link on stderr, as a run does, and so does `open` when no browser opened (`webbrowser.open` False; a run then
   says `no browser opened` under its link). In an SSH session (`SSH_CONNECTION` or `SSH_TTY` set and not empty)
   with no `BROWSER` set (VS Code's Remote-SSH terminal sets one that opens the link on the user's computer),
@@ -1021,8 +990,7 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   port in use, each one line), 130 on Ctrl+C; `open`
   and `stop` exit 0, or 1 when no inbox answers (`open` also for a bad `SIGNOFF_PORT` when it would start one, and at once,
   not after its 15 s, when the inbox it started has ended and none other holds `inbox.lock`, as on a taken port); `open` with a target also exits 1 for a malformed target, and
-  `open --app` (with a target or none) exits 1 for a malformed one, off macOS, for a relative home, when no app is found where the mod looks, or
-  when `open -a` fails, else 0. `signoff inbox done <id>` exits 0 (also when marked before), or
+  `open --app` (with a target or none) exits 1 as a usage error. `signoff inbox done <id>` exits 0 (also when marked before), or
   1 when there is no such request. `signoff inbox rows <folder>` exits 0 with its line (outside any project
   without asking an inbox, which need not run), or 1 with nothing on
   stdout for a relative folder or home, when no inbox answers, or when the inbox answers without `rounds`.

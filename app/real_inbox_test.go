@@ -61,14 +61,13 @@ func TestRealInbox(t *testing.T) {
 	if _, _, err := askInbox(home); err != nil || !inboxAlive(home) {
 		t.Fatalf("the first inbox is gone: %v", err)
 	}
-	appTarget(t, launcher, home, dir)
+	oldAppOps(t, launcher, home, dir)
 }
 
-// appTarget keeps a panel row's numbers as the app's target, as `signoff inbox open --app` does (over the socket
-// here: the command runs `open -a`, which would start the installed app against the user's own home), and takes it
-// as the app does when it comes up: that item's start link once, then none, so the app shows what it showed. A
-// stale target gives the list. Expiry (APP_TARGET_TTL, a minute) is proved in-process in test_inbox.py.
-func appTarget(t *testing.T, launcher, home, dir string) {
+// oldAppOps sends what a 0.4.0 panel's App press and its app's start sent, app_target with the numbers of a live
+// round's item and then app_open, and gets the unknown-request error for both, with no link; the app's plain open
+// then gives the list, as it does when it comes up.
+func oldAppOps(t *testing.T, launcher, home, dir string) {
 	project := filepath.Join(dir, "project")
 	folder := filepath.Join(project, "topic")
 	if err := os.MkdirAll(filepath.Join(project, ".git"), 0o700); err != nil {
@@ -99,32 +98,15 @@ func appTarget(t *testing.T, launcher, home, dir string) {
 		out, _ := exec.Command(launcher, "inbox", "rows", folder).Output()
 		json.Unmarshal(out, &rows)
 	}
-	keep := func(inbox int) {
-		t.Helper()
-		line := fmt.Sprintf("{\"op\": \"app_target\", \"run\": %d, \"round\": %d, \"item\": 1, \"inbox\": %d}\n",
-			rows.Rounds[0].Run, rows.Rounds[0].Round, inbox)
-		if reply := rawControl(t, home, line); reply != "{\"ok\": true}\n" {
-			t.Fatalf("app_target: %q", reply)
+	target := fmt.Sprintf(`"run": %d, "round": %d, "item": 1, "inbox": %d`, rows.Rounds[0].Run, rows.Rounds[0].Round, rows.Inbox)
+	for _, line := range []string{"{\"op\": \"app_target\", " + target + "}\n", "{\"op\": \"app_open\"}\n"} {
+		if reply := rawControl(t, home, line); !strings.HasPrefix(reply, "{\"error\": \"unknown request") || strings.Contains(reply, "http") {
+			t.Fatalf("%s: %q", strings.TrimSpace(line), reply)
 		}
 	}
-	keep(rows.Inbox)
-	link, port, err := pendingLink(home)
-	if err != nil || checkLink(link, port) != nil {
-		t.Fatalf("no start link for the target: %v", err)
-	}
-	if to := landing(t, link); !strings.HasSuffix(to, fmt.Sprintf("/run/%d/#focus=0/second", rows.Rounds[0].Run)) {
-		t.Fatalf("the target's link goes to %q", to)
-	}
-	if link, _, err := pendingLink(home); link != "" || err != nil { // used once
-		t.Fatalf("a second take: link %v, err %v", link != "", err)
-	}
-	plain, _, err := openInbox(launcher, home) // what the app then does: the list
+	plain, _, err := openInbox(launcher, home)
 	if err != nil || strings.Contains(landing(t, plain), "/run/") {
 		t.Fatalf("the plain open: %v", err)
-	}
-	keep(rows.Inbox%(1<<31-1) + 1) // another inbox's number, as after a restart
-	if link, _, err := pendingLink(home); err != nil || strings.Contains(landing(t, link), "/run/") {
-		t.Fatalf("a stale target: %v", err)
 	}
 }
 

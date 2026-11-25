@@ -167,8 +167,7 @@ command from a todo file, and does not run on Windows yet. Everything about it i
 
 While the inbox runs, each Claude Code session shows above its prompt how much waits on you in its own project:
 `Signoff: 2 waiting`, with **Open** and **Hide**. **Open**, or `/signoff:open`, lists the project's open rounds and
-their questions in a panel beside the chat. A row opens that question in the browser. With the macOS app
-installed, its **App** button opens it in the app. The `hint` setting in `/config` moves the number to the status
+their questions in a panel beside the chat. A row opens that question in the browser. The `hint` setting in `/config` moves the number to the status
 line or turns it off. This needs a Claude Code that runs plugin mods.
 
 ## The macOS app
@@ -200,8 +199,7 @@ the app can find it. Other ways to build it, and the details: [docs/inbox.md](do
   open rounds, waiting todo items and its sessions waiting on a permission or an answer, this one included. The mod
   reads the count from the inbox's `state.json` every five seconds while an inbox lives, with no process for that.
   `/signoff:open` and its Open button list the project's open rounds in a panel (`signoff inbox rows`, once per
-  opening). Each row runs `signoff inbox open` for its question. With the macOS app installed, an App button beside
-  it runs `signoff inbox open --app`, which runs `open -a` with the path of the app copy it checked. The `hint`
+  opening). Each row runs `signoff inbox open` for its question. The `hint`
   setting moves the count to the status line or turns it off. The mod also hands an open session the messages you
   send its project from the inbox: it lists the project's `requests/` folder when its time changed, and only for a
   message it has not handed over runs `signoff inbox requests`, whose lines it sends as one prompt from the plugin

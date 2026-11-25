@@ -2406,12 +2406,6 @@ MAX_PANEL_TEXT = 200  # characters in each title of a rows reply (the mod's MAX_
 MAX_ROWS = 24  # rounds and items in a rows reply: at 12 bytes a character JSON-escaped, within one 64 KiB line
 TARGET = ("run", "round", "item", "inbox")  # an open's target: the numbers a rows reply gives, each below MAX_NUMBER
 MAX_NUMBER = 2 ** 31
-APP_ID = "io.github.lumi-collective.signoff.inbox"  # the macOS app's bundle id (app/Info.plist)
-APP_DIRS = ("/Applications", "~/Applications")  # where the mod looks for the app, so --app opens the copy it found
-APP_OPEN = ["/usr/bin/open", "-a"]  # then that copy's path; no URL scheme: one would open the app to any web page
-MAX_PLIST = 64 * 1024  # the mod's cap on a file it reads
-APP_TARGET_TTL = 60.0  # seconds of awake time a target waits for the app: a launch takes seconds
-APP_OPEN_TIMEOUT = 20  # seconds for `open -a`: within the mod's 30 for the whole command, so a take-back runs
 MAX_REQUEST_BODY = 32 * 1024  # a message on a todo item, as the page sends it
 MAX_REQUEST_TEXT = 1000  # characters in one message
 MAX_HANDOVER = 10  # pending requests a SessionStart hands over, and the mod asks `inbox requests` for at once
@@ -2838,8 +2832,7 @@ def control_line(op, **fields):
 def inbox_request(home, op, timeout=5.0, **fields):
     """Ask the running inbox over its control socket: "open" gives {"link": a new start link}, "stop" ends it;
     "rows" (with project=<id>) gives the mod's panel list, and "open" with its run, round, item and inbox numbers
-    opens one of its rows; "app_target" with those numbers keeps them for the app, whose "app_open" takes them once;
-    "elsewhere" (round, item, note) marks an item. OSError when no inbox answers."""
+    opens one of its rows; "elsewhere" (round, item, note) marks an item. OSError when no inbox answers."""
     with socket.socket(socket.AF_UNIX) as s:
         s.settimeout(timeout)
         s.connect(str(Path(home) / "inbox.sock"))
@@ -2893,7 +2886,6 @@ class InboxServer(_Server):
             # A group's number is never reused while this inbox lives, but a restart numbers the runs anew: rows
             # gives this number with them and an open's target sends it back, so an old row opens the list.
             self.number = secrets.randbelow(MAX_NUMBER - 1) + 1
-            self.app_target = None  # (a rows reply's numbers, monotonic time) the app's next app_open takes, once
             self.done_cache = {}  # answers path -> (stat key, whether it says done), for the orphan look
             self.round_locks = _RoundLocks()
             self.control = _control_socket(home / "inbox.sock")
@@ -3046,15 +3038,6 @@ class InboxServer(_Server):
                                 to = "run/%d/#focus=%d/%s" % (run, ri, r.decisions["items"][k]["id"])
         return self.new_pair(to)
 
-    def app_open(self):
-        """The app's start link for the target `inbox open --app` kept (as open_target gives it: that item, or the
-        list), taken once; None when none waits or it is older than APP_TARGET_TTL."""
-        with self.lock:
-            kept, self.app_target = self.app_target, None
-        if kept is None or time.monotonic() - kept[1] > APP_TARGET_TTL:
-            return None
-        return self.open_target(*kept[0])
-
     def mark_elsewhere(self, path, item_id, note):
         """signoff elsewhere for a round this inbox holds: mark the item through its run's own writer, at the round's
         rev, as a page save does. path is matched against the rounds held here as text; the file is never opened from
@@ -3146,16 +3129,6 @@ class InboxServer(_Server):
                 target = [req.get(k) for k in TARGET]
                 reply = ({"link": self.open_target(*target)} if "offer" not in req and all(map(_whole, target))
                          else {"error": "open takes run, round, item and inbox as whole numbers, all four or none"})
-            elif op == "app_target":
-                target = [req.get(k) for k in TARGET]
-                if sorted(req) == sorted(("op",) + TARGET) and all(map(_whole, target)):
-                    with self.lock:
-                        self.app_target = (target, time.monotonic())  # one: the last wins
-                    reply = {"ok": True}
-                else:
-                    reply = {"error": "app_target takes run, round, item and inbox as whole numbers, and nothing else"}
-            elif op == "app_open":
-                reply = {"link": self.app_open()} if list(req) == ["op"] else {"error": "app_open takes no other key"}
             elif op == "rows":
                 project = req.get("project")
                 reply = (self.rows(project) if isinstance(project, str) and HEX16.fullmatch(project)
@@ -3174,9 +3147,8 @@ class InboxServer(_Server):
             else:
                 reply = {"error": 'unknown request; send {"op": "open"}, {"op": "stop"}, '
                                   '{"op": "rows", "project": <id>}, {"op": "open", '
-                                  '"run": <n>, "round": <n>, "item": <n>, "inbox": <n>}, the same with "op": '
-                                  '"app_target", {"op": "app_open"}, or {"op": "elsewhere", "round": <path>, '
-                                  '"item": <id>, "note": <text>}'}
+                                  '"run": <n>, "round": <n>, "item": <n>, "inbox": <n>}, or {"op": "elsewhere", '
+                                  '"round": <path>, "item": <id>, "note": <text>}'}
             try:
                 conn.sendall((json.dumps(reply) + "\n").encode("utf-8"))
             except OSError:
@@ -3544,98 +3516,30 @@ def _inbox_serve():
 
 def _inbox_open_args(args):
     """`inbox open [--no-open] [--run <n> --focus <round>/<item> --inbox <k>]`, each once, in any order: the
-    numbers of a rows reply, or none of them; `--app` in place of `--no-open` takes them or none, for the macOS app."""
-    no_open, app, given, args = False, False, {}, list(args)
+    numbers of a rows reply, or none of them."""
+    no_open, given, args = False, {}, list(args)
     while args:
         arg = args.pop(0)
         if arg == "--no-open" and not no_open:
             no_open = True
-        elif arg == "--app" and not app:
-            app = True
         elif arg in ("--run", "--focus", "--inbox") and arg not in given and args:
             given[arg] = args.pop(0)
         else:
             given = None
             break
-    if given == {} and not app:
+    if given == {}:
         return _inbox_open(no_open)
-    if given == {} and not no_open:
-        return _inbox_open_app(None)
     number = r"(0|[1-9][0-9]{0,9})"
     found = given and len(given) == 3 and [re.fullmatch(number, given["--run"]),
                                            re.fullmatch(number + "/" + number, given["--focus"]),
                                            re.fullmatch(number, given["--inbox"])]
     target = found and all(found) and [int(found[0].group(1)), int(found[1].group(1)), int(found[1].group(2)),
                                        int(found[2].group(1))]
-    if not target or max(target) >= MAX_NUMBER or (app and no_open):
-        print("signoff: usage: signoff inbox open [--no-open] [--run <n> --focus <round>/<item> --inbox <k>], or "
-              "signoff inbox open --app [--run <n> --focus <round>/<item> --inbox <k>]", file=sys.stderr)
+    if not target or max(target) >= MAX_NUMBER:
+        print("signoff: usage: signoff inbox open [--no-open] [--run <n> --focus <round>/<item> --inbox <k>]",
+              file=sys.stderr)
         return EXIT_ERROR
-    if app:
-        return _inbox_open_app(dict(zip(TARGET, target)))
     return _inbox_open(no_open, dict(zip(TARGET, target)))
-
-
-def _app_path():
-    """The first Signoff.app in APP_DIRS that is a folder (not a link) of the user's or root's and whose Info.plist
-    names APP_ID, else None: a copy in the folders the mod looks in, where `open -b` could start another one Launch
-    Services knows."""
-    import plistlib  # here, not at the top: the hooks and the mod start Python often and never need it
-
-    for folder in APP_DIRS:
-        app = Path(os.path.expanduser(folder)) / "Signoff.app"
-        try:
-            st = os.lstat(str(app))
-            if not stat.S_ISDIR(st.st_mode) or st.st_uid not in (0, os.getuid()):
-                continue
-            plist = plistlib.loads(read_regular(app / "Contents" / "Info.plist", MAX_PLIST))
-        except Exception:  # OSError, and plistlib raises more kinds than it documents on a bad file
-            continue
-        if isinstance(plist, dict) and plist.get("CFBundleIdentifier") == APP_ID:
-            return str(app)
-    return None
-
-
-def _inbox_open_app(target):
-    """Keep a rows reply's numbers in the running inbox as the app's pending target, then open the macOS app found
-    where the mod looks (_app_path): when it comes up it asks the inbox for that target's link (app_open). With no
-    inbox to keep it (none runs, or it refuses) the app opens all the same, on what it shows today.
-    With no target (the panel's All projects row) it takes a waiting one back instead, so the app shows what it shows.
-    Neither the command line nor the app's arguments ever hold a link."""
-    if sys.platform != "darwin":
-        print("signoff: the Signoff app is for macOS only", file=sys.stderr)
-        return EXIT_ERROR
-    home = inbox_home()
-    if not home.is_absolute():
-        print("signoff: the Signoff home %s is not an absolute path" % home, file=sys.stderr)
-        return EXIT_ERROR
-    app, kept = _app_path(), False
-    if app is None:
-        print("signoff: the Signoff app did not open; is it installed?", file=sys.stderr)
-        return EXIT_ERROR
-    try:
-        if target is None:  # an earlier row's App press is not this one's: its link is dropped, never printed
-            inbox_request(home, "app_open")
-        else:
-            kept = "ok" in inbox_request(home, "app_target", **target)
-            if not kept:
-                print("signoff: the running inbox keeps no target for the app; restart it", file=sys.stderr)
-    except OSError:  # no inbox: the app starts one and shows its list
-        pass
-    try:
-        opened = subprocess.run(APP_OPEN + [app], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                                stderr=subprocess.DEVNULL, timeout=APP_OPEN_TIMEOUT).returncode == 0
-    except (OSError, subprocess.TimeoutExpired):
-        opened = False
-    if not opened:
-        try:
-            if kept:  # take the target back, so a later start of the app is not sent to it; its link is dropped
-                inbox_request(home, "app_open")
-        except OSError:
-            pass
-        print("signoff: the Signoff app did not open; is it installed?", file=sys.stderr)
-        return EXIT_ERROR
-    return EXIT_DONE
 
 
 PORT_HELP = "a port number from 1024 to 65535, or 0 for a random one"

@@ -46,8 +46,6 @@ declare module 'claude-code' {
       isToasted: boolean
       /** The panel's list from its last opening; null while it is read. */
       rows: PanelRows | null
-      /** Whether the macOS app was installed at the panel's last opening. */
-      hasApp: boolean
       /** Where the panel is drawn: its pane, the band (an open that was not placed), or nowhere. */
       where: 'pane' | 'band' | null
       /**

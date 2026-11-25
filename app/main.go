@@ -62,11 +62,11 @@ func main() {
 	})
 	shell.newTray()
 	shell.app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
-		go shell.activate()
+		go shell.show()
 		go shell.askNotifications()
 	})
 	shell.app.Event.OnApplicationEvent(events.Mac.ApplicationShouldHandleReopen, func(*application.ApplicationEvent) {
-		go shell.activate() // a Dock click, and `open -a` while the app runs
+		go shell.show() // a Dock click, and `open -a` while the app runs
 	})
 	if err := shell.app.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "signoff inbox app:", err)
@@ -93,41 +93,23 @@ func (s *appShell) notify(n int) {
 // show brings the window up. A hidden one (closed by the user) or none gets a fresh start link. A start that failed
 // is tried again here, so a Dock click after a fix works.
 func (s *appShell) show() {
-	s.bringUp(false)
-}
-
-// activate is show for the app coming up (its start, a Dock click, `open -a`): the window first takes the target
-// `signoff inbox open --app` left with the inbox, when one waits, and loads its start link. Only here: the menu
-// bar's panel, its menu and a banner never take it.
-func (s *appShell) activate() {
-	s.bringUp(true)
-}
-
-func (s *appShell) bringUp(pending bool) {
 	s.showing.Lock()
 	defer s.showing.Unlock()
 	if !s.ready() {
 		return
 	}
-	link, port := "", 0
-	alive := func() bool { return inboxAlive(s.home) }
-	if takesPending(pending, alive) {
-		link, port, _ = pendingLink(s.home) // a failed ask: as if none waits
-	}
 	s.mu.Lock()
 	win, hidden := s.win, s.hidden
 	s.mu.Unlock()
-	if windowStays(link != "", win != nil, hidden, alive, func() string { return inboxServer(s.home) }, s.winInbox) {
+	if windowStays(win != nil, hidden, func() bool { return inboxAlive(s.home) }, func() string { return inboxServer(s.home) }, s.winInbox) {
 		win.Show() // a minimised one comes back
 		win.Focus()
 		return
 	}
-	if link == "" {
-		var err error
-		if link, port, err = openInbox(s.launcher, s.home); err != nil {
-			s.fail(err.Error())
-			return
-		}
+	link, port, err := openInbox(s.launcher, s.home)
+	if err != nil {
+		s.fail(err.Error())
+		return
 	}
 	s.mu.Lock()
 	s.inbox, s.hidden = fmt.Sprintf("http://127.0.0.1:%d", port), false // before the load: the policy reads it
@@ -155,18 +137,11 @@ func (s *appShell) bringUp(pending bool) {
 	s.mu.Unlock()
 }
 
-// takesPending says whether to ask the inbox for the target it keeps: only on activate, and only from a live
-// inbox (no inbox, no target: one kept in a stopped inbox's memory is gone). alive is a func so that it runs only
-// when pending holds: it takes the inbox's lock for a moment.
-func takesPending(pending bool, alive func() bool) bool {
-	return pending && alive()
-}
-
-// windowStays says whether the window is only shown and focused: no link to load, a window the user did not
-// close, and its page from the inbox that runs now. On a stopped inbox a fresh link starts it again; on a
-// restarted one (same port or not) it opens its page. The probes are funcs, asked only when the rest holds.
-func windowStays(link, win, hidden bool, alive func() bool, server func() string, loaded string) bool {
-	return !link && win && !hidden && alive() && server() == loaded
+// windowStays says whether the window is only shown and focused: a window the user did not close, and its page
+// from the inbox that runs now. On a stopped inbox a fresh link starts it again; on a restarted one (same port or
+// not) it opens its page. The probes are funcs, asked only when the rest holds.
+func windowStays(win, hidden bool, alive func() bool, server func() string, loaded string) bool {
+	return win && !hidden && alive() && server() == loaded
 }
 
 // ready finds the launcher and the home once, and starts the badge; false (after a dialog) when it cannot. The

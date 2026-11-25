@@ -1353,9 +1353,9 @@ class InboxTodoPath(unittest.TestCase):
 
 @unittest.skipIf(sys.platform == "win32", "the inbox's control socket is a Unix socket; no inbox on Windows yet")
 class InboxOldOps(unittest.TestCase):
-    """Requests an older app sends to an inbox in a separate process: `offer` and `accept` are unknown requests and
-    write nothing, and a plain `open` with an `offer` key (or any other key it does not know) gives the list's start
-    link."""
+    """Requests an older app or panel sends to an inbox in a separate process: `offer`, `accept`, `app_target` and
+    `app_open` are unknown requests and write nothing, and a plain `open` with an `offer` key (or any other key it
+    does not know) gives the list's start link."""
 
     @classmethod
     def setUpClass(cls):
@@ -1415,6 +1415,22 @@ class InboxOldOps(unittest.TestCase):
                         {"op": "accept", "offer": "0" * 32, "choice": "one"}, {"op": "accept"}):
             self.assertEqual(self.ask(request), unknown, request)
         self.assertNotIn("http", unknown["error"])
+        self.assertFalse(os.path.exists(self.answers))
+        self.assertIsNone(self.proc.poll())
+
+    def test_app_target_and_app_open_are_unknown(self):
+        # A 0.4.0 panel's App press, then its app's start, with numbers that name the waiter's open item: the same
+        # numbers in an open land there, so an inbox that kept them would give the app that item's link.
+        number = self.ask({"op": "rows", "project": "f" * 16})["inbox"]
+        target = {"run": 0, "round": 0, "item": 0, "inbox": number}
+        resp = self.get(self.ask(dict(target, op="open"))["link"])
+        self.assertRegex(resp.getheader("Location"), r"^/[A-Za-z0-9_-]+/run/0/#focus=0/")
+        unknown = self.ask({"op": "ping"})
+        for request in (dict(target, op="app_target"), {"op": "app_open"}, {"op": "app_target"},
+                        {"op": "app_open", "offer": "f" * 32}):
+            self.assertEqual(self.ask(request), unknown, request)
+        for word in ("app_target", "app_open", "http", "127.0.0.1"):
+            self.assertNotIn(word, unknown["error"])
         self.assertFalse(os.path.exists(self.answers))
         self.assertIsNone(self.proc.poll())
 
@@ -1517,7 +1533,8 @@ class InboxRows(unittest.TestCase):
         for stale in ({"run": 1}, {"round": 1}, {"item": len(self.ids)}, {"inbox": number % (2 ** 31 - 1) + 1}):
             self.assertRegex(self.landing(self.ask(dict(good, **stale))["link"]), r"^/[A-Za-z0-9_-]+/$", stale)
         # Malformed: an error, and no link.
-        for bad in ({"run": True}, {"round": -1}, {"item": 1.0}, {"inbox": "1"}, {"run": 2 ** 31}, {"offer": "f" * 32}):
+        for bad in ({"run": True}, {"round": -1}, {"item": 1.0}, {"inbox": "1"}, {"run": 2 ** 31}, {"run": 10 ** 400},
+                    {"offer": "f" * 32}):
             self.assertEqual(sorted(self.ask(dict(good, **bad))), ["error"], bad)
         self.assertEqual(sorted(self.ask({"op": "open", "run": 0, "round": 0, "item": 0})), ["error"])  # not all four
         # The command: the same target, its start link on stderr with --no-open, nothing on stdout.
@@ -1533,28 +1550,6 @@ class InboxRows(unittest.TestCase):
                                  timeout=30)
             self.assertEqual((got.returncode, got.stdout), (1, ""), bad)
             self.assertNotIn("http", got.stderr, bad)
-        self.assertIsNone(self.proc.poll())
-
-    def test_a_target_kept_for_the_app_is_its_next_open_once(self):
-        # Only the socket: the command's --app runs `open -a`, and an app started that way gets none of this
-        # suite's environment (it would start against the user's own home).
-        number = self.ask({"op": "rows", "project": self.pid})["inbox"]
-        good = {"op": "app_target", "run": 0, "round": 0, "item": 1, "inbox": number}
-        self.assertEqual(self.ask({"op": "app_open"}), {"link": None})
-        self.assertEqual(self.ask(good), {"ok": True})
-        self.assertEqual(sorted(self.ask({"op": "open"})), ["link"])  # a browser's open leaves it
-        reply = self.ask({"op": "app_open"})
-        self.assertEqual(sorted(reply), ["link"])
-        self.assertRegex(self.landing(reply["link"]), r"^/[A-Za-z0-9_-]+/run/0/#focus=0/%s$" % re.escape(self.ids[1]))
-        self.assertEqual(self.ask({"op": "app_open"}), {"link": None})  # used once
-        self.ask(dict(good, inbox=number % (2 ** 31 - 1) + 1))  # another inbox's number: the list
-        self.assertRegex(self.landing(self.ask({"op": "app_open"})["link"]), r"^/[A-Za-z0-9_-]+/$")
-        for bad in ({"run": True}, {"round": -1}, {"item": 1.0}, {"inbox": "1"}, {"run": 2 ** 31}, {"run": 10 ** 400},
-                    {"offer": "f" * 32}, {"focus": "0/1"}):
-            self.assertEqual(sorted(self.ask(dict(good, **bad))), ["error"], bad)
-        self.assertEqual(sorted(self.ask({"op": "app_target", "run": 0, "round": 0, "item": 0})), ["error"])
-        self.assertEqual(sorted(self.ask({"op": "app_open", "offer": "f" * 32})), ["error"])
-        self.assertEqual(self.ask({"op": "app_open"}), {"link": None})  # nothing malformed was kept
         self.assertIsNone(self.proc.poll())
 
 

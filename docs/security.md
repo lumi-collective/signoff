@@ -86,18 +86,7 @@ agent wrote in a title stays, and so does the project's folder when the agent wr
 knows only its real path. The command starts no inbox, and the mod makes each title one line again before it draws
 it, so no terminal escape passes. Each row runs `signoff inbox open` (which starts the inbox when none runs), with
 only that row's numbers as arguments (the inbox maps them to the question; a stale one opens the list). The mod
-never reads its output, so no start link reaches the screen or the conversation. The mod writes nothing. Each
-opening of the panel (with `off` too) also reads `Signoff.app/Contents/Info.plist` in `/Applications` and
-`~/Applications`, to see whether the app is installed.
-
-A row's App button (macOS, the app installed) runs `signoff inbox open --app` with the same numbers. It checks the
-same two folders for the app (a real folder, not a link, owned by you or root, whose `Info.plist` names the app's
-bundle id). It leaves the numbers in the inbox's memory (one target, for at most a minute of awake time, used once
-by the app's next start or reopen, and taken back when the app does not open) and runs `open -a` with that app's
-path. So it starts the copy it checked, and no link is in any process argument. There is no URL scheme, which would
-let any web page open the app. The all-projects row's App button runs `signoff inbox open --app` with no numbers:
-it checks the app the same way, takes back a target an earlier press left (the link is dropped, never printed),
-keeps none, and runs the same `open -a`.
+never reads its output, so no start link reaches the screen or the conversation. The mod writes nothing.
 
 The inbox, when you start it, is one more Python process that runs until you stop it. It touches `inbox.lock` every
 two seconds, the mod's sign that it lives. The optional macOS app ([described here](inbox.md#the-macos-app)) is one more process while it runs. It runs

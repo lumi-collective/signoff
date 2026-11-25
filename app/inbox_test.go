@@ -1,6 +1,9 @@
 package main
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"net"
 	"os"
 	"os/exec"
@@ -98,38 +101,39 @@ func TestControlOpenTimesOut(t *testing.T) {
 	}
 }
 
-// The app's target from `signoff inbox open --app`: a link when one waits, errNone when none does, and an error for
-// any other answer; either way the app then does what it did.
-func TestControlPending(t *testing.T) {
-	got := make(chan string, 1)
-	sock := fakeControl(t, shortDir(t), "{\"link\": \"http://127.0.0.1:5/b/abc/\"}\n", got)
-	if link, err := controlPending(sock); err != nil || link != "http://127.0.0.1:5/b/abc/" {
-		t.Fatalf("link %q, err %v", link, err)
-	}
-	if req := <-got; req != "{\"op\":\"app_open\"}\n" {
-		t.Fatalf("request %q", req)
-	}
-	for name, reply := range map[string]string{
-		"none": "{\"link\": null}\n",
-	} {
-		t.Run(name, func(t *testing.T) {
-			if link, err := controlPending(fakeControl(t, shortDir(t), reply, nil)); err != errNone || link != "" {
-				t.Fatalf("link %q, err %v", link, err)
+// The app asks the inbox for one thing, a start link: coming up (its start, a Dock click, `open -a`) sends no other
+// op, such as the app_open an inbox no longer answers.
+func TestTheAppSendsOnlyOpen(t *testing.T) {
+	files, _ := filepath.Glob("*.go")
+	ops, checked := map[string]bool{}, 0
+	for _, name := range files {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(token.NewFileSet(), name, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		checked++
+		ast.Inspect(f, func(n ast.Node) bool {
+			if kv, ok := n.(*ast.KeyValueExpr); ok {
+				if k, ok := kv.Key.(*ast.BasicLit); ok && k.Value == `"op"` {
+					v, _ := kv.Value.(*ast.BasicLit)
+					if v == nil {
+						t.Errorf("%s: an op that is not a literal", name)
+					} else {
+						ops[v.Value] = true
+					}
+				}
 			}
+			if lit, ok := n.(*ast.BasicLit); ok && strings.Contains(lit.Value, "app_") {
+				t.Errorf("%s: %s", name, lit.Value)
+			}
+			return true
 		})
 	}
-	for name, reply := range map[string]string{
-		"junk":       "not json\n",
-		"no newline": "{\"link\": null}",
-		"link num":   "{\"link\": 5}\n",
-		"link empty": "{\"link\": \"\"}\n",
-		"error":      "{\"error\": \"unknown request\"}\n",
-	} {
-		t.Run(name, func(t *testing.T) {
-			if link, err := controlPending(fakeControl(t, shortDir(t), reply, nil)); err == nil || err == errNone {
-				t.Fatalf("no error, link %q", link)
-			}
-		})
+	if checked == 0 || len(ops) != 1 || !ops[`"open"`] {
+		t.Fatalf("ops %v in %d files", ops, checked)
 	}
 }
 

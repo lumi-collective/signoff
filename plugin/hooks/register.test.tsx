@@ -592,94 +592,55 @@ test('a rows command that fails or prints another shape still gives the panel, w
   await openCommand($)
   expect((await paneButtons($)).texts[0]).toBe('Signoff · no open rounds here')
   expect(rowsRuns(w)).toHaveLength(bad.length + 1)
-  // With the app, Open the inbox has its App button too.
-  w.files[PLIST] = { text: plist(), mtimeMs: NOW }
-  w.rowsOut = { stdout: '', exitCode: 1 }
-  await openCommand($)
-  expect((await paneButtons($)).buttons.map(b => [b.key, b.text])).toEqual([['all', 'Open the inbox'], ['app:all', 'App'], ['close', 'Close']])
 })
 
-const PLIST = `${HOME}/Applications/Signoff.app/Contents/Info.plist`
-const plist = (id = 'io.github.lumi-collective.signoff.inbox') =>
-  `<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0">\n<dict>\n\t<key>CFBundleIdentifier</key>\n\t<string>${id}</string>\n</dict>\n</plist>\n`
-const inApp = (run: number, focus: string) => [SIGNOFF, 'inbox', 'open', '--app', '--run', `${run}`, '--focus', focus, '--inbox', '7']
-const APP_OPENED = 'Signoff: opening the Signoff app'
-
-test('with the app installed each row has an App button, no hotkey, that opens its item in the app', async ($, on) => {
-  const { w } = world(on)
-  w.files[PLIST] = { text: plist(), mtimeMs: NOW }
+// A state from an older mod's load (a plugin update in a running session) may still hold hasApp: true. Each touch of
+// that key is logged, so the test sees it, and so is every path the mod asks $.fs.exists about.
+const oldAppState = {
+  name: 'oldappstate',
+  tier: 'prepend' as const,
+  register(on: On) {
+    on('fs.exists', async ($, e, next) => {
+      $.ui.log(`exists ${(e as { path?: string }).path}`)
+      return next(e)
+    })
+    on('state.get', async ($, e, next) => {
+      if ((e as { key?: string }).key !== 'hasApp') return next(e)
+      $.ui.log('hasApp read')
+      return { value: { value: true, version: 1 } }
+    })
+    on('state.set', async ($, e, next) => {
+      if ((e as { key?: string }).key !== 'hasApp') return next(e)
+      $.ui.log('hasApp written')
+      return { value: { isSet: true as const, version: 1 } }
+    })
+  },
+}
+test('with the app installed the panel has no App button, and the mod looks at nothing but the Signoff home and the session folder', { plugins: [oldAppState] }, async ($, on) => {
+  const { w, after } = world(on)
+  const plist = '<plist version="1.0"><dict><key>CFBundleIdentifier</key><string>io.github.lumi-collective.signoff.inbox</string></dict></plist>'
+  for (const folder of ['/Applications', `${HOME}/Applications`]) w.files[`${folder}/Signoff.app/Contents/Info.plist`] = { text: plist, mtimeMs: NOW }
+  // A round's row opens the item the inbox names for it, here not its first listed one.
   w.rowsOut.stdout = JSON.stringify({ ...ROWS, rounds: [{ ...ROWS.rounds[0], item: 2 }, ROWS.rounds[1]] })
+  w.state([{ id: ID, waiting: 1 }])
   await start($)
+  await after(5000)
   await openCommand($)
-  const { buttons } = await paneButtons($)
-  expect(buttons).toEqual([
-    { key: 'round:3/0', text: 'Pick the layout', hotkey: '1' },
-    { key: 'app:round:3/0', text: 'App', hotkey: undefined },
-    { key: 'item:3/0/1', text: '  · Two columns or one?', hotkey: '2' },
-    { key: 'app:item:3/0/1', text: 'App', hotkey: undefined },
-    { key: 'item:3/0/2', text: '  · Which filters?', hotkey: '3' },
-    { key: 'app:item:3/0/2', text: 'App', hotkey: undefined },
-    { key: 'round:5/1', text: 'Second round', hotkey: '4' },
-    { key: 'app:round:5/1', text: 'App', hotkey: undefined },
-    { key: 'all', text: 'All projects in the inbox', hotkey: 'a' },
-    { key: 'app:all', text: 'App', hotkey: undefined },
-    { key: 'close', text: 'Close', hotkey: 'q' },
-  ])
-  const panel = await $.ui.mount({ ...pane(), surface: 'terminal' })
-  // A round's row opens the item the inbox named for it, as in the browser; All projects' App the app, no target.
-  const pressed = [
-    ['app:item:3/0/1', inApp(3, '0/1')],
-    ['app:round:3/0', inApp(3, '0/2')],
-    ['app:round:5/1', inApp(5, '1/0')],
-    ['round:3/0', target(3, '0/2')],
-    ['app:all', [SIGNOFF, 'inbox', 'open', '--app']],
-  ] as const
-  for (const [key, argv] of pressed) {
-    await panel.press({ key })
-    expect(w.ran.at(-1)).toEqual(argv)
+  for (const surface of SURFACES) {
+    const { buttons } = await paneButtons($, surface)
+    expect(buttons.map(b => b.key)).toEqual(['round:3/0', 'item:3/0/1', 'item:3/0/2', 'round:5/1', 'all', 'close'])
   }
-  expect(w.toasts).toEqual([APP_OPENED, APP_OPENED, APP_OPENED, OPENED, APP_OPENED]) // not "the question is open": an older app shows the list
-  w.openExit = 1
-  await panel.press({ key: 'app:item:3/0/2' })
-  expect(w.toasts.at(-1)).toBe('Signoff: the app did not open; run signoff inbox open in a terminal to see the inbox')
-  // One `inbox open` at a time, an App press included.
-  let release = () => {}
-  w.openGate = new Promise(resolve => (release = resolve))
-  const before = w.ran.filter(argv => argv[2] === 'open').length
-  const presses = [panel.press({ key: 'app:item:3/0/1' }), panel.press({ key: 'item:3/0/1' })]
-  release()
-  await Promise.all(presses)
-  expect(w.ran.filter(argv => argv[2] === 'open').length).toBe(before + 1)
+  const panel = await $.ui.mount({ ...pane(), surface: 'terminal' })
+  await panel.press({ key: 'round:3/0' })
+  await panel.press({ key: 'all' })
   await panel.unmount()
-  expect(JSON.stringify([w.toasts, w.logs])).not.toContain('127.0.0.1')
-})
-
-test('no App button without the app bundle or with another bundle id', async ($, on) => {
-  const { w } = world(on)
-  await start($)
-  const appButtons = async () => (await paneButtons($)).buttons.filter(b => b.key?.startsWith('app:')).length
-  await openCommand($)
-  expect(await appButtons()).toBe(0) // none installed
-  w.files[PLIST] = { text: plist('io.github.lumi-collective.signoff.inbox.probe'), mtimeMs: NOW }
-  await openCommand($)
-  expect(await appButtons()).toBe(0)
-  w.files['/Applications/Signoff.app/Contents/Info.plist'] = { text: plist(), mtimeMs: NOW }
-  await openCommand($)
-  expect(await appButtons()).toBe(5) // the system's Applications folder counts too: four rows and All projects
-})
-
-test('in the band, All projects has an App button with no hotkey, which opens the app with no target', async ($, on) => {
-  const { w } = world(on, { isPlaced: false })
-  w.files[PLIST] = { text: plist(), mtimeMs: NOW }
-  await start($)
-  await openCommand($)
-  const ui = await $.ui.mount({ ...band(), surface: 'terminal' })
-  const buttons = await ui.findAll({ type: 'Button' })
-  expect(buttons.map(b => b.key).slice(-2)).toEqual(['all', 'app:all'])
-  for (const button of buttons) expect(button.props.hotkey).toBeUndefined()
-  await ui.press({ key: 'app:all' })
-  await ui.unmount()
-  expect([w.ran.at(-1), w.toasts]).toEqual([[SIGNOFF, 'inbox', 'open', '--app'], [APP_OPENED]])
+  expect(w.ran.filter(argv => argv[2] === 'open')).toEqual([target(3, '0/2'), [SIGNOFF, 'inbox', 'open']]) // no --app
+  const homes = (p: string) => [SO, MAC].some(h => p === h || p.startsWith(`${h}/`))
+  const exists = w.logs.filter(l => l.startsWith('exists ')).map(l => l.slice(7))
+  expect(exists).toContain(`${SO}/inbox.lock`) // the logging sees the mod's own calls
+  // The session folder: a stat of its real path, to find its project.
+  expect([...w.looked, ...w.reads, ...exists].map(p => p.replace(/^list:/, '')).filter(p => !homes(p))).toEqual([`${ROOT}/src`])
+  expect(w.logs.filter(l => l.startsWith('hasApp'))).toEqual([]) // a stored hasApp is neither read nor written
 })
 
 test('no rounds while the band counts some: the panel says the rest waits in the inbox', async ($, on) => {

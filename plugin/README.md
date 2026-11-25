@@ -131,15 +131,9 @@ inbox answered). Each row runs the signoff command's inbox open, which starts th
 your browser. A question's row opens at that question, a round's row at its first open question (its last when all
 are answered), and the row for all projects at the list. The mod never reads what that prints.
 
-On macOS, when the optional Signoff app is in an Applications folder (the mod reads its Info.plist when the panel
-opens), each round and question row also has an App button. It runs the signoff command's inbox open with --app,
-which leaves that question with the running inbox, in memory only, and runs open -a with the path of the app copy
-it checked in those folders. The app, as it comes up, asks the inbox for the question and opens it in its window.
-The row for all projects has an App button too, which leaves no question and brings the app up as it is.
-
 The Waiting hint setting in /config moves the number to the status line, or hides it (off). Off, the mod reads no
 count; it still hands over your messages from the inbox, and reads what the panel needs when you open it (the
-rows, the app's Info.plist). It writes nothing.
+rows). It writes nothing.
 
 The Signoff inbox runs only when you start it: ask your agent to open the Signoff inbox (or use the optional macOS
 app, built from the repository and not part of the plugin), and until you stop it: one

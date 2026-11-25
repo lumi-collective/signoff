@@ -6,7 +6,6 @@ import http.client
 import io
 import json
 import os
-import plistlib
 import re
 import socket
 import stat
@@ -1761,6 +1760,22 @@ class InboxControl(InboxTest):
             self.assertNotIn(word, unknown["error"])
         self.assertFalse((topic / "round-01.answers.json").exists())
 
+    def test_app_target_and_app_open_are_unknown_requests(self):
+        # A 0.4.0 panel's App press keeps a row's numbers, then its app takes them: here with a live round the
+        # numbers name, so an inbox that still kept them would hand out that item's link.
+        topic, e = self.case([one_round(question("q"), question("r"))])
+        self.start()
+        rows = self.ctl("rows", project=self.pid)
+        self.assertEqual([(r["run"], r["round"]) for r in rows["rounds"]], [(0, 0)])
+        unknown = self.ctl("ping")
+        target = {"run": 0, "round": 0, "item": 1, "inbox": rows["inbox"]}
+        for op, fields in (("app_target", target), ("app_open", {}), ("app_target", {}),
+                           ("app_open", {"offer": "f" * 32})):
+            self.assertEqual(self.ctl(op, **fields), unknown, (op, fields))
+        for word in ("app_target", "app_open", "http", "127.0.0.1"):
+            self.assertNotIn(word, unknown["error"])
+        self.assertFalse((topic / "round-01.answers.json").exists())
+
     def test_a_plain_open_ignores_keys_it_does_not_know(self):
         # A 0.3.0 or 0.4.0 app opens a banner's item with {"op": "open", "offer": <id>}: it gets the list.
         self.case([one_round(question("q"))])
@@ -2266,6 +2281,8 @@ class InboxTarget(InboxTest):
                      {"run": 2, "round": 0, "item": 0}, {"run": 0, "round": 0, "item": 0},
                      {"run": 1, "round": 0, "item": 0, "inbox": k % (2 ** 31 - 1) + 1}):
             self.assertIsNone(self.landing(**dict({"inbox": k}, **gone)), gone)
+        (topic / "round-01.answers.json").write_text(json.dumps(record({}, done=True)), encoding="utf-8")
+        self.assertIsNone(self.landing(run=1, round=0, item=0, inbox=k))  # done since the inbox started
         self.end(e)
         self.assertIsNone(self.landing(run=1, round=0, item=0, inbox=k))  # its run ended
         self.case([one_round(question("q"))])  # a new run: a new number, never the old one again
@@ -2296,7 +2313,7 @@ class InboxTarget(InboxTest):
         bad = [{"run": 0}, {"run": 0, "round": 0, "item": 0}, {"round": 0, "item": 0, "inbox": good["inbox"]},
                dict(good, offer="f" * 32)]
         for key in good:
-            for value in (True, False, -1, 0.0, 1.5, "0", None, [0], 2 ** 31):
+            for value in (True, False, -1, 0.0, 1.5, "0", None, [0], 2 ** 31, 10 ** 400):
                 bad.append(dict(good, **{key: value}))
         for target in bad:
             self.assertEqual(sorted(self.ctl("open", **target)), ["error"], target)
@@ -2315,239 +2332,6 @@ class InboxTarget(InboxTest):
         self.assertEqual((second["item"], second["items"]), (1, []))
         k = self.server.number
         self.assertEqual(self.landing(run=0, round=1, item=second["item"], inbox=k), "0/#focus=1/t")
-
-
-class InboxAppTarget(InboxTest):
-    """A panel row for the app: `app_target` keeps a row's numbers as the app's pending target (one, the last
-    wins, for APP_TARGET_TTL, in memory only) and `app_open` gives the app the start link to it once: that item in
-    Focus, or the list when it is gone; null when none waits. Nothing else takes it."""
-
-    case, end, ctl = InboxControl.case, InboxControl.end, InboxControl.ctl
-
-    def land(self, link):
-        """Where a start link's first visit goes, after the page token: None for the list."""
-        resp, _ = self.request("GET", link.split(self.host, 1)[1])
-        self.assertEqual(resp.status, 303)
-        return resp.getheader("Location").partition("/run/")[2] or None
-
-    def taken(self):
-        reply = self.ctl("app_open")
-        self.assertEqual(sorted(reply), ["link"], reply)
-        return reply["link"] and self.land(reply["link"])
-
-    def test_the_apps_next_open_takes_the_last_target_once(self):
-        self.case([one_round(question("q"), question("r"))])
-        self.start()
-        k = self.ctl("rows", project=self.pid)["inbox"]
-        self.assertEqual(self.ctl("app_open"), {"link": None})  # none waits: the app does what it does today
-        self.assertEqual(self.ctl("app_target", run=0, round=0, item=0, inbox=k), {"ok": True})
-        self.assertEqual(self.ctl("app_target", run=0, round=0, item=1, inbox=k), {"ok": True})  # the last wins
-        self.ctl("open")  # a browser's open does not take it
-        self.ctl("rows", project=self.pid)
-        self.assertEqual(self.taken(), "0/#focus=0/r")
-        self.assertEqual(self.ctl("app_open"), {"link": None})  # used once
-        self.ctl("app_target", run=0, round=0, item=0, inbox=k % (2 ** 31 - 1) + 1)  # another inbox's number
-        self.assertIsNone(self.taken())  # the list, as in the browser
-        self.ctl("app_target", run=0, round=0, item=2, inbox=k)  # out of range
-        self.assertIsNone(self.taken())
-        self.assertEqual(signoff.APP_TARGET_TTL, 60.0)  # a launch takes seconds
-        with mock.patch.object(signoff, "APP_TARGET_TTL", 0.0):
-            self.ctl("app_target", run=0, round=0, item=0, inbox=k)
-            time.sleep(0.02)
-            self.assertEqual(self.ctl("app_open"), {"link": None})  # expired
-        self.ctl("app_target", run=0, round=0, item=0, inbox=k)
-        self.stop()
-        self.start()  # memory only: a restarted inbox keeps none
-        self.assertEqual(self.ctl("app_open"), {"link": None})
-
-    def test_a_target_whose_round_is_done_since_gives_the_list(self):
-        topic, e = self.case([one_round(question("q"))])
-        self.start()
-        k = self.ctl("rows", project=self.pid)["inbox"]
-        self.ctl("app_target", run=0, round=0, item=0, inbox=k)
-        (topic / "round-01.answers.json").write_text(json.dumps(record({}, done=True)), encoding="utf-8")
-        self.assertIsNone(self.taken())
-        self.ctl("app_target", run=0, round=0, item=0, inbox=k)
-        self.end(e)
-        self.assertIsNone(self.taken())
-
-    def test_a_malformed_request_is_refused_and_keeps_nothing(self):
-        self.case([one_round(question("q"))])
-        self.start()
-        good = {"run": 0, "round": 0, "item": 0, "inbox": self.server.number}
-        bad = [{}, {"run": 0}, {"run": 0, "round": 0, "item": 0}, dict(good, offer="f" * 32), dict(good, focus="0/0"),
-               dict(good, link="http://127.0.0.1:1/b/x/")]
-        for key in good:
-            for value in (True, False, -1, 0.0, 1.5, "0", None, [0], 2 ** 31, 10 ** 400):
-                bad.append(dict(good, **{key: value}))
-        for fields in bad:
-            self.assertEqual(sorted(self.ctl("app_target", **fields)), ["error"], fields)
-        for fields in ({"offer": "f" * 32}, {"run": 0}, dict(good)):
-            self.assertEqual(sorted(self.ctl("app_open", **fields)), ["error"], fields)
-        self.assertEqual(self.ctl("app_open"), {"link": None})
-        self.assertEqual(self.ctl("app_target", **good), {"ok": True})
-        self.assertEqual(self.taken(), "0/#focus=0/q")
-
-    def test_open_app_keeps_the_target_then_opens_the_app_it_checked(self):
-        self.case([one_round(question("q"), question("r"))])
-        self.start()
-        k = self.ctl("rows", project=self.pid)["inbox"]
-        record_to = Path(self._tmp.name) / "opened.json"
-        app = fake_app(Path(self._tmp.name) / "Applications")
-        # Never the real `open`: an app started through it gets none of this process's environment, so it would
-        # start against the user's own home.
-        fake = [sys.executable, "-I", "-c", "import json, sys; json.dump(sys.argv[1:], open(sys.argv[1], 'w'))",
-                str(record_to)]
-
-        def cli(*args, app=fake, platform="darwin", home=self.home, dirs=(str(app.parent),)):
-            out, err = io.StringIO(), io.StringIO()
-            with mock.patch.object(signoff, "APP_OPEN", app), mock.patch.object(signoff.sys, "platform", platform), \
-                    mock.patch.object(signoff, "APP_DIRS", dirs), \
-                    mock.patch.dict(os.environ, SIGNOFF_INBOX_HOME=str(home)), \
-                    contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-                code = signoff.main(["inbox", "open"] + list(args))
-            for text in (out.getvalue(), err.getvalue()):
-                self.assertNotIn("http", text)
-                self.assertNotIn("/b/", text)
-            return code, out.getvalue()
-
-        target = ["--run", "0", "--focus", "0/1", "--inbox", str(k)]
-        self.assertEqual(cli("--app", *target), (0, ""))
-        # Only the app's path is added: no link in any argument.
-        self.assertEqual(json.loads(record_to.read_text(encoding="utf-8")), [str(record_to), str(app)])
-        self.assertEqual(signoff.APP_OPEN, ["/usr/bin/open", "-a"])
-        self.assertEqual(signoff.APP_DIRS, ("/Applications", "~/Applications"))
-        self.assertEqual(self.taken(), "0/#focus=0/r")
-        self.assertEqual(cli(*(target + ["--app"])), (0, ""))  # in any order
-        self.assertEqual(self.taken(), "0/#focus=0/r")
-        failing = [sys.executable, "-I", "-c", "raise SystemExit(1)"]
-        self.assertEqual(cli("--app", *target, app=failing), (1, ""))  # the app did not open: one stderr line, exit 1
-        self.assertEqual(self.ctl("app_open"), {"link": None})  # and its target was taken back
-        # One that runs past its time too, which ends before the mod's 30 s, so the take-back runs under the mod.
-        self.assertLess(signoff.APP_OPEN_TIMEOUT, 30)
-        slow = [sys.executable, "-I", "-c", "import time; time.sleep(30)"]
-        with mock.patch.object(signoff, "APP_OPEN_TIMEOUT", 0.5):
-            self.assertEqual(cli("--app", *target, app=slow), (1, ""))
-        self.assertEqual(self.ctl("app_open"), {"link": None})
-        record_to.unlink()
-        self.assertEqual(cli("--app", *target, dirs=()), (1, ""))  # no app checked: nothing opened, nothing kept
-        self.assertFalse(record_to.exists())
-        self.assertEqual(self.ctl("app_open"), {"link": None})
-        self.assertEqual(cli("--app", *target, platform="linux"), (1, ""))  # the app is macOS only
-        self.assertFalse(record_to.exists())
-        # No inbox answers (or one refuses): nothing kept, the app opens all the same and starts or
-        # shows the inbox's list itself.
-        self.assertEqual(cli("--app", *target, home=Path(self._tmp.name) / "none"), (0, ""))
-        self.assertTrue(record_to.exists())
-        self.assertFalse((Path(self._tmp.name) / "none").exists())  # nor is an inbox started for it
-        with mock.patch.object(signoff, "inbox_request", return_value={"error": "unknown request"}):
-            self.assertEqual(cli("--app", *target), (0, ""))
-
-    def test_open_app_without_a_target_drops_a_waiting_target_and_opens_the_app(self):
-        self.case([one_round(question("q"))])
-        self.start()
-        k = self.ctl("rows", project=self.pid)["inbox"]
-        record_to = Path(self._tmp.name) / "opened.json"
-        app = fake_app(Path(self._tmp.name) / "Applications")
-        # Never the real `open`, as above.
-        fake = [sys.executable, "-I", "-c", "import json, sys; json.dump(sys.argv[1:], open(sys.argv[1], 'w'))",
-                str(record_to)]
-
-        def cli(home=self.home, opener=fake):
-            out, err = io.StringIO(), io.StringIO()
-            with mock.patch.object(signoff, "APP_OPEN", opener), mock.patch.object(signoff.sys, "platform", "darwin"), \
-                    mock.patch.object(signoff, "APP_DIRS", (str(app.parent),)), \
-                    mock.patch.dict(os.environ, SIGNOFF_INBOX_HOME=str(home)), \
-                    contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-                code = signoff.main(["inbox", "open", "--app"])
-            for text in (out.getvalue(), err.getvalue()):
-                self.assertNotIn("127.0.0.1", text)
-                self.assertNotIn("/b/", text)
-            return code, out.getvalue()
-
-        # A target an earlier App press kept is not this press's: dropped before the app opens, as a starting app
-        # asks for it at once. This stand-in asks, as the app does, the moment it is run.
-        asked_to = Path(self._tmp.name) / "asked.json"
-        asking = [sys.executable, "-I", "-c",
-                  "import json, sys; from pathlib import Path; sys.path.insert(0, sys.argv[2]); import signoff; "
-                  "json.dump(signoff.inbox_request(Path(sys.argv[3]), 'app_open'), open(sys.argv[1], 'w'))",
-                  str(asked_to), os.path.dirname(SCRIPT), str(self.home)]
-        self.assertEqual(self.ctl("app_target", run=0, round=0, item=0, inbox=k), {"ok": True})
-        self.assertEqual(cli(opener=asking), (0, ""))
-        self.assertEqual(json.loads(asked_to.read_text(encoding="utf-8")), {"link": None})
-        self.assertEqual(cli(), (0, ""))
-        self.assertEqual(json.loads(record_to.read_text(encoding="utf-8")), [str(record_to), str(app)])
-        self.assertEqual(self.ctl("app_open"), {"link": None})
-        self.assertEqual(cli(), (0, ""))  # none waiting: the same
-        self.assertEqual(self.ctl("app_open"), {"link": None})  # and none kept
-        failing = [sys.executable, "-I", "-c", "raise SystemExit(1)"]
-        self.assertEqual(cli(opener=failing), (1, ""))
-        record_to.unlink()
-        none = Path(self._tmp.name) / "none"
-        self.assertEqual(cli(home=none), (0, ""))  # no inbox: the app opens all the same
-        self.assertTrue(record_to.exists())
-        self.assertFalse(none.exists())  # nor is an inbox started for it
-
-
-def fake_app(folder, bundle_id=signoff.APP_ID, fmt=None):
-    """A Signoff.app in folder whose Info.plist names bundle_id: only what `inbox open --app` checks."""
-    contents = Path(folder) / "Signoff.app" / "Contents"
-    contents.mkdir(parents=True)
-    (contents / "Info.plist").write_bytes(plistlib.dumps({"CFBundleIdentifier": bundle_id}, fmt=fmt or plistlib.FMT_XML))
-    return contents.parent
-
-
-@unittest.skipUnless(POSIX, "the app is for macOS: no os.getuid on Windows")
-class AppPath(unittest.TestCase):
-    """`inbox open --app` launches the copy it checked, as the mod does: the first Signoff.app in APP_DIRS that is a
-    folder (not a link) of the user's or root's, whose Info.plist names the app's bundle id; else none."""
-
-    def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.base = Path(self._tmp.name)
-        self.first, self.second = self.base / "Applications", self.base / "home" / "Applications"
-        self.second.mkdir(parents=True)
-
-    def tearDown(self):
-        self._tmp.cleanup()
-
-    def found(self):
-        with mock.patch.object(signoff, "APP_DIRS", (str(self.first), str(self.second))):
-            return signoff._app_path()
-
-    def test_the_first_checked_copy_is_the_one_launched(self):
-        self.assertIsNone(self.found())  # neither folder there or holding one
-        app = fake_app(self.second, fmt=plistlib.FMT_BINARY)
-        self.assertEqual(self.found(), str(app))
-        self.first.mkdir()
-        (self.first / "Signoff.app").symlink_to(app)  # a link to a good copy: not the copy checked
-        self.assertEqual(self.found(), str(app))
-        other = fake_app(self.base / "other")  # two good copies: the first folder's wins
-        with mock.patch.object(signoff, "APP_DIRS", (str(self.base / "other"), str(self.second))):
-            self.assertEqual(signoff._app_path(), str(other))
-        with mock.patch.object(signoff, "APP_DIRS", (str(self.second), str(self.base / "other"))):
-            self.assertEqual(signoff._app_path(), str(app))
-        if os.getuid() != 0:  # as root, the folder is root's and so passes
-            with mock.patch.object(signoff.os, "getuid", return_value=os.getuid() + 1):
-                self.assertIsNone(self.found())  # not the user's or root's
-        with mock.patch.dict(os.environ, HOME=str(self.base / "home")), \
-                mock.patch.object(signoff, "APP_DIRS", ("~/Applications",)):
-            self.assertEqual(signoff._app_path(), str(app))
-
-    def test_a_copy_with_another_or_no_bundle_id_is_skipped(self):
-        good = fake_app(self.second)
-        for name, plist in (("another id", None), ("not a plist", b"<plist"), ("not a dict", plistlib.dumps([1])),
-                            ("too large", plistlib.dumps({"CFBundleIdentifier": signoff.APP_ID,
-                                                          "Pad": "x" * signoff.MAX_PLIST}))):
-            with self.subTest(name):
-                bad = self.base / name
-                fake_app(bad, "io.github.lumi-collective.signoff.inbox.probe")
-                if plist is not None:
-                    (bad / "Signoff.app" / "Contents" / "Info.plist").write_bytes(plist)
-                with mock.patch.object(signoff, "APP_DIRS", (str(bad), str(self.second))):
-                    self.assertEqual(signoff._app_path(), str(good))
-        (self.first / "Signoff.app").mkdir(parents=True)  # no Info.plist
-        self.assertEqual(self.found(), str(good))
 
 
 class InboxLife(InboxTest):
@@ -3414,31 +3198,23 @@ class InboxCli(unittest.TestCase):
             self.assertNotIn("/b/", got.stderr, bad)
         self.assertEqual(self.run_cli("inbox", "stop").returncode, 0)
 
-    def test_open_app_refuses_a_bad_command_line_before_anything_runs(self):
-        record_to = Path(self._tmp.name) / "opened"
-        # The command with its app opener swapped for one that leaves a file, and a stand-in app to open: never the
-        # real `open`, nor an installed app.
-        apps = fake_app(Path(self._tmp.name) / "Applications").parent
-        code = ("import sys; sys.path.insert(0, %r); import signoff; signoff.APP_OPEN = [sys.executable, '-I', '-c', %r]; "
-                "signoff.APP_DIRS = (%r,); sys.exit(signoff.main(sys.argv[1:]))"
-                % (os.path.dirname(SCRIPT), "open(%r, 'w')" % str(record_to), str(apps)))
+    def test_open_app_is_a_usage_error_before_anything_runs(self):
+        # In process, with every way out stubbed: a signoff.py from before would run `open -a` on an installed app.
+        started = []
         target = ["--run", "0", "--focus", "0/0", "--inbox", "1"]
-        # A bare --app is valid (the panel's All projects row); with --no-open or twice it is not.
-        for bad in (["--app", "--no-open"], ["--app", "--app"], ["--app", "--no-open"] + target, ["--app", "--app"] + target,
-                    ["--app", "--run", "0", "--focus", "0/0"], ["--app", "--run", "x", "--focus", "0/0", "--inbox", "1"],
-                    ["--app", "--run", "0", "--focus", "0/0", "--inbox", "2147483648"], ["--app=1"] + target):
-            got = subprocess.run([sys.executable, "-I", "-B", "-c", code, "inbox", "open"] + bad, stdout=subprocess.PIPE,
-                                 stderr=subprocess.PIPE, universal_newlines=True, encoding="utf-8", env=self.env,
-                                 timeout=30)
-            self.assertEqual((got.returncode, got.stdout), (1, ""), (bad, got.stderr))
-            self.assertIn("usage", got.stderr, bad)
-            self.assertFalse(record_to.exists(), bad)
-        self.assertFalse(self.home.exists())  # no inbox started either
-        if sys.platform == "darwin":  # the swap holds: a good command line runs the stand-in
-            got = subprocess.run([sys.executable, "-I", "-B", "-c", code, "inbox", "open", "--app"] + target,
-                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True,
-                                 encoding="utf-8", env=self.env, timeout=30)
-            self.assertEqual((got.returncode, got.stdout, record_to.exists()), (0, "", True), got.stderr)
+        for args in (["--app"], ["--app"] + target, target + ["--app"], ["--app", "--no-open"], ["--app", "--app"]):
+            out, err = io.StringIO(), io.StringIO()
+            with mock.patch.object(signoff.subprocess, "run", side_effect=lambda *a, **k: started.append(a)), \
+                    mock.patch.object(signoff.subprocess, "Popen", side_effect=lambda *a, **k: started.append(a)), \
+                    mock.patch.object(signoff.webbrowser, "open", side_effect=lambda *a, **k: started.append(a)), \
+                    mock.patch.dict(os.environ, SIGNOFF_INBOX_HOME=str(self.home)), \
+                    contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = signoff.main(["inbox", "open"] + args)
+            self.assertEqual((code, out.getvalue()), (1, ""), args)
+            self.assertIn("usage", err.getvalue(), args)
+            self.assertNotIn("--app", err.getvalue(), args)  # the usage line names it no more
+        self.assertEqual(started, [])  # nothing opened, no inbox started
+        self.assertFalse(self.home.exists())
 
     def test_open_starts_a_detached_inbox_with_its_log_in_the_home(self):
         opened = self.run_cli("inbox", "open", "--no-open")

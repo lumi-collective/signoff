@@ -70,7 +70,6 @@ const hiddenA = atom({ plugin: 'signoff', key: 'hiddenFor' } as const, null)
 const toastedA = atom({ plugin: 'signoff', key: 'isToasted' } as const, false)
 const rowsA = atom({ plugin: 'signoff', key: 'rows' } as const, null)
 const whereA = atom({ plugin: 'signoff', key: 'where' } as const, null)
-const hasAppA = atom({ plugin: 'signoff', key: 'hasApp' } as const, false) // in state: a mod reload keeps the rows too
 const requestsA = atom({ plugin: 'signoff', key: 'requests' } as const, null) // a reload keeps it, a /clear empties it
 const planA = atom({ plugin: 'signoff', key: 'plan' } as const, null) // one key, so phase and wake are one write
 
@@ -869,40 +868,18 @@ type Target = { run: number; round: number; item: number; inbox: number }
 
 // `signoff inbox open` starts the inbox when needed and opens a fresh start link in the browser (with a target:
 // that item, or the list when it is gone). Its stderr may hold that link (no browser opened), so the mod reads
-// neither stream: only the exit code. With isApp, `--app` keeps the target (none: drops a waiting one) for the macOS
-// app and opens the app.
-async function openInbox($: Engine, target?: Target, isApp = false): Promise<string> {
+// neither stream: only the exit code.
+async function openInbox($: Engine, target?: Target): Promise<string> {
   if (look.isWindows || (await $.env.get('OS')) === 'Windows_NT') return 'Signoff: the inbox does not run on Windows yet'
   const to = target ? ['--run', `${target.run}`, '--focus', `${target.round}/${target.item}`, '--inbox', `${target.inbox}`] : []
   try {
-    const ran = await $.process.run([`${$.plugin.root}/bin/signoff`, 'inbox', 'open', ...(isApp ? ['--app'] : []), ...to], { timeoutMs: 30_000 })
-    // Not "the question is open": an app from before targets shows what it showed.
-    if (ran.exitCode === 0 && isApp) return 'Signoff: opening the Signoff app'
+    const ran = await $.process.run([`${$.plugin.root}/bin/signoff`, 'inbox', 'open', ...to], { timeoutMs: 30_000 })
     // Exit 0 also when no browser opened (SSH, no desktop): then the link is on stderr, which a terminal shows.
     if (ran.exitCode === 0) return 'Signoff: the inbox is open; no browser window? Run signoff inbox open in a terminal'
   } catch {
     // could not start, or ran past its time: the same line
   }
-  if (isApp) return 'Signoff: the app did not open; run signoff inbox open in a terminal to see the inbox'
   return 'Signoff: the inbox did not open; run signoff inbox open in a terminal to see why'
-}
-
-const APP_ID = 'io.github.lumi-collective.signoff.inbox' // app/Info.plist; `inbox open --app` checks the same folders
-// shortcut: only the two Applications folders, read once per panel opening with no process started; Launch Services
-// may know a copy elsewhere (app/bin of a checkout), which gets no App button. Ask it (mdfind) if that turns out to matter.
-async function findApp($: Engine): Promise<boolean> {
-  if (look.isWindows) return false
-  const home = await $.env.get('HOME')
-  for (const folder of ['/Applications', ...(isAbsolute(home) ? [`${home}/Applications`] : [])]) {
-    try {
-      const path = `${folder}/Signoff.app/Contents/Info.plist`
-      const stat = await $.fs.stat(path)
-      if (stat.kind === 'file' && stat.size <= MAX_FILE && (await $.fs.read(path)).includes(`<string>${APP_ID}</string>`)) return true
-    } catch {
-      // not there: the next folder
-    }
-  }
-  return false
 }
 
 // The inbox already makes each title one line; this holds for whatever the command printed: no control, format or
@@ -958,8 +935,6 @@ async function openPanel($: Engine, isPress: boolean) {
   // Not placed (no surface that places panes): the panel's tree draws in the band until the pane is placed.
   await update($, whereA, () => (opened.isPlaced ? 'pane' : 'band'))
   await update($, rowsA, () => null)
-  const hasApp = await findApp($)
-  await update($, hasAppA, () => hasApp)
   const rows = await fetchRows($)
   await update($, rowsA, () => rows)
 }
@@ -970,11 +945,11 @@ async function closePanel($: Engine) {
 }
 
 // One `signoff inbox open` at a time: a second press while one runs does nothing.
-async function goInbox($: Engine, target?: Target, isApp = false) {
+async function goInbox($: Engine, target?: Target) {
   if (look.isOpening) return
   look.isOpening = true
   try {
-    $.ui.toast(await openInbox($, target, isApp))
+    $.ui.toast(await openInbox($, target))
   } finally {
     look.isOpening = false
   }
@@ -992,27 +967,12 @@ async function drawPanel($: Engine, e: DrawInput, isBand: boolean) {
   const digit = () => (isBand || n >= 9 ? {} : { hotkey: String(++n) })
   const go = () => goInbox($)
   // Rows are drawn only from a reply that named the inbox.
-  const goTo = (run: number, round: number, item: number, isApp = false) => () =>
-    goInbox($, { run, round, item, inbox: rows?.inbox ?? 0 }, isApp)
-  // With the app, each row ends in an App button with no hotkey (a hotkey is one digit or letter, Shift folded,
-  // and 1-9 are the rows'): Tab and Enter, or a click.
-  const hasApp = await read($, hasAppA)
-  const row = (key: string, text: string, run: number, round: number, item: number) => {
-    const browser = (
-      <Button key={key} plain {...digit()} onPress={goTo(run, round, item)}>
-        {fit(text, w - (hasApp ? 11 : 6))}
-      </Button>
-    )
-    return hasApp ? (
-      <Box key={`row:${key}`} flexDirection="row" width={w}>
-        {browser}
-        <Box flexGrow={1} />
-        <Button key={`app:${key}`} plain dimColor label="App" onPress={goTo(run, round, item, true)} />
-      </Box>
-    ) : (
-      browser
-    )
-  }
+  const goTo = (run: number, round: number, item: number) => () => goInbox($, { run, round, item, inbox: rows?.inbox ?? 0 })
+  const row = (key: string, text: string, run: number, round: number, item: number) => (
+    <Button key={key} plain {...digit()} onPress={goTo(run, round, item)}>
+      {fit(text, w - 6)}
+    </Button>
+  )
   const listed = rows?.rounds.length ?? 0
   const waiting = await read($, countA) // the band's count: todo items and waiting sessions too
   const status = !rows
@@ -1048,7 +1008,6 @@ async function drawPanel($: Engine, e: DrawInput, isBand: boolean) {
       {list}
       <Box marginTop={1} gap={3} flexWrap="wrap">
         <Button key="all" plain {...(isBand ? {} : { hotkey: 'a' })} label={rows?.isFailed ? 'Open the inbox' : 'All projects in the inbox'} onPress={go} />
-        {hasApp ? <Button key="app:all" plain dimColor label="App" onPress={() => goInbox($, undefined, true)} /> : null}
         {isBand ? null : <Button key="close" plain hotkey="q" role="dismiss" label="Close" onPress={() => closePanel($)} />}
       </Box>
     </Box>
