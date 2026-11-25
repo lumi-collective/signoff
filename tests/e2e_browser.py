@@ -3770,7 +3770,8 @@ def run_plan(work):
         browser.call("Page.enable")
         browser.call("Page.navigate", url=link)
         wait_for("the plan round in Focus", lambda: browser.js(
-            "document.body.classList.contains('focusing') && !!document.querySelector('.item.cur[data-item=plan]')"))
+            "!!document.body && document.body.classList.contains('focusing') && "
+            "!!document.querySelector('.item.cur[data-item=plan]')"))
         press(browser, "Escape", "Escape", 27)
         shown = wait_for("the plan item", lambda: browser.js(PLAN_ANSWER))
         # Each label leads with its key's digit.
