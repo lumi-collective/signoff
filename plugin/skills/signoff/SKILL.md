@@ -115,7 +115,7 @@ committed: `git check-ignore -q "<folder>"`. Exit 1 means it is not ignored: tel
 If the task's output says `no browser opened`, give the user its link (it works once).
 Then tell the user in a line or two that the page is open and what it asks. Do not wait in a loop or poll
 the answers file: work on what does not depend on the answers, or end your turn. You are woken when
-Signoff exits. Settled an item in chat meanwhile? Mark it: see [answers.md](answers.md).
+Signoff exits.
 
 ## 3. Read the answers
 

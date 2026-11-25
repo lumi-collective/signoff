@@ -225,7 +225,6 @@
   function addMark(ri, item, k, b) {
     var list = marksOf(ri, item);
     if (list.length >= MAX_MARKS) return;
-    unmark(ri, item);  // a rectangle is the user's too
     list.push({image: k, box: b, comment: ''});
     selected = {ri: ri, id: item.id, n: list.length - 1};
     drawMarks(ri, item);

@@ -244,11 +244,6 @@
     // Private covers the item's text: comment, Other text, mark and line notes. No data-item and no name, so it is
     // never taken for one of the choices.
     var k = key(ri, item), lockable = item.comment || item.other || item.marks || item.lines;
-    // The agent marked the item decided elsewhere (signoff elsewhere): its note, filled in when the answers come in.
-    var away = el('p', 'readonly-note');
-    away.id = k + '-e';
-    away.hidden = true;
-    fs.prepend(away);
     if (lockable && item.sensitive && !rounds[ri].readonly) {  // the hint asks for an untick, so only where one can
       var sens = el('p', 'sens');
       sens.append(el('strong', '', L.sensTitle), document.createTextNode(L.sens));
@@ -311,17 +306,6 @@
     }
   });
   var sources = rounds.map(function () { return {}; });
-  var kept = rounds.map(function () { return {}; });  // items marked decided elsewhere: their saved choice and note
-  // The user's own answer wins over the mark: the item is theirs from then on, and the note goes.
-  function unmark(ri, item) {
-    if (!item || sources[ri][item.id] !== 'elsewhere') return;
-    sources[ri][item.id] = 'user';
-    byId(key(ri, item) + '-e').hidden = true;
-  }
-  function itemOf(ri, node) {
-    var card = node && node.closest('.item[data-item]');
-    return card && rounds[ri].decisions.items.filter(function (i) { return i.id === card.dataset.item; })[0];
-  }
   var show = 'all';  // the summary's filter; kept here because the summary is rebuilt on most changes
   var blockSeen = null;  // the answers the single round's summary block was last built from
   function setChoice(ri, item, values) {
@@ -417,13 +401,7 @@
       var chosen = a ? a.choice : (r.readonly ? null : item.recommended);
       setChoice(ri, item, chosen === undefined || chosen === null ? [] : (Array.isArray(chosen) ? chosen : [chosen]));
       var ta = byId(key(ri, item) + '-c');
-      if (a && a.source === 'elsewhere') {
-        // Kept as saved, so a save of another item sends it back; the note is the agent's, not the comment box's.
-        kept[ri][item.id] = {choice: a.choice, comment: a.comment || ''};
-        var gone = byId(key(ri, item) + '-e');
-        gone.textContent = L.elsewhere + (a.comment ? ': ' + a.comment : '');
-        gone.hidden = false;
-      } else if (ta && a) ta.value = a.comment;
+      if (ta && a) ta.value = a.comment;
       var other = byId(key(ri, item) + '-t');
       if (other && a && a.other !== undefined) other.value = a.other;
       var p = byId(key(ri, item) + '-p');
@@ -453,10 +431,6 @@
       var ta = byId(key(ri, item) + '-c');
       var a = {choice: item.select === 'many' ? picked : (picked.length ? picked[0] : null), comment: ta ? ta.value : '',
         source: sources[ri][item.id]};
-      if (a.source === 'elsewhere') {
-        a.choice = kept[ri][item.id].choice;
-        a.comment = kept[ri][item.id].comment;
-      }
       if (picked.indexOf(OTHER) >= 0) a.other = byId(key(ri, item) + '-t').value;
       if (item.marks) a.marks = marksOf(ri, item);
       if (item.lines) a.lines = noteList(ri, item).map(function (x) { return {att: x.att, line: x.line, quote: x.quote, comment: x.comment}; });
@@ -922,16 +896,15 @@
           var card = byId('panel-' + ri).querySelectorAll('.item[data-item]')[n];
           focusItem(card);
         });
-        var away = sources[ri][item.id] === 'elsewhere';  // settled in chat: no choice, and no overruled warning
-        li.append(go, el('span', 'summary-choice', away ? L.elsewhere : c.text));
+        li.append(go, el('span', 'summary-choice', c.text));
         var rec = recList(item), flags = [];
-        var same = away || (rec.length === c.picked.length && rec.every(function (x) { return c.picked.indexOf(x) >= 0; }));
+        var same = rec.length === c.picked.length && rec.every(function (x) { return c.picked.indexOf(x) >= 0; });
         if (rec.length && !same) flags.push(L.differs);
         if (c.picked.indexOf(OTHER) >= 0) flags.push(L.otherBadge);
         if (c.picked.indexOf(SKIP) >= 0) flags.push(L.skipped);
         var count = item.marks ? marksOf(ri, item).length : 0;
         if (count) flags.push(count === 1 ? L.markBadge : fmt(L.marksBadge, {n: count}));
-        var ta = byId(key(ri, item) + '-c'), note = away ? kept[ri][item.id].comment.trim() : ta ? ta.value.trim() : '';
+        var ta = byId(key(ri, item) + '-c'), note = ta ? ta.value.trim() : '';
         if (note) {
           flags.push(L.commentBadge);
           // The Summary is the view most likely to end up in a screenshot: a private comment is only named here.
@@ -1058,8 +1031,7 @@
   });
 
   // "Accept all" sets every item of the open round that has a recommendation to it, comments and marks untouched.
-  // A second click restores the choices from before; changing any item's options afterwards ends that undo. An item
-  // the agent marked decided elsewhere is neither set nor restored: once the user takes it back, it stays theirs.
+  // A second click restores the choices from before; changing any item's options afterwards ends that undo.
   acceptButton.addEventListener('click', function () {
     var ri = active, items = rounds[ri].decisions.items;
     if (undo[ri]) {
@@ -1072,7 +1044,6 @@
     } else {
       undo[ri] = {};
       items.forEach(function (item) {
-        if (sources[ri][item.id] === 'elsewhere') return;
         undo[ri][item.id] = {source: sources[ri][item.id], choice: picks(ri, item)};
         if (hasRec(item)) {
           setChoice(ri, item, recList(item));
@@ -1095,7 +1066,6 @@
     delete range.dataset.unset;
     if (skip) skip.checked = false;
     numShown(ri, item);
-    unmark(ri, item);
     sources[ri][item.id] = 'user';
     if (undo[ri]) {
       undo[ri] = null;
@@ -1116,7 +1086,6 @@
         });
       }
       if (mirrors[t.name]) mirrors[t.name]();
-      unmark(ri, itemOf(ri, t));
       sources[ri][t.dataset.item] = 'user';
       if (undo[ri]) {
         undo[ri] = null;
@@ -1129,8 +1098,6 @@
     var t = e.target;
     if (t.dataset.num !== undefined && t.dataset.round !== undefined) return moveNumber(t);
     if (t.dataset.round === undefined || (t.tagName !== 'TEXTAREA' && t.type !== 'text')) return;
-    // Text typed on a marked item is the user's: collect would send the saved note instead and drop it.
-    unmark(Number(t.dataset.round), itemOf(Number(t.dataset.round), t));
     if (t.classList.contains('other-text')) {
       var pick = byId(t.dataset.pick);
       if (!pick.checked) {

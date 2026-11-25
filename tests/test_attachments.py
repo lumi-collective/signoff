@@ -541,14 +541,6 @@ class LineRule(unittest.TestCase):
         self.bad([stale], {"answers": {"layout": {"choice": "two", "lines": [stale]}}})
         self.bad([stale])
 
-    def test_a_note_is_the_users_own_and_sensitive_acts_on_an_item_with_lines(self):
-        item = self.decisions["items"][1]  # comment false, no other, no marks: lines is its only text field
-        self.assertFalse(signoff._private_default(dict(item, sensitive=True, lines=False)))
-        self.assertTrue(signoff._private_default(dict(item, sensitive=True)))
-        self.assertFalse(signoff._private_default(item))
-        self.assertFalse(signoff._users({"choice": [], "source": "recommended", "lines": []}, item))
-        self.assertTrue(signoff._users({"choice": [], "source": "recommended", "lines": [line_note(1, att=1)]}, item))
-
     def test_a_stored_read_checks_the_shape_only(self):
         stale = line_note(99, quote="gone", att=1)
         stored = {"version": 1, "saved": "2026-01-01T12:00:00Z", "done": False, "free_text": "",

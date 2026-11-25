@@ -853,169 +853,50 @@ def run_readonly(work):
         kill(browser.proc)
 
 
-def elsewhere_round():
-    """Three items with recommendations: the agent marks the first two decided elsewhere."""
-    def item(qid, select="one"):
-        rec = ["a"] if select == "many" else "a"
-        return {"id": qid, "title": "Question " + qid, "select": select, "recommended": rec,
-                "options": [{"id": "a", "label": "Alpha"}, {"id": "b", "label": "Beta"}]}
-    return {"version": 1, "title": "Settled in chat", "items": [item("q"), item("m", "many"), item("r")]}
-
-
-def run_elsewhere(work):
-    """signoff elsewhere while the page is open: after a reload the item shows the agent's note as text and in the
-    Summary; Accept all leaves it, and its undo never puts the mark back over text the user typed on it since; a
-    save of another item keeps it; a pick or typed text on it makes it the user's."""
-    topic = work / "2026-01-08-elsewhere"
+def run_old_mark(work):
+    """An open round whose answers file holds a mark `signoff elsewhere` wrote before it went: the page shows the
+    agent's note in the item's comment box, as any saved comment; a save of another item sends the mark back as it
+    was; a pick on it makes it the user's."""
+    topic = work / "2026-01-08-old-mark"
     topic.mkdir()
     target = topic / "decisions.json"
-    target.write_text(json.dumps(elsewhere_round()), encoding="utf-8")
+
+    def item(qid, select="one"):
+        return {"id": qid, "title": "Question " + qid, "select": select, "recommended": ["a"] if select == "many"
+                else "a", "options": [{"id": "a", "label": "Alpha"}, {"id": "b", "label": "Beta"}]}
+    target.write_text(json.dumps({"version": 1, "title": "Settled in chat", "items": [
+        item("q"), item("m", "many"), item("r")]}), encoding="utf-8")
     answers_file = topic / "decisions.answers.json"
     note = "Settled in chat: <b>Alpha</b>"
+    marks = {"q": {"choice": None, "comment": note, "source": "elsewhere"},
+             "m": {"choice": [], "comment": "", "source": "elsewhere"}}
+    answers_file.write_text(json.dumps({"version": 1, "done": False, "saved": "2026-01-08T10:00:00Z",
+                                        "free_text": "", "answers": marks}), encoding="utf-8")
 
     def saved():
         try:
             return json.loads(answers_file.read_text(encoding="utf-8"))["answers"]
         except (OSError, ValueError, KeyError):
             return {}
-
-    def state(k=0):
-        return browser.js("(function () { var e = document.getElementById('r0-i%d-e'); return [!e.hidden, "
-                          "e.textContent, Array.prototype.filter.call(document.getElementsByName('r0-i%d'), "
-                          "function (i) { return i.checked; }).length, !!e.querySelector('b')]; })()" % (k, k))
-    server, out, err, browser = serve(target, str(work / "profile-elsewhere"))
+    server, out, err, browser = serve(target, str(work / "profile-old-mark"))
     try:
         wait_for("the page", lambda: browser.js("!!document.getElementById('r0-i0-c')"))
-        check(browser.js("document.getElementById('r0-i0-e').hidden"), "no item is marked yet")
-        for args in (["q", note], ["m"]):  # the many item without a note
-            mark = subprocess.run([sys.executable, "-I", "-B", str(ROOT / "plugin" / "signoff" / "signoff.py"),
-                                   "elsewhere", str(target)] + args, capture_output=True, universal_newlines=True,
-                                  encoding="utf-8", timeout=30)
-            check((mark.returncode, mark.stdout, mark.stderr) == (0, "", ""), "signoff elsewhere: %r"
-                  % ((mark.returncode, mark.stderr),))
-        browser.call("Page.reload")
-        wait_for("the marked item", lambda: browser.js(  # the reloading page may have no item yet
-            "(function () { var e = document.getElementById('r0-i0-e'); return !!e && !e.hidden; })()"))
-        check(state() == [True, "Decided elsewhere: " + note, 0, False], "the note should show as text: %r" % state())
-        check(browser.js("document.getElementById('r0-i0-c').value") == "", "the note is not the user's comment")
-        summary = browser.js("Array.prototype.map.call(document.querySelectorAll('#summary-block .summary-choice'), "
-                             "function (s) { return s.textContent; })")
-        check(summary == ["Decided elsewhere", "Decided elsewhere", "Alpha"], "the Summary: %r" % summary)
-        check(browser.js("document.getElementById('r0-i1-e').textContent") == "Decided elsewhere",
-              "a mark without a note says only that")
-        check(filter_labels(browser, "#summary-block") == ["All 3", "With comment 1", "Not the recommendation 0"],
-              "a marked item is no overruled recommendation: %r" % filter_labels(browser, "#summary-block"))
-        browser.click("#accept-all")
-        wait_for("Accept all saved", lambda: saved().get("r", {}).get("source") == "accept_all")
-        check(state()[:3] == [True, "Decided elsewhere: " + note, 0], "Accept all should leave the mark: %r" % state())
-        check(saved()["q"] == {"choice": None, "comment": note, "source": "elsewhere"}, "after Accept all: %r" % saved())
-        # Typed on the marked item after Accept all: the user's, and Accept all's undo leaves it so.
-        browser.click("#r0-i0-c")
-        browser.call("Input.insertText", text="my own words")
-        wait_for("the typed text saved", lambda: saved().get("q", {}).get("comment") == "my own words")
-        check(saved()["q"] == {"choice": None, "comment": "my own words", "source": "user"}, "typed: %r" % saved())
-        check(not state()[0], "the note goes once the user types")
-        browser.click("#accept-all")  # the undo
-        wait_for("the undo saved", lambda: saved().get("r", {}).get("source") == "recommended")
-        time.sleep(1)
-        check(saved()["q"] == {"choice": None, "comment": "my own words", "source": "user"},
-              "the undo must not put the mark back over the user's text: %r" % saved()["q"])
-        check(browser.js("document.getElementById('r0-i0-c').value") == "my own words" and not state()[0],
-              "the typed text stays and the note stays gone")
+        shown = browser.js("[document.getElementById('r0-i0-c').value, document.getElementById('r0-i1-c').value, "
+                           "document.querySelectorAll('#panel-0 input:checked').length, "
+                           "document.body.textContent.indexOf('Decided elsewhere')]")
+        check(shown == [note, "", 1, -1], "the note is in the comment box, nothing else shows the mark: %r" % shown)
         browser.click("#r0-i2-o1")  # another item's option
         wait_for("the other item saved", lambda: saved().get("r", {}).get("choice") == "b")
-        check(saved()["m"] == {"choice": [], "comment": "", "source": "elsewhere"}, "after a save: %r" % saved())
-        browser.click("#r0-i1-o1")  # the user's own pick wins over the mark
-        wait_for("the marked item saved as the user's", lambda: saved().get("m", {}).get("source") == "user")
-        check(saved()["m"] == {"choice": ["a", "b"], "comment": "", "source": "user"} or
-              saved()["m"] == {"choice": ["b"], "comment": "", "source": "user"}, "the user's answer: %r" % saved())
-        check(not state(1)[0], "the note goes once the user answers: %r" % state(1))
+        check({k: saved()[k] for k in marks} == marks, "a save sends the marks back as they were: %r" % saved())
+        browser.click("#r0-i0-o1")  # a pick on it is the user's
+        wait_for("the marked item saved as the user's", lambda: saved().get("q", {}).get("source") == "user")
+        check(saved()["q"] == {"choice": "b", "comment": note, "source": "user"}, "the user's answer: %r" % saved())
     except E2EError:
         sys.stderr.write("--- Signoff stderr ---\n" + "".join(err))
         raise
     finally:
         kill(server)
         kill(browser.proc)
-
-
-def run_elsewhere_private(work):
-    """A mark on a sensitive item keeps its Private box ticked after a reload, so the comment the user types on it
-    later is saved private."""
-    topic = work / "2026-01-08-elsewhere-private"
-    topic.mkdir()
-    target = topic / "decisions.json"
-    data = elsewhere_round()
-    data["items"][0]["sensitive"] = True
-    target.write_text(json.dumps(data), encoding="utf-8")
-    answers_file = topic / "decisions.answers.json"
-
-    def saved():
-        try:
-            return json.loads(answers_file.read_text(encoding="utf-8"))["answers"]
-        except (OSError, ValueError, KeyError):
-            return {}
-    server, out, err, browser = serve(target, str(work / "profile-elsewhere-private"))
-    try:
-        wait_for("the page", lambda: browser.js("!!document.getElementById('r0-i0-p')"))
-        mark = subprocess.run([sys.executable, "-I", "-B", str(ROOT / "plugin" / "signoff" / "signoff.py"),
-                               "elsewhere", str(target), "q", "in chat"], capture_output=True,
-                              universal_newlines=True, encoding="utf-8", timeout=30)
-        check((mark.returncode, mark.stderr) == (0, ""), "signoff elsewhere: %r" % ((mark.returncode, mark.stderr),))
-        browser.call("Page.reload")
-        wait_for("the marked item", lambda: browser.js(
-            "(function () { var e = document.getElementById('r0-i0-e'); return !!e && !e.hidden; })()"))
-        check(browser.js("document.getElementById('r0-i0-p').checked"), "a sensitive item stays Private after a mark")
-        browser.click("#r0-i0-c")
-        browser.call("Input.insertText", text="my own setup")
-        wait_for("the typed text saved", lambda: saved().get("q", {}).get("comment") == "my own setup")
-        check(saved()["q"].get("private") is True, "the comment typed on it is saved private: %r" % saved()["q"])
-    except E2EError:
-        sys.stderr.write("--- Signoff stderr ---\n" + "".join(err))
-        raise
-    finally:
-        kill(server)
-        kill(browser.proc)
-
-
-def run_elsewhere_read_only(work):
-    """A round done with an item marked decided elsewhere shows the note read only on a later run's page and on
-    the past-decisions page."""
-    root = work / "marked-proj"
-    topic = root / ".signoff" / "2026-01-09-marked"
-    topic.mkdir(parents=True)
-    (root / ".git").mkdir()
-    for n in (1, 2):
-        (topic / ("round-0%d.json" % n)).write_text(json.dumps(dict(elsewhere_round(), title="Marked %d" % n)),
-                                                   encoding="utf-8")
-    sha = hashlib.sha256((topic / "round-01.json").read_bytes()).hexdigest()
-    (topic / "round-01.answers.json").write_text(json.dumps({
-        "version": 1, "done": True, "saved": "2026-01-09T10:00:00Z", "free_text": "",
-        "decisions": {"file": "round-01.json", "sha256": sha},
-        "answers": {"q": {"choice": None, "comment": "Settled in the <i>call</i>", "source": "elsewhere"}}}),
-        encoding="utf-8")
-    shown = ("(function () { var e = Array.prototype.filter.call(document.querySelectorAll('.readonly-note'), "
-             "function (p) { return p.textContent.indexOf('Decided elsewhere') === 0 && p.checkVisibility(); })[0]; "
-             "return e ? [e.textContent, !!e.querySelector('i')] : null; })()")
-    for history in (False, True):
-        server, out, err, browser = serve(root if history else topic, str(work / ("profile-marked-%s" % history)),
-                                          history=history)
-        try:
-            if history:
-                wait_for("the list", lambda: browser.js("document.querySelectorAll('#h-list li').length") or None)
-                browser.js("Array.prototype.filter.call(document.querySelectorAll('#h-list li'), function (li) { "
-                           "return li.textContent.indexOf('Marked 1') >= 0; })[0].querySelector('button, a').click()")
-            else:
-                wait_for("the page", lambda: browser.js("!!document.getElementById('tab-0')"))
-                browser.click("#tab-0")
-            wait_for("the note", lambda: browser.js(shown))
-            check(browser.js(shown) == ["Decided elsewhere: Settled in the <i>call</i>", False],
-                  "the note should show as text, read only (history %s): %r" % (history, browser.js(shown)))
-        except E2EError:
-            sys.stderr.write("--- Signoff stderr ---\n" + "".join(err))
-            raise
-        finally:
-            kill(server)
-            kill(browser.proc)
 
 
 def run_history(work):
@@ -3755,9 +3636,7 @@ def run():
     run_blocking(work)
     run_settled(work)
     run_number(work)
-    run_elsewhere(work)
-    run_elsewhere_private(work)
-    run_elsewhere_read_only(work)
+    run_old_mark(work)
     if WINDOWS:
         print("SKIP: the inbox (it needs a Unix socket; not on Windows yet)", flush=True)
     else:
@@ -3921,10 +3800,8 @@ def main():
           "a number item: slider and field bound both ways, typing (0 kept, off-grid snapped), arrows, j, no digit "
           "key, Skip, Accept all and undo, the Summary's value and flag, 390 px, Hungarian, JSON numbers, exit 0, "
           "read only when done; "
-          "an item marked decided elsewhere shows the agent's note as text after a reload and in the Summary, "
-          "Accept all and another item's save keep it, Accept all's undo leaves text typed on it the user's, a pick "
-          "on it makes it the user's, a marked sensitive item stays Private after a reload, and a done round shows "
-          "the note read only and on the past-decisions page; "
+          "an old file's mark of the agent's shows its note in the comment box, another item's save sends it back "
+          "as it was, and a pick on it makes it the user's; "
           + ("" if WINDOWS else "inbox: the empty state, the sidebar's view and project filters, "
              "each project's other open items closed behind a count row that opens them, "
              "a waiting round and a waiting todo item grouped by project under the summary line, its steps counted, "

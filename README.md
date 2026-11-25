@@ -41,9 +41,7 @@ sets that number, from 0 (no batch in the terminal) to 4.
    the topic, with the pictures beside it.
 2. It starts `signoff.py` on that folder in the background. Signoff opens your browser with a link that works
    once.
-3. You answer. Everything is saved to `round-NN.answers.json` as you go. A question you settle in chat
-   meanwhile, the agent marks as decided elsewhere ([`signoff elsewhere`](docs/running.md#an-item-settled-in-chat)),
-   and the page shows its note; your own answer on the page is never replaced.
+3. You answer. Everything is saved to `round-NN.answers.json` as you go.
 4. You accept each round and press **Done**. Signoff exits, printing one answers path per line; that exit is what
    wakes the agent.
 5. The agent reads the answers, does the work, and records what came of each round.

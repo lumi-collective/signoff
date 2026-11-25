@@ -34,10 +34,6 @@
   question and the options). Change what you disagree with. **Accept all recommendations** in the header resets
   the open round to the recommendations, comments untouched; clicking it again undoes that, until you change an
   item's options.
-- **Decided elsewhere:** an item the agent marked as settled in chat
-  ([`signoff elsewhere`](running.md#an-item-settled-in-chat)) shows **Decided elsewhere** and the agent's note
-  above its options, and the Summary says so. Your other saves and **Accept all** (and its undo) leave it as
-  marked; picking one of its options, typing in it, or drawing a mark on it makes it your answer and the note goes.
 - **Focus** (the button in the header, or `f`) shows one item at a time, with Previous and Next; the round's last
   box and its Accept or Done come after the last item. Esc leaves it. A phone opens the page in Focus. There an
   item reads its question, the recommendation, its commands, then its pictures as thumbnails, then the options, so

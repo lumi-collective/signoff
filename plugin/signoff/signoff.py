@@ -645,13 +645,6 @@ def check_answers(state, decisions, stored=False, previous=None):
             raise ValueError("answer %r: choice %r is not an option of this item" % (key, choice))
         if not isinstance(comment, str) or len(comment) > MAX_TEXT:
             raise ValueError("answer %r: comment must be a string up to %d characters" % (key, MAX_TEXT))
-        # The note of a mark (signoff elsewhere), by the part of its rule every Python reads alike: _hidden's
-        # unassigned characters differ by Unicode version, so they would refuse one file on one Python only.
-        if ans.get("source") == "elsewhere" and (len(comment) > MAX_NOTE or not _typed_line(comment)):
-            raise ValueError("answer %r: a note marked elsewhere must be one line of at most %d characters"
-                             % (key, MAX_NOTE))
-        if ans.get("source") == "elsewhere" and "settled" in item:
-            raise ValueError("answer %r: a settled item cannot be marked decided elsewhere" % key)
         picked = choice if isinstance(choice, list) else [choice]
         if SKIP in picked and len(picked) > 1:
             raise ValueError("answer %r: skip cannot be combined with another choice" % key)
@@ -771,10 +764,9 @@ def ensure_gitignore(folder):
         return False
 
 
-def write_atomic(path, data, unchanged=None):
+def write_atomic(path, data):
     """Write text or bytes to path through a temporary file and a rename. Bytes go out as given: no line-ending
-    translation, so a hash of them is the hash of the file. unchanged, when given, is asked once the temporary file
-    is synced, just before the rename: False leaves path as it is (the temporary file goes) and returns False."""
+    translation, so a hash of them is the hash of the file."""
     if isinstance(data, str):
         data = data.encode("utf-8")
     # The temp name ends like the target (.answers.json or .answers.md), so the .gitignore covers a leftover one.
@@ -785,9 +777,6 @@ def write_atomic(path, data, unchanged=None):
             f.write(data)
             f.flush()
             os.fsync(f.fileno())
-        if unchanged is not None and not unchanged():
-            os.unlink(tmp)
-            return False
         for wait in (0.05, 0.1, 0.2, 0.4, None):
             try:
                 os.replace(tmp, str(path))
@@ -802,7 +791,6 @@ def write_atomic(path, data, unchanged=None):
         except OSError:
             pass
         raise
-    return True
 
 
 def inbox_home():
@@ -954,7 +942,7 @@ MD_LABELS = {
            "not_rec": "not recommended", "nothing": "nothing chosen", "none": "(none)", "private": "(private)",
            "anything": "Anything else", "recommended": "recommendation, not changed", "accept_all": "Accept all",
            "user": "the user", "notification": "recommendation, accepted from a notification", "unknown": "unknown", "yes_at": "yes, %s", "changed": "no, changed after it was accepted",
-           "command": "Command", "elsewhere": "decided elsewhere, marked by the agent", "stakes": "Stakes",
+           "command": "Command", "stakes": "Stakes",
            "low": "low", "medium": "medium", "high": "high", "irreversible": "Cannot be undone",
            "settled": "Settled earlier, says the agent", "line": "Line note, %s line %d%s: %s",
            "quote": ", “%s”"},
@@ -964,8 +952,7 @@ MD_LABELS = {
            "not_rec": "nem javasolt", "nothing": "nincs választás", "none": "(nincs)", "private": "(privát)",
            "anything": "Bármi más", "recommended": "a javaslat, változatlanul", "accept_all": "Javaslatok elfogadása",
            "user": "a felhasználó", "notification": "a javaslat, értesítésből elfogadva", "unknown": "ismeretlen", "yes_at": "igen, %s",
-           "changed": "nem, elfogadás után módosítva", "command": "Parancs",
-           "elsewhere": "máshol eldőlt, az ágens jelölte", "stakes": "Tét", "low": "alacsony",
+           "changed": "nem, elfogadás után módosítva", "command": "Parancs", "stakes": "Tét", "low": "alacsony",
            "medium": "közepes", "high": "magas", "irreversible": "Nem vonható vissza",
            "settled": "Korábban eldőlt, az ágens szerint", "line": "Sor-megjegyzés, %s %d. sora%s: %s",
            "quote": ", „%s”"},
@@ -1043,7 +1030,8 @@ def answers_markdown(decisions, record, hide_private=False):
                           for c in picked) or lb["nothing"]
         out += ["### %d. %s" % (n, md_line(item["title"])), "",
                 "- %s: %s" % (lb["choice"], shown),
-                "- %s: %s" % (lb["source"], lb[ans["source"]] if ans.get("source") in SOURCE_VALUES else lb["unknown"])]
+                "- %s: %s" % (lb["source"], lb.get(ans["source"], lb["unknown"]) if ans.get("source") in SOURCE_VALUES
+                              else lb["unknown"])]  # elsewhere: a source kept only for an old file, with no label
         out += about
         if ans.get("comment", "").strip():  # no empty line for a comment nobody wrote
             out.append("- %s: %s" % (lb["comment"], text(ans["comment"])))
@@ -2084,29 +2072,9 @@ def _media_view(items, media, picture, board):
     return shown_items
 
 
-def _hash(path):
-    """The SHA-256 of an answers file, None when there is none."""
-    try:
-        return hashlib.sha256(read_regular(path, MAX_ROUND_BODY)).digest()
-    except FileNotFoundError:
-        return None
-
-
-def _copy_from_disk(r):
-    """The Markdown copy made again from the answers file on disk, after a write found it changed between its copy's
-    rename and its own: best effort, and nothing when that file is gone or not valid."""
-    try:
-        stored = json.loads(read_regular(r.answers_path, MAX_ROUND_BODY).decode("utf-8"))
-        record = dict(stored, **check_answers(stored, r.decisions, stored=True))  # its keys with their defaults
-        write_atomic(r.markdown_path, answers_markdown(r.decisions, record))
-    except (OSError, ValueError, RecursionError):
-        pass
-
-
 class _Rounds:
     """Rounds shown on one page and saved from it: a run's own server, and in the inbox the rounds of each run."""
     writable = True  # in the inbox: False while another run holds a round's lock, so the rounds are only shown
-    recheck = False  # True: hash the answers file again just before the rename, for a writer no lock guards
 
     def _read_media(self, rounds):
         self.rounds = rounds
@@ -2191,7 +2159,10 @@ class _Rounds:
             if rev is not None and rev != r.rev:
                 return 409, stale
             # Another run on the same folder may have written the file since: never write over what it wrote.
-            on_disk = _hash(r.answers_path)
+            try:
+                on_disk = hashlib.sha256(read_regular(r.answers_path, MAX_ROUND_BODY)).digest()
+            except FileNotFoundError:
+                on_disk = None  # nothing there to overwrite
             if on_disk is not None and on_disk != r.disk:
                 return 409, stale
             if state["done"]:
@@ -2210,19 +2181,11 @@ class _Rounds:
                         "changed_after_accept": bool(r.meta.get("accepted") or r.meta.get("changed_after_accept"))}
             record.update(meta)
             # The JSON file is the record agents trust, so it goes last: if the Markdown copy fails, nothing is final.
-            unchanged = lambda: _hash(r.answers_path) == on_disk  # noqa: E731 (asked before each rename)
-            if not self.recheck:
-                write_atomic(r.markdown_path, answers_markdown(r.decisions, record))
-            elif not write_atomic(r.markdown_path, answers_markdown(r.decisions, record), unchanged=unchanged):
-                return 409, stale
+            write_atomic(r.markdown_path, answers_markdown(r.decisions, record))
             if state["done"] and all(x.finished for x in self.rounds if x is not r):
                 self.closing()  # before the JSON: once that says done, the round is final and no longer orphan
             data = (json.dumps(record, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
-            if not self.recheck:
-                write_atomic(r.answers_path, data)
-            elif not write_atomic(r.answers_path, data, unchanged=unchanged):
-                _copy_from_disk(r)  # the copy renamed a moment ago is of the refused write: show the file that won
-                return 409, stale
+            write_atomic(r.answers_path, data)
             r.disk = hashlib.sha256(data).digest()  # the bytes written, not a read-back
             r.saved, r.saved_at, r.meta = state, record["saved"], meta
             r.rev += 1
@@ -2402,7 +2365,7 @@ STATE_EVERY = 2.0  # seconds between the inbox's own looks at runs, answers and 
 RUN_ROUTE = re.compile(r"^run/(0|[1-9][0-9]{0,8})/(.*)$", re.S)
 MAX_SOCKET_PATH = 100  # macOS takes 104 bytes for a Unix socket's path, Linux 108
 MAX_CONTROL = 4096
-MAX_PANEL_TEXT = 200  # characters in each title of a rows reply (the mod's MAX_TEXT), and of a reply quoted on stderr
+MAX_PANEL_TEXT = 200  # characters in each title of a rows reply (the mod's MAX_TEXT)
 MAX_ROWS = 24  # rounds and items in a rows reply: at 12 bytes a character JSON-escaped, within one 64 KiB line
 TARGET = ("run", "round", "item", "inbox")  # an open's target: the numbers a rows reply gives, each below MAX_NUMBER
 MAX_NUMBER = 2 ** 31
@@ -2567,74 +2530,18 @@ def _none_picked(answer, item):
 
 def _decided(answer, item):
     """Whether an item is decided: a choice that is not null or an empty list, and not the preselected
-    recommendation left untouched (the page saves an untouched item without a recommendation as a null choice); a
-    recommendation the user unticked; or marked decided elsewhere by the agent (signoff elsewhere). A settled item
-    is decided while its choice (unsaved: its recommendation) is the recommendation, the user's earlier answer."""
+    recommendation left untouched (the page saves an untouched item without a recommendation as a null choice); or a
+    recommendation the user unticked. A settled item is decided while its choice (unsaved: its recommendation) is
+    the recommendation, the user's earlier answer."""
     if "settled" in item:
         choice, rec = (answer or {}).get("choice", item["recommended"]), item["recommended"]
         if choice == rec or isinstance(rec, list) and isinstance(choice, list) and sorted(choice) == sorted(rec):
             return True
     if not answer:
         return False
-    if answer.get("source") == "elsewhere" or _none_picked(answer, item):
+    if _none_picked(answer, item):
         return True
     return answer.get("choice") not in (None, []) and answer.get("source") != "recommended"
-
-
-MAX_NOTE = 500  # characters in a signoff elsewhere note: at 4 bytes each, with the round's path, one control line
-MARK_REFUSALS = ("gone", "done", "changed", "held", "failed", "answered")  # the elsewhere op's one-word answers
-
-
-def _note_ok(note):
-    """A signoff elsewhere note: one line of at most MAX_NOTE characters, none of them invisible (_hidden; an emoji's
-    variation selector and joiner aside)."""
-    return isinstance(note, str) and len(note) <= MAX_NOTE and "\t" not in note and "\n" not in note \
-        and _hidden(note, EMOJI_JOINERS) is None
-
-
-def _private_default(item):
-    """Whether the page starts an item Private: a sensitive one with a text field (the box is there only then)."""
-    return bool(item["sensitive"] and (item["comment"] or item["other"] or item["marks"] or item.get("lines")))
-
-
-def _users(answer, item):
-    """Whether a saved answer holds anything of the user's, which a mark must never replace: a choice (not the
-    recommendation left untouched; an unticked recommendation too), a comment, Other text, marks, line notes, or
-    Private set otherwise than the item starts. A mark of the agent's own holds only its note, which a new mark may
-    replace."""
-    if not answer:
-        return False
-    if answer.get("marks") or answer.get("lines") or answer.get("other") \
-            or bool(answer.get("private")) != _private_default(item):
-        return True
-    if answer.get("source") == "elsewhere":
-        return False
-    return bool(answer.get("comment")) or _none_picked(answer, item) or (
-        answer.get("choice") not in (None, []) and answer.get("source") != "recommended")
-
-
-def _mark_state(r, item_id, note):
-    """The save that marks one item of round r decided elsewhere: the saved answers with that item as no choice and
-    the note as its comment, acceptance undone as by any change. Returns (state, None); (None, None) when the item
-    is marked so already; or (None, why) in one word of MARK_REFUSALS. ValueError from check_answers."""
-    item = next((it for it in r.decisions["items"] if it["id"] == item_id), None)
-    if item is None:
-        return None, "gone"
-    if r.finished:
-        return None, "done"
-    base = r.saved or {"answers": {}, "free_text": ""}
-    old = base["answers"].get(item_id)
-    if _users(old, item) or "settled" in item:  # a settled item's recommendation is the user's earlier answer
-        return None, "answered"
-    mark = {"choice": [] if item["select"] == "many" else None, "comment": note, "source": "elsewhere"}
-    if _private_default(item):
-        mark["private"] = True  # as the page starts it, so its box stays ticked and an untick stays the user's
-    # _users ruled out the rest: a page saving the mark back may add an empty marks list, and it is the same mark.
-    if old and all(old.get(k) == v for k, v in mark.items()):
-        return None, None
-    answers = dict(base["answers"], **{item_id: mark})
-    return check_answers({"answers": answers, "free_text": base["free_text"], "accepted": False, "done": False},
-                         r.decisions, previous=base), None
 
 
 def _whole(n):
@@ -2822,21 +2729,14 @@ def _control_socket(path):
     return sock
 
 
-def control_line(op, **fields):
-    """One request for the control socket as it is sent: UTF-8 JSON, not escaped to ASCII, so a character costs at
-    most 4 bytes of the MAX_CONTROL the inbox reads. UnicodeEncodeError for a lone surrogate (a path that is not
-    UTF-8)."""
-    return (json.dumps(dict(fields, op=op), ensure_ascii=False) + "\n").encode("utf-8")
-
-
 def inbox_request(home, op, timeout=5.0, **fields):
     """Ask the running inbox over its control socket: "open" gives {"link": a new start link}, "stop" ends it;
     "rows" (with project=<id>) gives the mod's panel list, and "open" with its run, round, item and inbox numbers
-    opens one of its rows; "elsewhere" (round, item, note) marks an item. OSError when no inbox answers."""
+    opens one of its rows. OSError when no inbox answers."""
     with socket.socket(socket.AF_UNIX) as s:
         s.settimeout(timeout)
         s.connect(str(Path(home) / "inbox.sock"))
-        s.sendall(control_line(op, **fields))
+        s.sendall((json.dumps(dict(fields, op=op)) + "\n").encode("utf-8"))
         line = s.makefile("rb").readline(65536)
     try:
         reply = json.loads(line.decode("utf-8"))
@@ -3038,37 +2938,6 @@ class InboxServer(_Server):
                                 to = "run/%d/#focus=%d/%s" % (run, ri, r.decisions["items"][k]["id"])
         return self.new_pair(to)
 
-    def mark_elsewhere(self, path, item_id, note):
-        """signoff elsewhere for a round this inbox holds: mark the item through its run's own writer, at the round's
-        rev, as a page save does. path is matched against the rounds held here as text; the file is never opened from
-        it. None when written (or marked so already), else why not in one word of MARK_REFUSALS."""
-        with self.scan_lock:  # no look lets the run go in between
-            if self.closed.is_set():
-                return "gone"
-            self._scan()
-            found = [(g, ri) for g in self.groups if g for ri, r in enumerate(g.rounds) if str(r.path) == path]
-            if not found:
-                return "gone"
-            g, ri = next(((g, ri) for g, ri in found if g.writable), found[0])
-            if not g.writable:
-                return "held"
-            r = g.rounds[ri]
-            with g.lock:  # a consistent snapshot; store() checks Done, the lock, the rev and the file
-                try:
-                    state, why = _mark_state(r, item_id, note)
-                except ValueError:
-                    return "failed"
-                rev = r.rev
-            if state is None:
-                return why
-            try:
-                result = g.store(ri, state, rev)
-            except OSError:
-                return "failed"
-            if isinstance(result, tuple):
-                return "done" if r.finished else "gone" if g.gone else "held" if not g.writable else "changed"
-            return None
-
     def page_for(self, given):
         now = time.monotonic()
         with self.lock:
@@ -3133,22 +3002,12 @@ class InboxServer(_Server):
                 project = req.get("project")
                 reply = (self.rows(project) if isinstance(project, str) and HEX16.fullmatch(project)
                          else {"error": "rows needs a project id"})
-            elif op == "elsewhere":
-                if sorted(req) == ["item", "note", "op", "round"] and isinstance(req["round"], str) \
-                        and os.path.isabs(req["round"]) and isinstance(req["item"], str) \
-                        and ID_PATTERN.fullmatch(req["item"]) and _note_ok(req["note"]):
-                    why = self.mark_elsewhere(req["round"], req["item"], req["note"])
-                    reply = {"error": why} if why else {"ok": True}
-                else:
-                    reply = {"error": "elsewhere takes round (an absolute path), item and note (one line of at most "
-                                      "%d characters), and nothing else" % MAX_NOTE}
             elif op == "stop":
                 reply = {"ok": True}
             else:
                 reply = {"error": 'unknown request; send {"op": "open"}, {"op": "stop"}, '
-                                  '{"op": "rows", "project": <id>}, {"op": "open", '
-                                  '"run": <n>, "round": <n>, "item": <n>, "inbox": <n>}, or {"op": "elsewhere", '
-                                  '"round": <path>, "item": <id>, "note": <text>}'}
+                                  '{"op": "rows", "project": <id>}, or {"op": "open", '
+                                  '"run": <n>, "round": <n>, "item": <n>, "inbox": <n>}'}
             try:
                 conn.sendall((json.dumps(reply) + "\n").encode("utf-8"))
             except OSError:
@@ -4066,166 +3925,6 @@ def _inbox_done(rid):
     return EXIT_DONE
 
 
-class _Marker(_Rounds):
-    """The one round `signoff elsewhere` writes itself: a page save's checks and writer (_Rounds.store), with the
-    answers file hashed again once the new one is synced, just before the rename."""
-    start_reused = False
-    recheck = True
-
-    def __init__(self, r):
-        self.rounds, self.lock, self.finished = [r], threading.Lock(), threading.Event()
-
-    def finish(self, now=False):
-        pass
-
-
-def _mark_refusal(why, r, item_id):
-    return {
-        "gone": "%s has no item %s" % (r.path.name, json.dumps(item_id)) if not any(
-            it["id"] == item_id for it in r.decisions["items"]) else
-        "the Signoff inbox shows no round at this path, yet another process holds the lock of %s; nothing was "
-        "written. The inbox matches the path as its run gave it: check it is spelled the same, letter case too, "
-        "or answer on the page" % r.path.name,
-        "done": "%s is done already (Done is final); nothing was written" % r.path.name,
-        "held": "%s is open in a Signoff run of its own, which alone writes it; nothing was written. Ask the user to "
-                "answer the item on that run's page" % r.path.name,
-        "failed": "the Signoff inbox could not write the answers of %s; the JSON was not written" % r.path.name,
-        "answered": "item %s of %s is settled: its recommendation is the user's earlier answer, so it is never "
-                    "marked; it was left as it is" % (json.dumps(item_id), r.path.name) if any(
-            it["id"] == item_id and "settled" in it for it in r.decisions["items"]) else
-        "item %s of %s holds the user's own answer (a choice, a comment, Other text, marks or Private); "
-        "it was left as it is" % (json.dumps(item_id), r.path.name),
-        "changed": "the answers of %s kept changing while it was marked; nothing was written. Run the same command "
-                   "again" % r.path.name,
-    }[why]
-
-
-# The errors of a file system that cannot lock (a network mount): the one case that goes on without the lock.
-NO_LOCKS = {getattr(errno, n) for n in ("ENOLCK", "EOPNOTSUPP", "ENOTSUP", "ENOSYS", "EINVAL") if hasattr(errno, n)}
-
-
-def _hold_round(r):
-    """The round's lock, for one write: waited for half a second, as another mark or a waiter's look holds it for a
-    moment. None when another process holds it, False when this file system cannot lock (said on stderr);
-    DecisionsError for any other failure. The fallback is only for flock's own refusal on a regular file: a FIFO or a
-    socket planted at the lock's name fails with the same errors, and must not turn the lock off."""
-    path = r.path.with_name(r.path.name + ".lock")
-    if sys.platform == "win32":  # no inbox there: try_lock as a run takes its locks
-        return try_lock(path)
-    import fcntl
-    try:  # non-blocking, so a FIFO there cannot stall the open; never through a link
-        fd = os.open(str(path), os.O_RDWR | os.O_CREAT | os.O_NONBLOCK | os.O_NOFOLLOW, 0o600)
-    except OSError as e:
-        raise DecisionsError("cannot open the lock %s (%s); nothing was written" % (path, e.strerror or e))
-    try:
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
-            raise DecisionsError("the lock %s is not a regular file; nothing was written" % path)
-        for wait in (0.05,) * 10 + (None,):
-            try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                return fd
-            except OSError as e:
-                if not (isinstance(e, BlockingIOError) or e.errno == errno.EACCES):
-                    if e.errno not in NO_LOCKS:
-                        raise DecisionsError("cannot lock %s (%s); nothing was written" % (path, e.strerror or e))
-                    print("signoff: cannot lock %s (%s); going on without the lock" % (path, e.strerror or e),
-                          file=sys.stderr)
-                    os.close(fd)
-                    return False
-            if wait is None:
-                os.close(fd)
-                return None
-            time.sleep(wait)
-    except BaseException:
-        os.close(fd)
-        raise
-
-
-def _mark_by_inbox(home, r, item_id, note, say):
-    """The `elsewhere` op: the inbox that holds the round's lock writes the mark through the run's own writer."""
-    fields = {"round": str(r.path), "item": item_id, "note": note}
-    try:
-        size = len(control_line("elsewhere", **fields))
-    except UnicodeEncodeError:  # a path that is not UTF-8
-        size = MAX_CONTROL + 1
-    if size > MAX_CONTROL:
-        return say("the path of %s and the note do not fit the inbox's control line (%d bytes); nothing was "
-                   "written. Use a shorter note" % (r.path.name, MAX_CONTROL))
-    for _ in range(3):
-        try:
-            reply = inbox_request(home, "elsewhere", **fields)
-        except OSError as e:
-            return say("the Signoff inbox holds %s but did not answer (%s); nothing was written. Run the same command "
-                       "again" % (r.path.name, e.strerror or type(e).__name__))
-        if reply == {"ok": True}:
-            return EXIT_DONE
-        why = reply.get("error")
-        if why == "changed":  # a save landed first: the inbox's next look takes it in
-            continue
-        if why in MARK_REFUSALS:
-            return say(_mark_refusal(why, r, item_id))
-        # Any other error: an inbox started before an update may not know the op, or, on an older Python, the inbox
-        # may not know a character this one does, so its note check refuses what this one let through.
-        return say("the Signoff inbox refused the request (%s); nothing was written. An inbox started before an "
-                   "update may not know the request: restart it (signoff inbox stop, then signoff inbox open) and run "
-                   "the same command again. If it still refuses, its Python may know fewer characters than this one: "
-                   "use plainer characters in the note" % _one_line(str(why), MAX_PANEL_TEXT))
-    return say(_mark_refusal("changed", r, item_id))
-
-
-def _elsewhere(path, item_id, note):
-    """`signoff elsewhere <round file> <item id> [<note>]`: the agent marks one item as settled in chat while the run
-    waits, so it need not restart it: `source: "elsewhere"`, no choice, the note as its comment, the round's
-    acceptance undone. Never over the user's own answer. One writer, as for a save from the page: with no inbox.lock
-    in the home no locks exist, and it writes the file itself, best effort; with it, it holds the round's lock for
-    the write, or asks the inbox that holds it to write through the run's own writer, or refuses (exit 1) when a page
-    run holds it."""
-    def say(text):
-        print("signoff: " + text, file=sys.stderr)
-        return EXIT_ERROR
-
-    if not _note_ok(note):
-        return say("the note must be one line of at most %d characters, with no control, invisible or line-separator "
-                   "character" % MAX_NOTE)
-    home = inbox_home()
-    for _ in range(3):
-        fd = None
-        try:
-            r = Round(path)
-            state, why = _mark_state(r, item_id, note)
-            if state is not None and inbox_on(home):  # checked first, so a refusal leaves no lock file
-                fd = _hold_round(r)
-                if fd is None:
-                    return _mark_by_inbox(home, r, item_id, note, say) if inbox_alive(home) \
-                        else say(_mark_refusal("held", r, item_id))
-            if state is None:
-                return say(_mark_refusal(why, r, item_id)) if why else EXIT_DONE
-            try:
-                result = _Marker(r).store(0, state)
-            except OSError as e:
-                return say("cannot write %s (%s)" % (r.answers_path, e.strerror or e))
-        except DecisionsError as e:
-            return say(str(e))
-        except ValueError as e:  # check_answers: a note no answers file may hold
-            return say(str(e))
-        except OSError as e:
-            return say("%s: %s" % (path, e.strerror or e))
-        finally:
-            if fd:
-                unlock(fd)
-        if not isinstance(result, tuple):
-            try:
-                ensure_gitignore(r.path.parent)
-            except OSError as e:
-                print("signoff: could not write .gitignore (%s); keep *.answers.json, *.answers.md and *.json.lock in "
-                      "%s out of git" % (e, r.path.parent), file=sys.stderr)
-            return EXIT_DONE
-        if r.finished:
-            return say(_mark_refusal("done", r, item_id))
-        # Another writer since this read (store's 409): read the file again.
-    return say(_mark_refusal("changed", r, item_id))
-
-
 def plan_round(n):
     """signoff plan's round n: fixed texts around plan-NN.md, Approve or Ask for changes, and no recommendation."""
     return {"version": 1, "title": PLAN_TITLE, "tab": PLAN_TAB, "context": PLAN_CONTEXT, "lang": "en",
@@ -4475,9 +4174,6 @@ def main(argv=None):
     # named "plan" (with options after it) still runs.
     if argv[:1] == ["plan"] and any(w in argv for w in ("--topic", "--folder", "--resume")):
         return _plan(argv[1:])
-    # A run has one positional argument, so a decisions folder named "elsewhere" (with options after it) still runs.
-    if len(argv) in (3, 4) and argv[0] == "elsewhere" and not argv[1].startswith("-"):
-        return _elsewhere(argv[1], argv[2], argv[3] if len(argv) == 4 else "")
     parser = _Parser(prog="signoff", description="Serve a decisions file, or a folder of round-NN.json files, as a "
                                      "local page and save the answers beside them. Prints the answers paths on exit.")
     parser.add_argument("decisions", nargs="?", help="a decisions JSON file, or a folder of round-NN.json files")

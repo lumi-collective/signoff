@@ -61,8 +61,6 @@ as `<folder>/round-02.answers.json`. Read every line, not only the last:
   `notification` (only in files Signoff 0.3.0 and 0.4.0 wrote) when the user accepted your recommendation from a
   notification, which also sent Done. Treat `accept_all` and
   `notification` as the user's accepted choice, and `recommended` after Done as accepted without a second look.
-  `elsewhere`: you marked the item settled in chat (see below); `choice` is `null` (`[]` for `many`) and your
-  note is `comment`. Act on what you and the user settled in chat.
 - `marks` (only on items with `marks: true`): `[{"image": 0, "box": [x, y, w, h], "comment": "…"}]`, where
   `image` is the picture's position in the item's `images` from 0 and `box` is in percent like `boxes`. Each one
   is the user pointing at something; act on its comment as you would on the item's comment.
@@ -76,24 +74,6 @@ as `<folder>/round-02.answers.json`. Read every line, not only the last:
   Read the JSON, not the Markdown.
 - Compare each choice with your `recommended`: where they differ, the user overruled you. Read every comment
   and the free text; they often change the scope more than the choices do.
-
-## Settled in chat while it runs
-
-When you and the user settle one item in chat while the run waits, mark it instead of restarting the run: run
-the same `python3 -I ".../signoff.py"` as the run, in the foreground, with the arguments `elsewhere <round file>
-<item id> "<note>"` (the note: one line of at most 500 characters, what was settled). The item gets `source: "elsewhere"`
-in the answers file, and the round must be accepted again; the page shows **Decided elsewhere** with your note,
-and the user can still answer it there, which wins. It prints nothing on stdout and does not end the run: you
-are still woken at Done.
-
-- Exit 0: marked (or marked so already).
-- Exit 1, with one stderr line, nothing written: tell the user what it says. It refuses a bad round file, item
-  id or note, a round already done, and an item that holds the user's own answer (never overwrite that: ask in
-  chat). When the round is open in a run of its own page (no inbox running), the user answers it there. When
-  the inbox refused the request, the line says to restart it: ask the user to restart the inbox (`signoff inbox
-  stop`, then `signoff inbox open`), then run the same command again. If it still refuses, run it again with a
-  plainer note.
-  A run an older plugin started does not take the mark in and refuses saves until it restarts: tell the user.
 
 ## 4. Turn the answers into actions
 

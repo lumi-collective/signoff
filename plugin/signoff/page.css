@@ -171,7 +171,7 @@ button.icon svg{width:18px;height:18px}
 .outcome{margin:16px 0 0;padding:10px 14px;border-radius:10px;border:1px solid var(--line);border-left:4px solid var(--accent);background:var(--panel)}
 .outcome-log{display:block;color:var(--quiet);font-size:13px}
 .readonly-note.warn{border-style:solid;border-color:var(--box);color:var(--text)}
-.item .b>.readonly-note,.item .q>.settled{margin:0 0 12px}
+.item .q>.settled{margin:0 0 12px}
 .settled strong{color:var(--text)}
 .settled button{padding:3px 10px;margin-left:4px}
 .item.folded .q>:not(.settled),.item.folded .b,.item:not(.folded) .sv{display:none}

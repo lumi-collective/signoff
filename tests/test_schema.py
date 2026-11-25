@@ -283,19 +283,6 @@ class DecisionsFile(unittest.TestCase):
         self.assertIn("item 1 (layout)", msg)
         self.assertIn("'settled' needs 'recommended'", msg)
 
-    def test_a_settled_item_is_never_marked_elsewhere(self):
-        data = sample_decisions()
-        data["items"][0]["settled"] = "round-01"
-        self.folder.write(data)
-        decisions = signoff.load_decisions(self.folder.decisions)[0]
-        mark = {"answers": {"layout": {"choice": None, "comment": "n", "source": "elsewhere"}}, "free_text": ""}
-        with self.assertRaises(ValueError) as ctx:
-            signoff.check_answers(mark, decisions)
-        self.assertIn("'layout'", str(ctx.exception))
-        self.assertIn("settled", str(ctx.exception))
-        mark["answers"]["filters"] = dict(mark["answers"].pop("layout"), choice=[])
-        signoff.check_answers(mark, decisions)  # another item takes the mark as before
-
     def test_tab_is_optional_text(self):
         data = sample_decisions()
         data["tab"] = "Layout"
@@ -1045,33 +1032,32 @@ class MarkdownLanguage(unittest.TestCase):
     def test_every_source_has_a_label_in_every_language(self):
         for code, labels in signoff.MD_LABELS.items():
             for value in signoff.SOURCE_VALUES:
-                self.assertIn(value, labels, code)
+                if value != "elsewhere":  # kept only so an old file stays readable
+                    self.assertIn(value, labels, code)
         self.assertIn("- Source: recommendation, accepted from a notification", self.md(source="notification"))
         self.assertIn("- Forrás: a javaslat, értesítésből elfogadva", self.md(lang="hu", source="notification"))
 
-    def test_an_item_decided_elsewhere(self):
-        # signoff elsewhere: the agent marked it, choice null, its note as the comment, escaped as any text.
+    def test_an_old_mark_of_the_agents_stays_readable(self):
+        # An answers file signoff elsewhere wrote before it went: still valid, with any comment, on a settled item
+        # too, and its Markdown copy names the source unknown.
         md = self.md("said *in* chat", lang="en", choice=None, source="elsewhere")
-        self.assertIn("- Choice: nothing chosen\n- Source: decided elsewhere, marked by the agent\n"
-                      "- Comment: said \\*in\\* chat\n", md)
+        self.assertIn("- Choice: nothing chosen\n- Source: unknown\n- Comment: said \\*in\\* chat\n", md)
         md = self.md("a chatben", lang="hu", choice=None, source="elsewhere")
-        self.assertIn("- Forrás: máshol eldőlt, az ágens jelölte\n- Megjegyzés: a chatben\n", md)
-        state = {"answers": {"layout": {"choice": None, "comment": "n", "source": "elsewhere"},
-                             "filters": {"choice": [], "comment": "", "source": "elsewhere"}},
-                 "free_text": "", "done": False}
-        self.assertEqual(signoff.check_answers(state, self.decisions)["answers"]["filters"]["source"], "elsewhere")
-        # A note keeps the command's rule in the file too, in the part every Python reads alike: one line, capped.
-        for note in ("two\nlines", "a b", "x" * (signoff.MAX_NOTE + 1)):
-            bad = {"answers": {"layout": {"choice": None, "comment": note, "source": "elsewhere"}}, "free_text": "",
-                   "done": False}
-            with self.assertRaises(ValueError, msg=note):
-                signoff.check_answers(bad, self.decisions)
-            with self.assertRaises(ValueError, msg=note):
-                signoff.check_answers(dict(bad, version=1, saved="2026-01-01T12:00:00Z"), self.decisions,
-                                      stored=True)
-        ok = {"answers": {"layout": {"choice": None, "comment": "ok ✔️ \U0001FAE0", "source": "elsewhere"}},
-              "free_text": "", "done": False}
-        signoff.check_answers(ok, self.decisions)  # a character an older Python does not know yet is no reason
+        self.assertIn("- Forrás: ismeretlen\n- Megjegyzés: a chatben\n", md)
+        folder = Folder()
+        self.addCleanup(folder.cleanup)
+        data = sample_decisions()
+        data["items"][0]["settled"] = "round-01"
+        folder.write(data)
+        settled = signoff.load_decisions(folder.decisions)[0]
+        for note in ("n","", "two\nlines", "a\tb", "x" * 600, "a b", "ok ✔️ \U0001FAE0"):
+            for decisions in (self.decisions, settled):
+                state = {"answers": {"layout": {"choice": None, "comment": note, "source": "elsewhere"},
+                                     "filters": {"choice": [], "comment": "", "source": "elsewhere"}},
+                         "free_text": "", "done": False}
+                self.assertEqual(signoff.check_answers(state, decisions)["answers"], state["answers"], note)
+                stored = dict(state, version=1, saved="2026-01-01T12:00:00Z")
+                self.assertEqual(signoff.check_answers(stored, decisions, stored=True)["answers"], state["answers"])
 
     def test_other_languages_get_english(self):
         for lang in ("de", "fr-CA", "", "hux"):

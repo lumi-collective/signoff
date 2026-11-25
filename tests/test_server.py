@@ -245,19 +245,19 @@ class Additions(ServerTest):
         self.assertIn("- Tét: magas\n- Nem vonható vissza: Drops the \\*old\\* table\n"
                       "- Korábban eldőlt, az ágens szerint: round-01, 11-14\n", hu)
 
-    def test_a_settled_item_cannot_be_saved_as_decided_elsewhere(self):
+    def test_an_old_files_mark_on_a_settled_item_saves_back_as_it_was(self):
+        # A page that loaded an answers file signoff elsewhere wrote sends the mark back: no rule of its own now.
         data = sample_decisions()
         data["items"][0]["settled"] = "round-01"
         self.folder.write(data)
+        mark = {"choice": None, "comment": "two\nlines", "source": "elsewhere"}
         run = Running(self.folder)
         try:
-            resp, body = run.save({"answers": {"layout": {"choice": None, "comment": "n", "source": "elsewhere"}},
-                                   "free_text": "", "done": False})
+            resp, body = run.save({"answers": {"layout": mark}, "free_text": "", "done": False})
         finally:
             run.stop()
-        self.assertEqual(resp.status, 400)
-        self.assertIn(b"settled", body)
-        self.assertFalse(self.folder.answers.exists())
+        self.assertEqual(resp.status, 200, body)
+        self.assertEqual(json.loads(self.folder.answers.read_text(encoding="utf-8"))["answers"]["layout"], mark)
 
 
 class HostAndToken(ServerTest):

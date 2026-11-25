@@ -1776,6 +1776,20 @@ class InboxControl(InboxTest):
             self.assertNotIn(word, unknown["error"])
         self.assertFalse((topic / "round-01.answers.json").exists())
 
+    def test_elsewhere_is_an_unknown_request(self):
+        # The op signoff elsewhere sent, naming a live round: an inbox that still knew it would mark the item.
+        topic, e = self.case([one_round(question("q"), question("r"))])
+        self.start()
+        unknown = self.ctl("ping")
+        before = self.files(topic)
+        good = {"round": str(topic / "round-01.json"), "item": "q", "note": "said in chat"}
+        for fields in (good, {}, dict(good, note="x" * 600), dict(good, more=True)):
+            self.assertEqual(self.ctl("elsewhere", **fields), unknown, fields)
+        for word in ("elsewhere", "note", "http", "127.0.0.1"):
+            self.assertNotIn(word, unknown["error"])
+        self.assertEqual(self.files(topic), before)
+        self.assertFalse((topic / "round-01.answers.json").exists())
+
     def test_a_plain_open_ignores_keys_it_does_not_know(self):
         # A 0.3.0 or 0.4.0 app opens a banner's item with {"op": "open", "offer": <id>}: it gets the list.
         self.case([one_round(question("q"))])
@@ -1820,8 +1834,8 @@ class InboxControl(InboxTest):
     def test_hostile_requests_get_an_error(self):
         self.case([one_round(question("q"))])
         self.start()
-        for raw in (b'{"op": "open"' + b" " * 5000 + b"}\n", b'{"op": ["open"]}\n', b'{"op": "elsewhere", "round": '
-                    + json.dumps(str(self.root)).encode() + b", " + b'"x": "' + b"y" * 5000 + b'"}\n'):
+        for raw in (b'{"op": "open"' + b" " * 5000 + b"}\n", b'{"op": ["open"]}\n', b'{"op": "rows", "project": '
+                    + json.dumps(self.pid).encode() + b", " + b'"x": "' + b"y" * 5000 + b'"}\n'):
             with socket.socket(socket.AF_UNIX) as s:
                 s.settimeout(5)
                 s.connect(str(self.home / "inbox.sock"))
@@ -1913,6 +1927,8 @@ class InboxRows(InboxTest):
             ("a settled item changed but only preselected", [question("s", settled="round-01"), question("q")],
              {"s": {"choice": "b", "source": "recommended"}}, ["s", "q"]),
             ("only settled items", [question("s", settled="round-01")], None, []),
+            ("an old file's mark of the agent's, no choice", [question("q"), question("r")],
+             {"q": {"choice": None, "comment": "said in chat", "source": "elsewhere"}}, ["q", "r"]),
         ]
         self.start()
         for label, items, answers, want in cases:
@@ -2009,221 +2025,15 @@ class InboxPlan(InboxTest):
                          [("Plan", 0, [{"item": 0, "title": "Approve this plan?"}])])
 
 
-class InboxElsewhere(InboxTest):
-    """signoff elsewhere while the inbox holds the round's lock: the command sends the `elsewhere` op, and the inbox
-    writes the mark through the run's own writer at the round's rev, as a page save does. Refusals are one word and
-    write nothing; any other error the inbox answers makes the command exit 1, writing nothing."""
+class InboxHeld(InboxTest):
+    """A round another process holds the lock of is shown read only, and taken in at the inbox's next look once that
+    process lets go."""
 
-    case, end, ctl, files = InboxControl.case, InboxControl.end, InboxControl.ctl, InboxControl.files
-    rows = InboxRows.rows
+    case = InboxControl.case
 
-    def mark(self, *args):
-        out, err = io.StringIO(), io.StringIO()
-        with mock.patch.object(sys, "stdout", out), mock.patch.object(sys, "stderr", err), \
-                mock.patch.dict(os.environ, SIGNOFF_INBOX_HOME=str(self.home)):
-            code = signoff.main(["elsewhere"] + [str(a) for a in args])
-        return code, out.getvalue(), err.getvalue()
-
-    def op(self, topic, item, note="n", name="round-01.json", **extra):
-        return self.ctl("elsewhere", round=str(topic / name), item=item, note=note, **extra)
-
-    def saved(self, topic, n=1):
-        return json.loads((topic / ("round-%02d.answers.json" % n)).read_text(encoding="utf-8"))
-
-    def test_the_command_asks_the_inbox_which_writes_at_the_rounds_rev(self):
-        topic, e = self.case([one_round(question("q"), question("r"))],
-                             {1: dict(record({}), accepted=True, accepted_at="2026-01-01T12:00:00Z")})
-        self.start()
-        start, page = self.open()
-        view, _ = self.view(page + "run/0/")
-        rev = view["rounds"][0]["rev"]
-        self.assertTrue(view["rounds"][0]["accepted"])
-        with mock.patch.object(self.server, "mark_elsewhere", wraps=self.server.mark_elsewhere) as asked:
-            self.assertEqual(self.mark(topic / "round-01.json", "q", "said in chat"), (0, "", ""))
-        asked.assert_called_once_with(str(topic / "round-01.json"), "q", "said in chat")
-        saved = self.saved(topic)
-        self.assertEqual(saved["answers"], {"q": {"choice": None, "comment": "said in chat", "source": "elsewhere"}})
-        # The mark undoes the round's acceptance, as a change on the page does.
-        self.assertEqual((saved["accepted"], saved["changed_after_accept"], saved["free_text"]), (False, True, "kept"))
-        self.assertIsNone(signoff.try_lock(topic / "round-01.json.lock", create=False))  # the inbox holds it still
-        view, _ = self.view(page + "run/0/")
-        self.assertEqual(view["rounds"][0]["rev"], rev + 1)
-        self.assertEqual((view["rounds"][0]["accepted"], view["rounds"][0]["changed"]), (False, True))
-        self.assertEqual(view["rounds"][0]["answers"]["answers"]["q"]["source"], "elsewhere")
-        resp, _ = self.save(page, {"answers": {}, "free_text": "", "done": False, "rev": rev})
-        self.assertEqual(resp.status, 409)  # the tab that saw the round before the mark reloads
-        self.assertEqual(self.saved(topic)["answers"]["q"]["source"], "elsewhere")
-
-    def test_refusals_are_one_word_and_write_nothing(self):
-        topic, _ = self.case([one_round(question("q"), question("r"))],
-                             {1: record({"r": {"choice": "a", "comment": "mine", "source": "recommended"}})})
-        done, _ = self.case([one_round(question("q")), one_round(question("q"))], {1: record({}, done=True)})
-        held, _ = self.case([one_round(question("q"))])
-        lock = signoff.try_lock(held / "round-01.json.lock")  # a page run started before the inbox
-        self.addCleanup(signoff.unlock, lock)
-        settled, _ = self.case([one_round(question("q", settled="round-01"), question("r"))])
-        self.start()
-        before = self.files(self.root)
-        cases = [
-            ("an unknown round", self.op(topic, "q", name="round-09.json"), "gone"),
-            ("an unknown item", self.op(topic, "zz"), "gone"),
-            ("the user's own text", self.op(topic, "r"), "answered"),
-            ("a settled item: its recommendation is the user's earlier answer", self.op(settled, "q"), "answered"),
-            ("a done round", self.op(done, "q"), "done"),
-            ("a round another run holds", self.op(held, "q"), "held"),
-        ]
-        for label, reply, word in cases:
-            self.assertEqual(reply, {"error": word}, label)
-        good = {"op": "elsewhere", "round": str(topic / "round-01.json"), "item": "q", "note": "n"}
-        malformed = [dict(good, round="round-01.json"), dict(good, round=["x"]), dict(good, item=3),
-                     dict(good, item="../q"), dict(good, note="x" * (signoff.MAX_NOTE + 1)),
-                     dict(good, note="a\nb"), dict(good, note="a​b"), dict(good, note=None),
-                     dict(good, extra=1), {k: v for k, v in good.items() if k != "note"}]
-        for req in malformed:
-            with socket.socket(socket.AF_UNIX) as s:
-                s.settimeout(5)
-                s.connect(str(self.home / "inbox.sock"))
-                s.sendall(json.dumps(req).encode("utf-8") + b"\n")
-                reply = json.loads(s.makefile("rb").readline())
-            self.assertEqual(sorted(reply), ["error"], req)
-            self.assertNotIn(reply["error"], signoff.MARK_REFUSALS, req)
-            self.assertIn("elsewhere takes", reply["error"], req)
-        self.assertEqual(self.files(self.root), before)
-        self.assertEqual(self.op(topic, "q", "same"), {"ok": True})
-        after = self.files(self.root)
-        self.assertEqual(self.op(topic, "q", "same"), {"ok": True})  # marked so already: nothing written
-        self.assertEqual(self.files(self.root), after)
-
-    def test_each_refusal_reaches_the_command_as_one_line_and_exit_1(self):
-        topic, _ = self.case([one_round(question("q"), question("r"))],
-                             {1: record({"r": {"choice": "b", "comment": "", "source": "user"}})})
-        self.start()
-        before = self.files(self.root)
-        for item, words in (("r", ("user",)), ("zz", ("zz",))):
-            code, out, err = self.mark(topic / "round-01.json", item, "n")
-            self.assertEqual((code, out, err.count("\n")), (1, "", 1), err)
-            for w in words:
-                self.assertIn(w, err)
-        for word in ("gone", "done", "held", "failed"):
-            with mock.patch.object(self.server, "mark_elsewhere", return_value=word):
-                code, out, err = self.mark(topic / "round-01.json", "q", "n")
-            self.assertEqual((code, out, err.count("\n")), (1, "", 1), (word, err))
-            self.assertNotIn("Traceback", err)
-        self.assertEqual(self.files(self.root), before)
-
-    def test_a_path_spelled_otherwise_than_the_runs_is_named_not_retried(self):
-        # Another letter case reaches the same file on a case-insensitive volume, yet the inbox matches the run's
-        # own spelling: running the same command again could never succeed.
+    def test_the_inbox_takes_in_a_round_lock_let_go_at_its_next_look(self):
         topic, _ = self.case([one_round(question("q"))])
-        other = topic / "ROUND-01.json"
-        if not other.exists():
-            self.skipTest("a case-sensitive file system")
-        self.start()
-        before = self.files(self.root)
-        code, out, err = self.mark(other, "q", "n")
-        self.assertEqual((code, out, err.count("\n")), (1, "", 1), err)
-        self.assertNotIn("again", err)
-        self.assertIn("spelled", err)
-        self.assertEqual(self.files(self.root), before)
-
-    def test_a_save_landing_first_is_changed_and_the_command_tries_three_times(self):
-        topic, _ = self.case([one_round(question("q"), question("r"))])
-        self.start()
-        real, writes = signoff._Group.store, []
-
-        def store(g, index, state, rev=None):
-            writes.append(rev)  # another writer between the inbox's look and its write, new bytes each time
-            write_outside(topic / "round-01.answers.json", dict(record({}), saved="2026-01-01T12:00:0%dZ" % len(writes)))
-            return real(g, index, state, rev)
-        with mock.patch.object(signoff._Group, "store", store):
-            self.assertEqual(self.op(topic, "q"), {"error": "changed"})
-            code, out, err = self.mark(topic / "round-01.json", "q", "n")
-        self.assertEqual((code, out, err.count("\n")), (1, "", 1), err)
-        self.assertIn("kept changing", err)
-        self.assertEqual(len(writes), 4)
-        self.assertNotIn("q", self.saved(topic)["answers"])
-        with mock.patch.object(signoff, "write_atomic", side_effect=OSError(28, "No space left on device")):
-            self.assertEqual(self.op(topic, "q"), {"error": "failed"})
-
-    def test_a_line_note_is_the_users_own_and_a_stale_one_never_blocks_a_mark(self):
-        attached = {"attachments": [{"src": "change.diff"}], "lines": True}
-        stale = {"att": 0, "line": 2, "quote": "+what line 2 said before", "comment": "mine"}
-        topic, _ = self.case([one_round(question("q", **attached), question("r"))], {1: record({
-            "q": {"choice": None, "comment": "", "source": "recommended", "lines": [stale]}})})
-        (topic / "change.diff").write_text("--- a/x\n+++ b/x\n", encoding="utf-8")
-        self.start()
-        before = self.files(self.root)
-        self.assertEqual(self.op(topic, "q"), {"error": "answered"})
-        self.assertEqual(self.files(self.root), before)
-        self.assertEqual(self.op(topic, "r", "said in chat"), {"ok": True})
-        saved = self.saved(topic)
-        self.assertEqual(saved["answers"]["q"]["lines"], [stale])
-        self.assertEqual(saved["answers"]["r"]["source"], "elsewhere")
-
-    def test_a_mark_is_decided_in_the_rows(self):
-        two, _ = self.case([one_round(question("q"), question("r"))])
-        only, _ = self.case([one_round(question("q"))])
-        self.start()
-        self.assertEqual(self.op(only, "q"), {"ok": True})
-        self.assertEqual(self.op(two, "q"), {"ok": True})
-        (r,) = [x for x in self.rows()["rounds"] if len(x["items"])]
-        self.assertEqual((r["item"], r["items"]), (1, [{"item": 1, "title": "Question r"}]))  # a mark is decided
-
-    def test_a_note_at_the_cap_fits_the_control_line_and_one_that_does_not_is_never_sent(self):
-        deep = self.root / ".signoff" / ("d" * 200) / ("e" * 200) / ("f" * 200)
-        deep.mkdir(parents=True)
-        (deep / "round-01.json").write_text(json.dumps(one_round(question("q"))), encoding="utf-8")
-        e = entry(deep, ["round-01.json"], project=self.pid)
-        self.write(self.home / "runs" / (e["run"] + ".json"), e)
-        self.start()
-        note = "\U0001F600" * signoff.MAX_NOTE  # four bytes each in the line
-        self.assertEqual(self.mark(deep / "round-01.json", "q", note), (0, "", ""))
-        self.assertEqual(self.saved(deep)["answers"]["q"]["comment"], note)
-        with mock.patch.object(signoff, "MAX_CONTROL", 600), \
-                mock.patch.object(self.server, "mark_elsewhere") as asked:
-            code, out, err = self.mark(deep / "round-01.json", "q", "another")
-        self.assertEqual((code, out, err.count("\n")), (1, "", 1), err)
-        self.assertIn("control line", err)
-        asked.assert_not_called()
-
-    def test_any_other_inbox_error_makes_the_command_exit_1_and_write_nothing(self):
-        # An error that is none of the refusal words: one line that names it, whatever it says.
-        topic, _ = self.case([one_round(question("q"))])
-        inbox = signoff.try_lock(self.home / "inbox.lock")
-        self.addCleanup(signoff.unlock, inbox)
-        lock = signoff.try_lock(topic / "round-01.json.lock")
-        self.addCleanup(signoff.unlock, lock)
-        sock = socket.socket(socket.AF_UNIX)
-        self.addCleanup(sock.close)
-        sock.bind(str(self.home / "inbox.sock"))
-        sock.listen(1)
-        got = []
-
-        def answer(reply):
-            conn, _ = sock.accept()
-            with conn:
-                got.append(json.loads(conn.makefile("rb").readline()))
-                conn.sendall(json.dumps({"error": reply}).encode("utf-8") + b"\n")
-        before = self.files(topic)
-        for reply in ('unknown request; send {"op": "open"}',
-                      "elsewhere takes round (an absolute path), item and note (one line of at most 500 characters), "
-                      "and nothing else"):
-            t = threading.Thread(target=answer, args=(reply,), daemon=True)
-            t.start()
-            code, out, err = self.mark(topic / "round-01.json", "q", "n")
-            t.join(5)
-            self.assertEqual((code, out, err), (1, "", "signoff: the Signoff inbox refused the request (%s); nothing "
-                                                "was written. An inbox started before an update may not know the "
-                                                "request: restart it (signoff inbox stop, then signoff inbox open) "
-                                                "and run the same command again. If it still refuses, its Python "
-                                                "may know fewer characters than this one: use plainer characters in "
-                                                "the note\n" % reply))
-            self.assertEqual(got[-1]["op"], "elsewhere")
-            self.assertEqual(self.files(topic), before)
-
-    def test_the_inbox_retries_a_round_lock_the_command_holds_at_its_next_look(self):
-        topic, _ = self.case([one_round(question("q"))])
-        fd = signoff.try_lock(topic / "round-01.json.lock")  # the command's, for its write
+        fd = signoff.try_lock(topic / "round-01.json.lock")  # another process's, for a moment
         self.start()
         start, page = self.open()
         view, _ = self.view(page + "run/0/")
@@ -2232,19 +2042,6 @@ class InboxElsewhere(InboxTest):
         self.server._look()
         view, _ = self.view(page + "run/0/")
         self.assertFalse(view["held"])  # never read only for good
-
-    def test_a_round_no_run_waits_on_is_marked_under_its_lock_and_taken_in_later(self):
-        self.start()
-        topic = self.root / ".signoff" / "later"
-        topic.mkdir()
-        (topic / "round-01.json").write_text(json.dumps(one_round(question("q"), question("r"))), encoding="utf-8")
-        with mock.patch.object(self.server, "mark_elsewhere") as asked:
-            self.assertEqual(self.mark(topic / "round-01.json", "q", "n"), (0, "", ""))
-        asked.assert_not_called()  # the lock was free: the command wrote under it
-        e = entry(topic, ["round-01.json"], project=self.pid)
-        self.write(self.home / "runs" / (e["run"] + ".json"), e)
-        (r,) = self.rows()["rounds"]
-        self.assertEqual(r["items"], [{"item": 1, "title": "Question r"}])
 
 
 class InboxTarget(InboxTest):
