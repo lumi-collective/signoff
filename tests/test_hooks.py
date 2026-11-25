@@ -112,6 +112,19 @@ class Hook(HookBase):
         self.assertIsNone(s["pid"])  # only hook.sh knows Claude Code's pid
         self.assertEqual(sorted(p.name for p in self.written()), sorted([self.pid + ".json", s["session"] + ".json"]))
 
+    def test_the_hook_does_not_load_decimal_subprocess_or_webbrowser(self):
+        # Every event of every session pays for each import, so these three are loaded where they are used. Of the
+        # others a hook does not use, http.server and argparse stay at the top because classes there are built on
+        # them, and tempfile is the hook's own (write_atomic).
+        p = subprocess.run([sys.executable, "-I", "-B", "-X", "importtime", SCRIPT, "inbox", "hook"],
+                           input=json.dumps(self.event("UserPromptSubmit")).encode(), capture_output=True,
+                           env=self.env, timeout=30)
+        self.assertEqual((p.returncode, p.stdout), (0, b""), p.stderr)
+        self.assertEqual(self.session()["state"], "working")  # the hook did its whole job
+        loaded = set(re.findall(r"^import time:.*\|\s*(\S+)$", p.stderr.decode(), re.M))
+        self.assertIn("json", loaded)  # the output is what this test reads
+        self.assertEqual(loaded & {"decimal", "_decimal", "subprocess", "webbrowser"}, set())
+
     def test_a_bad_signoff_port_is_not_the_hooks_business(self):
         # Exported in a shell profile, it reaches every session's hooks: only the commands that bind read it.
         self.run_hook(self.event("SessionStart", source="startup"), env=dict(self.env, SIGNOFF_PORT="not a port"))
@@ -786,8 +799,9 @@ class HookLauncher(unittest.TestCase):
 @unittest.skipIf(sys.platform == "win32", "the sh launcher is tested on POSIX")
 class HookFastPath(unittest.TestCase):
     """hook.sh stops before Python when the default home has no inbox.lock, or (but at SessionStart) one that no live
-    inbox touched within a minute. It knows only the macOS and Linux
-    defaults; SIGNOFF_INBOX_HOME and Windows go to Python, whose inbox_home() stays the one resolver."""
+    inbox touched within a minute. It knows only the macOS and Linux defaults, and with no lock in either it stops
+    before uname. SIGNOFF_INBOX_HOME and a relative HOME go to Python, and so do no uname and Windows with OS scrubbed
+    once a default home has a lock; inbox_home() stays the one resolver. OS=Windows_NT stops first."""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -845,17 +859,58 @@ class HookFastPath(unittest.TestCase):
             self.assertTrue(self.started(env), (system, extra))  # the lock where Python looks: Python runs
             (home / "inbox.lock").unlink()
 
-    def test_python_decides_for_the_test_variable_and_no_uname(self):
+    def test_python_decides_for_the_test_variable_and_past_the_gate_without_uname(self):
         self.uname("Linux")
         self.assertTrue(self.started(self.env(SIGNOFF_INBOX_HOME=str(self.tmp / "elsewhere"))))
         self.assertFalse(self.started(self.env(OS="Windows_NT")))  # no inbox runs on Windows: nothing to look at
         self.assertTrue(self.started(self.env(HOME="relative")))
+        # Past the gate (a lock in a default home), these leave the home to Python. With no lock in either default
+        # home the gate stops first: no inbox can run there (on Windows it never runs). The lock is in the macOS home,
+        # which these systems would not look in themselves: only their own arm sends them on to Python.
+        lock = self.user / "Library" / "Application Support" / "signoff" / "inbox.lock"
         for system in ("MINGW64_NT-10.0-22631", "MSYS_NT-10.0", "CYGWIN_NT-10.0", "UCRT64_NT-10.0-22631",
                        "CLANGARM64_NT-10.0-22631"):  # Windows with OS scrubbed
             self.uname(system)
+            self.assertFalse(self.started(self.env()), system)
+            lock.parent.mkdir(parents=True, exist_ok=True)
+            lock.write_bytes(b"")
             self.assertTrue(self.started(self.env()), system)
+            lock.unlink()
         (self.bin / "uname").unlink()
+        self.assertFalse(self.started(self.env()))
+        lock.write_bytes(b"")
         self.assertTrue(self.started(self.env()))
+
+    def test_without_a_lock_in_either_default_home_no_uname_runs(self):
+        # uname is a process: most sessions have no inbox, and a lock test in sh costs nothing.
+        called = self.tmp / "uname-called"
+        (self.bin / "uname").write_text('#!/bin/sh\necho called > "%s"\necho "$SHIM_SYSTEM"\n' % called)
+        (self.bin / "uname").chmod(0o755)
+        app = any(os.path.isdir(d) for d in ("/Applications/Signoff.app", str(self.user / "Applications/Signoff.app")))
+        xdg = self.tmp / "xdg"
+        for extra in ({}, {"XDG_STATE_HOME": str(xdg)}, {"XDG_STATE_HOME": "rel/state"}):
+            for system in ("Darwin", "Linux"):
+                env = self.env(SHIM_SYSTEM=system, **extra)
+                for args in ((), ("clear",), ("session",), ("start",)):
+                    if called.exists():
+                        called.unlink()
+                    self.assertFalse(self.started(env, *args), (system, extra, args))
+                    if args != ("start",) or not app:  # with the app, start's launcher link asks uname first
+                        self.assertFalse(called.exists(), (system, extra, args))
+        # A lock in either default home goes on to uname, which picks the one the platform uses, as before.
+        mac = self.user / "Library" / "Application Support" / "signoff"
+        for extra, linux in (({}, self.user / ".local" / "state" / "signoff"),
+                             ({"XDG_STATE_HOME": str(xdg)}, xdg / "signoff")):
+            for home, system, runs in ((mac, "Darwin", True), (mac, "Linux", False), (linux, "Linux", True),
+                                       (linux, "Darwin", False)):
+                home.mkdir(parents=True, exist_ok=True)
+                (home / "inbox.lock").write_bytes(b"")
+                if called.exists():
+                    called.unlink()
+                self.assertEqual(self.started(self.env(SHIM_SYSTEM=system, **extra), "session"), runs,
+                                 (home, system))
+                self.assertTrue(called.exists(), (home, system))
+                (home / "inbox.lock").unlink()
 
     def test_a_tool_result_starts_python_only_while_a_session_may_wait(self):
         # PostToolUse runs at every tool call: with the inbox on, Python starts only when waiting.flag has a byte.

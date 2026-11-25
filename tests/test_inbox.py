@@ -15,6 +15,7 @@ import tempfile
 import threading
 import time
 import unittest
+import webbrowser
 from pathlib import Path
 from unittest import mock
 
@@ -3001,9 +3002,9 @@ class InboxCli(unittest.TestCase):
         target = ["--run", "0", "--focus", "0/0", "--inbox", "1"]
         for args in (["--app"], ["--app"] + target, target + ["--app"], ["--app", "--no-open"], ["--app", "--app"]):
             out, err = io.StringIO(), io.StringIO()
-            with mock.patch.object(signoff.subprocess, "run", side_effect=lambda *a, **k: started.append(a)), \
-                    mock.patch.object(signoff.subprocess, "Popen", side_effect=lambda *a, **k: started.append(a)), \
-                    mock.patch.object(signoff.webbrowser, "open", side_effect=lambda *a, **k: started.append(a)), \
+            with mock.patch.object(subprocess, "run", side_effect=lambda *a, **k: started.append(a)), \
+                    mock.patch.object(subprocess, "Popen", side_effect=lambda *a, **k: started.append(a)), \
+                    mock.patch.object(webbrowser, "open", side_effect=lambda *a, **k: started.append(a)), \
                     mock.patch.dict(os.environ, SIGNOFF_INBOX_HOME=str(self.home)), \
                     contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
                 code = signoff.main(["inbox", "open"] + args)

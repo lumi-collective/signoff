@@ -18,6 +18,7 @@ import time
 import types
 import unittest
 import urllib.error
+import webbrowser
 from unittest import mock
 import urllib.request
 from pathlib import Path
@@ -1575,7 +1576,7 @@ class NoBrowser(unittest.TestCase):
 
     def run_main(self, opened):
         err = io.StringIO()
-        with mock.patch.object(signoff.webbrowser, "open", return_value=opened) as browser, \
+        with mock.patch.object(webbrowser, "open", return_value=opened) as browser, \
                 mock.patch.object(sys, "stderr", err):
             code = signoff.main([str(self.folder.target), "--timeout", "0.002"])
         browser.assert_called_once()
@@ -1595,7 +1596,7 @@ class NoBrowser(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {"SIGNOFF_INBOX_HOME": tmp}), \
                 mock.patch.object(signoff, "inbox_alive", return_value=True), \
                 mock.patch.object(signoff, "inbox_request", return_value={"link": link}), \
-                mock.patch.object(signoff.webbrowser, "open", return_value=False), mock.patch.object(sys, "stderr", err):
+                mock.patch.object(webbrowser, "open", return_value=False), mock.patch.object(sys, "stderr", err):
             self.assertEqual(signoff.main(["inbox", "open"]), 0)
         self.assertIn("no browser opened; open %s yourself (it works once)" % link, err.getvalue())
         self.assertNotIn("is open in your browser", err.getvalue())
@@ -1606,7 +1607,7 @@ class NoBrowser(unittest.TestCase):
         # The browser would open on the remote machine, where the user is not: as with --no-open.
         for env in self.SSH:
             err = io.StringIO()
-            with mock.patch.dict(os.environ, env), mock.patch.object(signoff.webbrowser, "open") as browser, \
+            with mock.patch.dict(os.environ, env), mock.patch.object(webbrowser, "open") as browser, \
                     mock.patch.object(sys, "stderr", err):
                 code = signoff.main([str(self.folder.target), "--timeout", "0.002"])
             browser.assert_not_called()
@@ -1636,7 +1637,7 @@ class NoBrowser(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, dict(env, SIGNOFF_INBOX_HOME=tmp)), \
                 mock.patch.object(signoff, "inbox_alive", return_value=True), \
                 mock.patch.object(signoff, "inbox_request", return_value={"link": link}), \
-                mock.patch.object(signoff.webbrowser, "open", return_value=True) as browser, \
+                mock.patch.object(webbrowser, "open", return_value=True) as browser, \
                 mock.patch.object(sys, "stderr", err):
             self.assertEqual(signoff.main(["inbox", "open"]), 0)
         return link, browser, err.getvalue()
@@ -1670,7 +1671,7 @@ class FixedPort(unittest.TestCase):
         out, err = io.StringIO(), io.StringIO()
         with mock.patch.dict(os.environ, env or {}), mock.patch.object(sys, "stdout", out), \
                 mock.patch.object(sys, "stderr", err), \
-                mock.patch.object(signoff.webbrowser, "open", side_effect=AssertionError("a browser")):
+                mock.patch.object(webbrowser, "open", side_effect=AssertionError("a browser")):
             try:
                 code = signoff.main([str(self.folder.target), "--no-open", "--timeout", "0.002"] + args)
             except SystemExit as e:
@@ -1736,7 +1737,7 @@ class BrowserFds(unittest.TestCase):
             os.dup2(out, 1)
             os.dup2(err, 2)
             before = [os.fstat(1), os.fstat(2)]
-            with mock.patch.object(signoff.webbrowser, "open", side_effect=browser), \
+            with mock.patch.object(webbrowser, "open", side_effect=browser), \
                     mock.patch.object(sys, "stdout", io.StringIO()), mock.patch.object(sys, "stderr", io.StringIO()):
                 code = call()
             after = [os.fstat(1), os.fstat(2)]

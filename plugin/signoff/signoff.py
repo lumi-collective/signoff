@@ -24,14 +24,11 @@ import signal
 import socket
 import socketserver
 import stat
-import subprocess
 import sys
 import tempfile
 import threading
 import time
 import unicodedata
-import webbrowser
-from decimal import Decimal
 from pathlib import Path, PureWindowsPath
 
 HERE = Path(__file__).resolve().parent
@@ -206,6 +203,8 @@ def _snap(rng, v):
     k = round((v - rng["min"]) / rng["step"])
     if isinstance(rng["min"], int) and isinstance(rng["step"], int):
         return rng["min"] + k * rng["step"]
+    from decimal import Decimal  # here, not at the top: the hooks run in every session and never get here
+
     places = max(-Decimal(repr(float(x))).as_tuple().exponent for x in (rng["min"], rng["step"]))
     return round(rng["min"] + k * rng["step"], max(places, 0))
 
@@ -3346,6 +3345,8 @@ def _open_browser(url):
     (xdg-open or gio on Linux) inherits them: on a pipe it would hold the caller's pipe open (the mod waits for its
     end) or write on a run's stdout, which holds answers paths only. A terminal stays, for a console browser. The swap is
     for the whole process: a line another thread writes to stderr during the call is lost."""
+    import webbrowser  # here, not at the top: the hooks run in every session and never get here
+
     for stream in (sys.stdout, sys.stderr):
         if stream:
             stream.flush()
@@ -3383,6 +3384,8 @@ def _inbox_open(no_open, target=None):
         if env_port() is None:  # the inbox it starts would only say so in its log
             print(BAD_ENV_PORT, file=sys.stderr)
             return EXIT_ERROR
+        import subprocess  # here, not at the top: the hooks run in every session and never get here
+
         try:
             home.mkdir(parents=True, mode=0o700, exist_ok=True)
             log.parent.mkdir(mode=0o700, exist_ok=True)

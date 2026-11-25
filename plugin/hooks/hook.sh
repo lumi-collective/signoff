@@ -56,17 +56,22 @@ live() {
 
 # Most sessions have no live inbox: stop before starting Python (about 50 ms, and on a Mac without the Command Line
 # Tools /usr/bin/python3 would offer to install them). This mirrors only inbox_home()'s macOS and Linux defaults,
-# which stays the one resolver: SIGNOFF_INBOX_HOME, a relative HOME or no uname go on to Python.
+# which stays the one resolver: SIGNOFF_INBOX_HOME and a relative HOME go on to Python, and so do no uname and Windows
+# once a default home has a lock.
 if [ -z "$SIGNOFF_INBOX_HOME" ]; then
   case "$HOME" in /*)
+    mac="$HOME/Library/Application Support/signoff"
+    case "$XDG_STATE_HOME" in
+      /*) xdg="$XDG_STATE_HOME/signoff" ;;
+      *) xdg="$HOME/.local/state/signoff" ;;
+    esac
+    # No lock in either default home: no inbox has run here (none runs on Windows). Tested before uname, a process.
+    [ -e "$mac/inbox.lock" ] || [ -e "$xdg/inbox.lock" ] || exit 0
     home=
     case "$(uname -s 2>/dev/null)" in
-      Darwin) home="$HOME/Library/Application Support/signoff" ;;
+      Darwin) home=$mac ;;
       ""|CYGWIN*|*_NT-*) ;;  # no uname, or Windows with OS scrubbed (a native Python looks in LOCALAPPDATA)
-      *) case "$XDG_STATE_HOME" in
-           /*) home="$XDG_STATE_HOME/signoff" ;;
-           *) home="$HOME/.local/state/signoff" ;;
-         esac ;;
+      *) home=$xdg ;;
     esac
     if [ -n "$home" ]; then
       case "$1" in

@@ -22,8 +22,10 @@ Instructions for coding agents working on Signoff. The README says what it does 
   the rest as a block comment; `test_hooks.py` checks the commands token by token (no
   PowerShell runs in CI). On Windows `hook.sh` exits before Python: the inbox does not run
   there. On macOS and Linux, without `SIGNOFF_INBOX_HOME`, `hook.sh` exits before Python when the default home
-  has no live inbox (see the hooks rule), SessionStart only when it has no `inbox.lock`; it mirrors only those
-  defaults of `inbox_home()`, and a test keeps the two in step.
+  has no live inbox (see the hooks rule), SessionStart only when it has no `inbox.lock`; with an absolute `HOME`
+  and no `inbox.lock` in either default home (macOS's, and the XDG one), on any system, it exits before it runs
+  `uname` (`hook.sh start` may run it before that, for the launcher link). Windows with `OS` scrubbed exits there
+  too: no inbox runs on Windows, so the gate does not look in `LOCALAPPDATA`. It mirrors only those defaults of `inbox_home()`, and a test keeps the two in step.
   PostToolUse and PostToolUseFailure run `hook.sh clear`: there it also exits before Python when that home's
   `waiting.flag` is empty or absent, tested first. SessionStart has two groups: `startup` runs `hook.sh start` (on macOS with
   `/Applications/Signoff.app` or `~/Applications/Signoff.app` there, it first keeps the home's `launcher` link, see
@@ -807,8 +809,9 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   alive or null) and is empty otherwise; it is replaced atomically, never removed. A wait writes it before and
   after its session file; a hook that ends one empties it only when no session may wait, then looks again and
   writes the byte back if one began meanwhile, so it is never empty under a wait (a hook killed between the two
-  writes aside). A stale byte costs a Python start at a tool call, nothing more. With the inbox on and the flag
-  empty, `hook.sh clear` costs a session about what `hook.sh` costs with the inbox off (an `sh` start and a stat).
+  writes aside). A stale byte costs a Python start at a tool call, nothing more. With the inbox off (no
+  `inbox.lock` in either default home), `hook.sh` costs a session an `sh` start and two file tests (four for `hook.sh start`, the two app tests first), and starts no other
+  process (but the launcher link's `uname`, below). With the inbox on and the flag empty, `hook.sh clear` costs that, a `uname` and a stat.
   The live gate: for the default homes, `hook.sh` runs `inbox hook` at SessionStart (every source; `hook.sh start`
   or `hook.sh session`) while `inbox.lock` is there, and at the other events only while the inbox is live:
   `inbox.lock` touched within a minute (`find -mmin -1`; the inbox touches it every `STATE_EVERY` seconds; a `find` that fails leaves the lock alone to decide), tested after `waiting.flag` for `clear`.
@@ -816,8 +819,8 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   inbox starts (a wait that began or ended meanwhile, and `waiting.flag` with it) until the session's next event;
   a session that ended meanwhile is never marked `ended`, so only its pid tells, and a reused pid keeps it a live
   session (a counted wait, if it waited, and no hand-over to new sessions) until its file is `SESSIONS_MAX_AGE`
-  old. `inbox hook` itself has no such gate: with `SIGNOFF_INBOX_HOME`, a relative `HOME` or no `uname`, Python
-  has started already.
+  old. `inbox hook` itself has no such gate: with `SIGNOFF_INBOX_HOME`, a relative `HOME`, or no `uname` and an
+  `inbox.lock` in a default home, Python has started already.
   The hand-over: at SessionStart (not a compaction), with the inbox on and no other live session of the project (a
   `sessions/` file no older than `SESSIONS_MAX_AGE`, not `ended`, its `pid` alive and not this Claude Code's), the
   hook prints the project's pending requests (no `<id>.done`), oldest first: one head line (`HANDOVER_HEAD`: tell
