@@ -173,7 +173,7 @@ line or turns it off. This needs a Claude Code that runs plugin mods.
 ## The macOS app
 
 `app/` builds Signoff, an optional macOS app around the inbox. It is not part of the plugin. It shows the inbox in
-its own window and in a menu bar panel, the number waiting on you as a Dock badge, and a notification when that
+its own window, the number waiting on you as a Dock badge and beside its menu bar icon, and a notification when that
 number goes up. Install it with Homebrew, which builds it on your Mac from this
 release's source and puts it in `/Applications` (a Signoff.app you copied there by hand: remove it first):
 

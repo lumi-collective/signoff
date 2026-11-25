@@ -170,7 +170,7 @@ write.
 ## The macOS app
 
 `app/` builds Signoff, an optional macOS app that shows the inbox in its own
-window and in a panel from the menu bar, the number waiting on you as a Dock badge and beside its menu bar icon,
+window, the number waiting on you as a Dock badge and beside its menu bar icon,
 and a notification when that number goes up. It needs Go 1.26
 or newer and the Xcode Command Line Tools; no npm.
 
@@ -208,9 +208,8 @@ moves the link; restart the app to follow it. Before that first session, the app
 session with the plugin installed from its marketplace once. It starts the inbox when none runs, asks it for a start
 link and opens that in its window; the inbox's links to other sites open in your browser, and a board's open
 nothing. Close the window and the app stays,
-with its badge; click its Dock icon to bring the window back with a fresh link. Click its menu bar icon for the
-inbox in a panel under it (a link of its own, the page's narrow layout; a round opens and can be answered there); it hides when
-you click elsewhere. A right click on the icon offers Open Signoff and Quit Signoff. With many menu bar icons,
+with its badge; click its Dock icon or its menu bar icon to bring the window back with a fresh link. A right click
+on the menu bar icon offers Open Signoff and Quit Signoff. With many menu bar icons,
 macOS may tuck it away with the others it hides. Quitting the app leaves the inbox running (`signoff inbox
 stop` ends it). macOS asks once whether the app may send notifications. A notification says only how many wait,
 and a click on it opens the window. Started from

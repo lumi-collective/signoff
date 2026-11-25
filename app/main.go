@@ -1,7 +1,7 @@
 // Signoff: a thin macOS shell around the inbox of the Signoff plugin. It starts the inbox through the plugin's
-// own command, shows its page in a window and in a panel under its menu bar item, and keeps a Dock badge, the count
-// beside the menu bar item and a notification from state.json. It holds no
-// server, binds no Go method to the webview, and never writes a link or a token anywhere.
+// own command, shows its page in a window, and keeps a Dock badge, the count beside its menu bar item and a
+// notification from state.json. It holds no server, binds no Go method to the webview, and never writes a link or a
+// token anywhere.
 package main
 
 import (
@@ -29,21 +29,18 @@ type appShell struct {
 	dock    *dock.DockService
 	navOK   bool // set before Run
 
-	showing    sync.Mutex // one show at a time: the start, a Dock click and a menu bar click may come together
-	launcher   string     // these four under showing
-	home       string
-	winInbox   string // the server_id of the inbox whose page the window holds
-	panelInbox string // the same for the panel; "" before its first load
-	badging    sync.Once
+	showing  sync.Mutex // one show at a time: the start, a Dock click and a menu bar click may come together
+	launcher string     // these three under showing
+	home     string
+	winInbox string // the server_id of the inbox whose page the window holds
+	badging  sync.Once
 
-	tray  *application.SystemTray // these two set before Run
-	panel *application.WebviewWindow
+	tray *application.SystemTray // set before Run
 
-	mu       sync.Mutex // never held across a call into Wails: navDecide takes it on the main thread
-	inbox    string     // the inbox's origin, http://127.0.0.1:<port>, from the last start link
-	win      *application.WebviewWindow
-	hidden   bool
-	panelHid time.Time // when the panel last hid
+	mu     sync.Mutex // never held across a call into Wails: navDecide takes it on the main thread
+	inbox  string     // the inbox's origin, http://127.0.0.1:<port>, from the last start link
+	win    *application.WebviewWindow
+	hidden bool
 }
 
 var shell = &appShell{}

@@ -27,4 +27,7 @@ func TestWindowStaysOnlyOnItsOwnLiveInbox(t *testing.T) {
 				c.name, got, asked, read, c.want, c.aliveAsked, c.serverRead)
 		}
 	}
+	if id := inboxServer(t.TempDir()); id != "" { // no inbox.json: never equal to a page's inbox
+		t.Errorf("no inbox.json gave %q", id)
+	}
 }

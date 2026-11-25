@@ -150,14 +150,11 @@ Instructions for coding agents working on Signoff. The README says what it does 
   Dock badge and a notification with the number when it rises; any response to a banner (`notify.go`), one an
   older app sent with Accept & send included, only opens the window. Wails runs the response callback in the
   delegate before its completion handler, so it only starts a goroutine. Closing the window hides it (its page, still asking for `state`,
-  keeps its page token open while the app runs); a Dock click loads a fresh start link into it. `tray.go` adds a
-  menu bar item: the icon `icon/menubar.png` (a template image, embedded), the same count as the badge beside it,
-  a left click toggling a 420×600 frameless panel under it that hides when it loses focus, and a right-click menu
-  (Open Signoff, Quit Signoff) that hides the panel first. The panel loads a start link of its own, taken on its
-  first click and again only when the inbox it came from is gone (stopped, or another `server_id` in
-  `inbox.json`) or the panel was hidden for an hour or more: a page that asks nothing (a round's page, or a list
-  whose `state` poll stopped at an error) is closed after `PAGE_IDLE` of awake time. A Dock click likewise reloads
-  an open window whose inbox has another `server_id`. `nav_darwin.m` adds the navigation policy to Wails' webview delegate, which has none, and shuts
+  keeps its page token open while the app runs); a Dock click loads a fresh start link into it, as it does
+  into an open window whose inbox has another `server_id`. `tray.go` adds a menu bar item: the icon
+  `icon/menubar.png` (a template image, embedded), the same count as the badge beside it, a left click that shows
+  the window as a Dock click does, and a right-click menu (Open Signoff, which does the same, and Quit Signoff);
+  it opens no webview of its own. `nav_darwin.m` adds the navigation policy to Wails' webview delegate, which has none, and shuts
   its `wails://` scheme. macOS only; notifications work only when the app runs from an Applications folder
   (`~/Applications` was checked), the badge from anywhere. The window is a plain macOS window with its own title
   bar. The icon is `app/icon/Signoff.icns`, made from `icon/icon.svg` by `icon/build-icon.sh icns` (headless
@@ -941,9 +938,9 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   run by then: this check keeps one home). The file checks look at the file that is executed, not at the
   `signoff.py` beside it or the `python3` on PATH it runs (the user's own files). It trusts the home only as a folder of
   the user's own, not a link, closed to others; `inbox.json` only with `schema` 1; and a start link only as
-  `http://127.0.0.1:<that port>/b/<token>/`. The window and the menu bar panel each get start links of their own
-  (never one another's), and every one of its webviews, the panel's included, has the navigation policy and the
-  shut scheme: Wails makes each with the same delegate class. The link goes to its webview and nowhere else: no log (Wails' logger
+  `http://127.0.0.1:<that port>/b/<token>/`. Every window it opens comes from one call site, `newWindow`
+  (`tray_test.go` finds no other call of Wails' window constructors by name), and every one has the navigation
+  policy and the shut scheme: Wails makes each with the same delegate class. The link goes to its webview and nowhere else: no log (Wails' logger
   is discarded), file, stdout, window title or process argument, and no error message holds it. The webview stays
   on the inbox's origin. Only the inbox page itself (not a board) opens anything outside: an http(s) link for a
   new window, clicked, goes to the default browser; a `127.0.0.1` URL never does (it may hold a page token), and
