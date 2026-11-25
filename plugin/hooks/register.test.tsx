@@ -2031,7 +2031,7 @@ async function answerPlan(w: World, after: (ms: number) => Promise<void>, text: 
   await after(1000)
 }
 
-test('ExitPlanMode is taken over: the fixed deny, the review kept, then signoff plan with the plan on stdin only', async ($, on) => {
+test('ExitPlanMode is taken over: the fixed deny, the review kept, then signoff plan with the plan on stdin only', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   await start($)
   expect(await exitPlan($, { plan: `${PLAN} \n\t \n` })).toEqual({ deny: DENY })
@@ -2044,7 +2044,7 @@ test('ExitPlanMode is taken over: the fixed deny, the review kept, then signoff 
   expect(DENY).not.toMatch(/\/|http/)
 })
 
-test('signoff plan runs in the session root after a Bash cd, with the folder setting, with hint off too', { options: { folder: '/decisions', hint: 'off' } }, async ($, on) => {
+test('signoff plan runs in the session root after a Bash cd, with the folder setting, with hint off too', { options: { folder: '/decisions', hint: 'off', plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   await start($)
   w.cwd = '/work' // a Bash cd
@@ -2066,6 +2066,9 @@ type Pass = {
 }
 const PASSES: Pass[] = [
   { name: 'the setting off', options: { plan: 'off' }, isFree: true },
+  // The kit hands the mod the manifest default for both, so they test the default; test_hooks.py pins the mod's own fallback.
+  { name: 'no plan setting (off by default)', options: {}, isFree: true },
+  { name: 'an unknown plan setting', options: { plan: 'on' }, isFree: true },
   { name: 'not armed (claude -p, the SDK)', isArmed: false, isFree: true },
   { name: 'Windows', world: { env: { HOME, OS: 'Windows_NT' } }, isFree: true },
   { name: 'a subagent', input: { plan: PLAN, agentId: 'agent-1' }, isFree: true },
@@ -2082,7 +2085,7 @@ const PASSES: Pass[] = [
   { name: 'an empty session id', before: w => void (w.sessionId = '') },
 ]
 for (const c of PASSES) {
-  test(`plan review passes to Claude Code's own path: ${c.name}`, { options: c.options ?? {} }, async ($, on) => {
+  test(`plan review passes to Claude Code's own path: ${c.name}`, { options: c.options ?? { plan: 'inbox' } }, async ($, on) => {
     const { w, after } = world(on, c.world)
     if (c.isArmed !== false) await start($, { cwd: c.world?.cwd })
     c.before?.(w)
@@ -2095,7 +2098,7 @@ for (const c of PASSES) {
   })
 }
 
-test('a plan of exactly 256 KiB is taken over, whatever white space follows it', async ($, on) => {
+test('a plan of exactly 256 KiB is taken over, whatever white space follows it', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   await start($)
   expect(await exitPlan($, { plan: `${'x'.repeat(BIG)}\n\n` })).toEqual({ deny: DENY })
@@ -2103,7 +2106,7 @@ test('a plan of exactly 256 KiB is taken over, whatever white space follows it',
   expect(w.spawns[0]?.input).toHaveLength(BIG)
 })
 
-test('a call during the first inbox home run waits for that home: one process, not the native path', async ($, on) => {
+test('a call during the first inbox home run waits for that home: one process, not the native path', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   let release = () => {}
   w.homeGate = new Promise(resolve => (release = resolve))
@@ -2117,7 +2120,7 @@ test('a call during the first inbox home run waits for that home: one process, n
   expect([w.ran.filter(argv => argv[2] === 'home').length, w.native]).toEqual([1, []])
 })
 
-test('while the review runs, any further call gets the deny plus already open, and no new round', async ($, on) => {
+test('while the review runs, any further call gets the deny plus already open, and no new round', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   await reviewing($, w, after)
   await after(5000)
@@ -2127,7 +2130,7 @@ test('while the review runs, any further call gets the deny plus already open, a
   expect([w.spawns.length, w.plan, w.native]).toEqual([1, held('review'), []])
 })
 
-test('two calls at the same time start one child', async ($, on) => {
+test('two calls at the same time start one child', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   await start($)
   const got = await Promise.all([exitPlan($), exitPlan($)])
@@ -2139,7 +2142,7 @@ for (const [name, text, deny] of [
   ['the same text', PLAN, DENY],
   ['another text', OTHER_PLAN, OPEN],
 ] as const) {
-  test(`a review with no child in this load, ${name}: the same round again with --resume and the kept text`, async ($, on) => {
+  test(`a review with no child in this load, ${name}: the same round again with --resume and the kept text`, { options: { plan: 'inbox' } }, async ($, on) => {
     const { w, after } = world(on, { lock: false })
     w.plan = held('review')
     await start($)
@@ -2153,7 +2156,7 @@ for (const [name, text, deny] of [
   })
 }
 
-test('a load with a review starts signoff plan again with the same topic and text', async ($, on) => {
+test('a load with a review starts signoff plan again with the same topic and text', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   w.plan = { topic: OLD_TOPIC, text: PLAN, phase: 'review', wake: null } // set before midnight
   await start($)
@@ -2164,7 +2167,7 @@ test('a load with a review starts signoff plan again with the same topic and tex
   expect([w.submits, w.toasts]).toEqual([[], []])
 })
 
-test('the band arms a load that has no interactive session.start: the review is started again', async ($, on) => {
+test('the band arms a load that has no interactive session.start: the review is started again', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   w.plan = held('review')
   await start($, { isInteractive: false })
@@ -2183,7 +2186,7 @@ test('plan off at a load with a review: no respawn, the state clears, nothing is
   expect([w.plan, w.spawns, w.submits, w.toasts]).toEqual([idle, [], [], []])
 })
 
-test('the topic stays for the session: a later review writes into the same folder', async ($, on) => {
+test('the topic stays for the session: a later review writes into the same folder', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   w.plan = { topic: OLD_TOPIC, text: '', phase: null, wake: null }
   await start($)
@@ -2192,7 +2195,7 @@ test('the topic stays for the session: a later review writes into the same folde
   expect([w.spawns[0]?.argv[3], w.plan?.topic]).toEqual([OLD_TOPIC, OLD_TOPIC])
 })
 
-test('an approval: phase and wake are kept before the submit, whose text is fixed and holds only the path', async ($, on) => {
+test('an approval: phase and wake are kept before the submit, whose text is fixed and holds only the path', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   await reviewing($, w, after)
   await answerPlan(w, after, answered('approve'))
@@ -2222,7 +2225,7 @@ const OTHERS: Other[] = [
   { name: 'over 4 MiB', text: answered('approve'), said: tooLargeText, phase: 'answered', size: 4 * 1024 * 1024 + 1 },
 ]
 for (const c of OTHERS) {
-  test(`an answer that is no approval and no failure: ${c.name}`, async ($, on) => {
+  test(`an answer that is no approval and no failure: ${c.name}`, { options: { plan: 'inbox' } }, async ($, on) => {
     const { w, after } = world(on)
     await reviewing($, w, after)
     if (c.isUnreadable) w.readFails.add(ANSWERS)
@@ -2239,14 +2242,14 @@ for (const c of OTHERS) {
   })
 }
 
-test('an answers file of exactly 4 MiB is read', async ($, on) => {
+test('an answers file of exactly 4 MiB is read', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   await reviewing($, w, after)
   await answerPlan(w, after, answered('approve'), 4 * 1024 * 1024)
   expect(w.submits.map(s => s.text)).toEqual([approvedText()])
 })
 
-test('a path with a space and quotes goes into the wake as one JSON string', async ($, on) => {
+test('a path with a space and quotes goes into the wake as one JSON string', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   await reviewing($, w, after)
   const path = `/work/my "demo"/${TOPIC}/round-02.answers.json`
@@ -2280,7 +2283,7 @@ const FAILURES: Failure[] = [
   { name: 'a path over 4096 characters', stdout: `/${'w'.repeat(4096)}/${TOPIC}/round-01.answers.json\n` },
 ]
 for (const c of FAILURES) {
-  test(`a review that did not run: ${c.name}`, async ($, on) => {
+  test(`a review that did not run: ${c.name}`, { options: { plan: 'inbox' } }, async ($, on) => {
     const { w, after } = world(on)
     w.files[ANSWERS] = { text: answered('approve'), mtimeMs: NOW }
     w.spawnFails = c.spawnFails === true
@@ -2295,7 +2298,7 @@ for (const c of FAILURES) {
   })
 }
 
-test('a failure turns plan review off until the inbox has another server_id', async ($, on) => {
+test('a failure turns plan review off until the inbox has another server_id', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   const serves = (id?: string) => (w.files[`${SO}/inbox.json`] = { text: JSON.stringify({ schema: 1, server_id: id }), mtimeMs: NOW })
   serves('aaaa')
@@ -2312,7 +2315,7 @@ test('a failure turns plan review off until the inbox has another server_id', as
   expect(w.spawns.map(s => s.argv)).toEqual([planArgv(), planArgv()])
 })
 
-test('a failure with no server_id to compare stays off for the load', async ($, on) => {
+test('a failure with no server_id to compare stays off for the load', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   await reviewing($, w, after)
   w.spawns[0]?.end('', 1)
@@ -2322,7 +2325,7 @@ test('a failure with no server_id to compare stays off for the load', async ($, 
   expect([w.native.length, w.spawns.length]).toEqual([1, 1])
 })
 
-test('a dropped wake: one toast, kept, sent again at the next main turn only, a second drop quiet, then let go', async ($, on) => {
+test('a dropped wake: one toast, kept, sent again at the next main turn only, a second drop quiet, then let go', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   w.drop = STOP
   await reviewing($, w, after)
@@ -2351,7 +2354,7 @@ test('a dropped wake: one toast, kept, sent again at the next main turn only, a 
   expect([...w.toasts, ...w.logs].join('\n')).not.toMatch(/answers\.json|stopped and nobody|rename it/)
 })
 
-test('a turn with a review open and no wake costs no call', async ($, on) => {
+test('a turn with a review open and no wake costs no call', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   await reviewing($, w, after)
   const before = planCost(w)
@@ -2360,7 +2363,7 @@ test('a turn with a review open and no wake costs no call', async ($, on) => {
   expect(planCost(w)).toEqual(before)
 })
 
-test('a dropped did-not-run message: the second toast, which claims no saved answer, and the same resend', async ($, on) => {
+test('a dropped did-not-run message: the second toast, which claims no saved answer, and the same resend', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   w.drop = STOP
   await reviewing($, w, after)
@@ -2373,7 +2376,7 @@ test('a dropped did-not-run message: the second toast, which claims no saved ans
   expect([w.submits.map(s => s.text), w.plan]).toEqual([[DID_NOT_RUN, DID_NOT_RUN], idle])
 })
 
-test('a reload keeps the wake: no send at the load, one at the next turn, no second toast', async ($, on) => {
+test('a reload keeps the wake: no send at the load, one at the next turn, no second toast', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   w.drop = STOP
   w.plan = held('approved', approvedText(), PLAN, true)
@@ -2385,7 +2388,7 @@ test('a reload keeps the wake: no send at the load, one at the next turn, no sec
   expect([w.submits.map(s => s.text), w.toasts]).toEqual([[approvedText()], []])
 })
 
-test('a wake behind a running turn: the window holds, its own turn.start sends no copy, and it is let go as it enters', async ($, on) => {
+test('a wake behind a running turn: the window holds, its own turn.start sends no copy, and it is let go as it enters', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   await reviewing($, w, after)
   let release = () => {}
@@ -2401,7 +2404,7 @@ test('a wake behind a running turn: the window holds, its own turn.start sends n
   expect([w.submits.length, w.plan]).toEqual([1, idle])
 })
 
-test('a wake dropped behind a running turn waits for the turn after', async ($, on) => {
+test('a wake dropped behind a running turn waits for the turn after', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   await reviewing($, w, after)
   let release = () => {}
@@ -2417,7 +2420,7 @@ test('a wake dropped behind a running turn waits for the turn after', async ($, 
   expect([w.submits.length, w.plan]).toEqual([2, held('approved')])
 })
 
-test('in the window an approved plan of the same text goes through once, and its wake is dropped', async ($, on) => {
+test('in the window an approved plan of the same text goes through once, and its wake is dropped', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   w.drop = STOP
   await reviewing($, w, after)
@@ -2436,7 +2439,7 @@ test('in the window an approved plan of the same text goes through once, and its
   expect(await exitPlan($)).toEqual({ deny: DENY }) // once
 })
 
-test('an approved plan rejected in the native dialog is used up', async ($, on) => {
+test('an approved plan rejected in the native dialog is used up', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   await reviewing($, w, after)
   await answerPlan(w, after, answered('approve'))
@@ -2446,7 +2449,7 @@ test('an approved plan rejected in the native dialog is used up', async ($, on) 
   expect(await exitPlan($)).toEqual({ deny: DENY })
 })
 
-test('an approved plan goes through with a dead inbox too, and is used up by a rejection', async ($, on) => {
+test('an approved plan goes through with a dead inbox too, and is used up by a rejection', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w } = world(on, { lock: false })
   w.plan = held('approved')
   w.nativeAnswer = { result: 'User rejected the plan', isError: true }
@@ -2455,7 +2458,7 @@ test('an approved plan goes through with a dead inbox too, and is used up by a r
   expect([w.native, w.plan]).toEqual([[PLAN], idle])
 })
 
-test('an approval is for its text only: another text is a new review, and the kept wake is dropped', async ($, on) => {
+test('an approval is for its text only: another text is a new review, and the kept wake is dropped', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   w.drop = STOP
   await reviewing($, w, after)
@@ -2473,7 +2476,7 @@ for (const [name, text, deny] of [
   ['another source', answered('approve', 'elsewhere'), ANSWERED_DENY],
   ['an unreadable answer', 'null', ANSWERED_DENY],
 ] as const) {
-  test(`in the window after ${name}: the same text gets its fixed deny, another text a new review`, async ($, on) => {
+  test(`in the window after ${name}: the same text gets its fixed deny, another text a new review`, { options: { plan: 'inbox' } }, async ($, on) => {
     const { w, after } = world(on)
     w.drop = STOP
     await reviewing($, w, after)
@@ -2491,7 +2494,7 @@ for (const [name, text, deny] of [
   })
 }
 
-test('a did-not-run message is no window: with the inbox restarted the same text is a new review', async ($, on) => {
+test('a did-not-run message is no window: with the inbox restarted the same text is a new review', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   w.drop = STOP
   w.files[`${SO}/inbox.json`] = { text: '{"server_id": "aaaa"}', mtimeMs: NOW }
@@ -2513,7 +2516,7 @@ const ELSEWHERE: Elsewhere[] = [
   { name: 'a subagent success', input: { plan: PLAN, agentId: 'agent-1' }, keeps: true },
 ]
 for (const c of ELSEWHERE) {
-  test(`an open review and Claude Code's own path, ${c.name}: ${c.keeps ? 'the review stays' : 'the review is over, nothing sent'}`, async ($, on) => {
+  test(`an open review and Claude Code's own path, ${c.name}: ${c.keeps ? 'the review stays' : 'the review is over, nothing sent'}`, { options: { plan: 'inbox' } }, async ($, on) => {
     const { w, after } = world(on)
     await reviewing($, w, after)
     if (!c.input) w.files[`${SO}/inbox.lock`] = { text: '', mtimeMs: NOW - 60_000 } // the inbox died: not taken over
@@ -2530,7 +2533,7 @@ for (const c of ELSEWHERE) {
   })
 }
 
-test('a native success with a review and no child in this load, not yet armed, ends the review too', async ($, on) => {
+test('a native success with a review and no child in this load, not yet armed, ends the review too', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   w.plan = held('review')
   await start($, { isInteractive: false })
@@ -2539,7 +2542,7 @@ test('a native success with a review and no child in this load, not yet armed, e
   expect([w.plan, w.spawns]).toEqual([idle, []])
 })
 
-test('a review answered while the native dialog was up does not outlive that success', async ($, on) => {
+test('a review answered while the native dialog was up does not outlive that success', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   w.drop = STOP
   await reviewing($, w, after)
@@ -2568,7 +2571,7 @@ for (const [name, phase, wake, text] of [
     // A rejection of another text ends an approval (it is that text's no longer), and changes nothing else.
     const isKept = isRejected && phase !== 'approved'
     const outcome = isKept ? 'a rejection changes nothing' : isRejected ? 'a rejection ends the approval' : 'a success ends it all'
-    test(`Claude Code's own path with ${name}: ${outcome}`, async ($, on) => {
+    test(`Claude Code's own path with ${name}: ${outcome}`, { options: { plan: 'inbox' } }, async ($, on) => {
       const { w, after } = world(on, { lock: false })
       w.plan = held(phase, wake, text, true)
       if (isRejected) w.nativeAnswer = { result: 'User rejected the plan', isError: true }
@@ -2583,7 +2586,7 @@ for (const [name, phase, wake, text] of [
 }
 
 for (const dropped of [false, true]) {
-  test(`a submit that settles after a native success writes nothing back (${dropped ? 'dropped' : 'entered'})`, async ($, on) => {
+  test(`a submit that settles after a native success writes nothing back (${dropped ? 'dropped' : 'entered'})`, { options: { plan: 'inbox' } }, async ($, on) => {
     const { w, after } = world(on)
     await reviewing($, w, after)
     let release = () => {}
@@ -2603,7 +2606,7 @@ for (const dropped of [false, true]) {
 }
 
 for (const reason of ['clear', 'resume'] as const) {
-  test(`a /${reason} stops the child, clears the state and forgets the topic; nothing is sent`, async ($, on) => {
+  test(`a /${reason} stops the child, clears the state and forgets the topic; nothing is sent`, { options: { plan: 'inbox' } }, async ($, on) => {
     const { w, after } = world(on)
     await reviewing($, w, after)
     await $.session.end({ reason, sessionId: w.sessionId, resume: { id: w.sessionId } })
@@ -2618,7 +2621,7 @@ for (const reason of ['clear', 'resume'] as const) {
     expect(w.spawns[1]?.argv[3]).toBe(TOPIC.replace('0a1b2c3d', 'ffffffff'))
   })
 
-  test(`a /${reason} drops a kept wake, also one whose submit is on its way`, async ($, on) => {
+  test(`a /${reason} drops a kept wake, also one whose submit is on its way`, { options: { plan: 'inbox' } }, async ($, on) => {
     const { w, after } = world(on)
     await reviewing($, w, after)
     let release = () => {}
@@ -2633,7 +2636,7 @@ for (const reason of ['clear', 'resume'] as const) {
     expect([w.plan, w.submits.length, w.toasts]).toEqual([null, 1, []])
   })
 
-  test(`a /${reason} while the answer is being taken in: no wake follows it there`, async ($, on) => {
+  test(`a /${reason} while the answer is being taken in: no wake follows it there`, { options: { plan: 'inbox' } }, async ($, on) => {
     const { w, after } = world(on)
     await reviewing($, w, after)
     let release = () => {}
@@ -2650,7 +2653,7 @@ for (const reason of ['clear', 'resume'] as const) {
   })
 }
 
-test('another session end leaves the review', async ($, on) => {
+test('another session end leaves the review', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   await reviewing($, w, after)
   await $.session.end({ reason: 'other', sessionId: w.sessionId, resume: { id: w.sessionId } })
@@ -2662,7 +2665,7 @@ for (const [name, code] of [
   ['a killed child', null],
   ['a child that had printed its path', 0],
 ] as const) {
-  test(`an unload during a review, ${name}: the old module keeps review, writes and sends nothing`, async ($, on) => {
+  test(`an unload during a review, ${name}: the old module keeps review, writes and sends nothing`, { options: { plan: 'inbox' } }, async ($, on) => {
     const { w, after } = world(on)
     await reviewing($, w, after)
     w.files[ANSWERS] = { text: answered('approve'), mtimeMs: NOW }
@@ -2698,7 +2701,7 @@ for (const [gate, lock] of [
   ['planSetGate', true],
   ['idGate', false], // a resume's call
 ] as const) {
-  test(`a call interrupted before the spawn starts no child and changes no state (${gate}, ${lock ? 'a new review' : 'a resume'})`, { plugins: [interrupts] }, async ($, on) => {
+  test(`a call interrupted before the spawn starts no child and changes no state (${gate}, ${lock ? 'a new review' : 'a resume'})`, { options: { plan: 'inbox' }, plugins: [interrupts] }, async ($, on) => {
     const { w, after } = world(on, { lock })
     const seeded = lock ? null : held('review')
     w.plan = seeded
@@ -2717,7 +2720,7 @@ for (const [gate, lock] of [
   })
 }
 
-test('an interrupted call of the approved plan uses nothing up', { plugins: [interrupts] }, async ($, on) => {
+test('an interrupted call of the approved plan uses nothing up', { options: { plan: 'inbox' }, plugins: [interrupts] }, async ($, on) => {
   const { w, after } = world(on)
   w.plan = held('approved')
   await start($)
@@ -2731,7 +2734,7 @@ test('an interrupted call of the approved plan uses nothing up', { plugins: [int
   expect([w.plan, w.spawns]).toEqual([held('approved'), []])
 })
 
-test('a /resume during the respawn at a load leaves no child and no review', async ($, on) => {
+test('a /resume during the respawn at a load leaves no child and no review', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   w.plan = held('review')
   await start($)
@@ -2746,7 +2749,7 @@ test('a /resume during the respawn at a load leaves no child and no review', asy
   expect([w.spawns.filter(s => !s.isStopped), w.plan, w.submits]).toEqual([[], null, []])
 })
 
-test('an answer request for the plan round never moves the phase to approved', async ($, on) => {
+test('an answer request for the plan round never moves the phase to approved', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after, clock } = world(on)
   await reviewing($, w, after)
   await after(5000)
@@ -2759,7 +2762,7 @@ test('an answer request for the plan round never moves the phase to approved', a
   expect(await exitPlan($)).toEqual({ deny: OPEN })
 })
 
-test('a kept wake whose state is gone (an unload) stays kept, and the log says only the error kind', async ($, on) => {
+test('a kept wake whose state is gone (an unload) stays kept, and the log says only the error kind', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   w.drop = STOP
   w.plan = held('approved', approvedText())
@@ -2772,7 +2775,7 @@ test('a kept wake whose state is gone (an unload) stays kept, and the log says o
   expect(w.logs.join('\n')).not.toMatch(/answers\.json|approved the plan|stopped and nobody/)
 })
 
-test('a failing hook leaves the call to Claude Code', async ($, on) => {
+test('a failing hook leaves the call to Claude Code', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w } = world(on)
   await start($)
   w.isStateDead = true
@@ -2780,7 +2783,7 @@ test('a failing hook leaves the call to Claude Code', async ($, on) => {
   expect([w.native, w.spawns]).toEqual([[PLAN], []])
 })
 
-test('another tool never meets the plan review: no call of the mod', async ($, on) => {
+test('another tool never meets the plan review: no call of the mod', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w } = world(on)
   await start($)
   const before = planCost(w)
@@ -2793,7 +2796,7 @@ const turnOf = ($: Engine, text: string) => $.turn.start({ text, turnId: 't2' })
 const OTHER_ID = 'ffffffff-0000-4000-8000-000000000000'
 const texts = (w: World) => w.submits.map(s => s.text)
 
-test('a message and an answer behind one running turn: the answer waits, both settle, and a later message arrives', async ($, on) => {
+test('a message and an answer behind one running turn: the answer waits, both settle, and a later message arrives', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after, clock } = world(on)
   await reviewing($, w, after)
   await after(4000)
@@ -2813,7 +2816,7 @@ test('a message and an answer behind one running turn: the answer waits, both se
   expect(texts(w).slice(2)).toEqual([lineOf(R(2), 'message 2')])
 })
 
-test('a message and an answer refused after an Esc: at the next turn both arrive, once each, and the window closes', async ($, on) => {
+test('a message and an answer refused after an Esc: at the next turn both arrive, once each, and the window closes', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after, clock } = world(on)
   await reviewing($, w, after)
   await after(4000)
@@ -2840,7 +2843,7 @@ test('a message and an answer refused after an Esc: at the next turn both arrive
 })
 
 for (const isRefused of [false, true]) {
-  test(`a message that comes while the wake is out waits unmarked, with no process, and goes as it settles (${isRefused ? 'refused' : 'entered'})`, async ($, on) => {
+  test(`a message that comes while the wake is out waits unmarked, with no process, and goes as it settles (${isRefused ? 'refused' : 'entered'})`, { options: { plan: 'inbox' } }, async ($, on) => {
     const { w, after, clock } = world(on)
     await reviewing($, w, after)
     await after(4000)
@@ -2858,7 +2861,7 @@ for (const isRefused of [false, true]) {
   })
 }
 
-test('an answer that comes during inbox requests waits for that hand-over', { plugins: [slowRequests] }, async ($, on) => {
+test('an answer that comes during inbox requests waits for that hand-over', { options: { plan: 'inbox' }, plugins: [slowRequests] }, async ($, on) => {
   const { w, after, clock } = world(on)
   await reviewing($, w, after)
   await after(4000)
@@ -2870,7 +2873,7 @@ test('an answer that comes during inbox requests waits for that hand-over', { pl
   expect(texts(w)).toEqual([lineOf(R(1), 'message 1'), approvedText()])
 })
 
-test('a turn during a hand-over: the kept wake goes when that ends', { plugins: [slowRequests] }, async ($, on) => {
+test('a turn during a hand-over: the kept wake goes when that ends', { options: { plan: 'inbox' }, plugins: [slowRequests] }, async ($, on) => {
   const { w, after, clock } = world(on)
   w.drop = STOP
   await reviewing($, w, after)
@@ -2886,7 +2889,7 @@ test('a turn during a hand-over: the kept wake goes when that ends', { plugins: 
   expect(texts(w).slice(1)).toEqual([lineOf(R(1), 'message 1'), approvedText()])
 })
 
-test('a second answer waits for the first wake the engine still holds', async ($, on) => {
+test('a second answer waits for the first wake the engine still holds', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   await reviewing($, w, after)
   let release = () => {}
@@ -2902,7 +2905,7 @@ test('a second answer waits for the first wake the engine still holds', async ($
   expect([texts(w), w.plan]).toEqual([[approvedText(), notApprovedText], idle])
 })
 
-test('a /clear while the wake is being written as out: it is not submitted', async ($, on) => {
+test('a /clear while the wake is being written as out: it is not submitted', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   w.plan = held('approved', approvedText(), PLAN, true)
   await start($)
@@ -2919,7 +2922,7 @@ test('a /clear while the wake is being written as out: it is not submitted', asy
 })
 
 // A reload while the engine holds the wake: that prompt still runs, and only its turn's text says so.
-test('the wake is written as out before its submit, and as not out when it was refused', async ($, on) => {
+test('the wake is written as out before its submit, and as not out when it was refused', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   w.drop = STOP
   await reviewing($, w, after)
@@ -2934,7 +2937,7 @@ test('the wake is written as out before its submit, and as not out when it was r
 const leftOut = (): Plan => ({ topic: TOPIC, text: PLAN, phase: 'approved', wake: { text: approvedText(), isToasted: false, isOut: true } })
 const merged = () => `The signoff plugin sent a message: ${approvedText()}\n${lineOf(R(1), 'message 1')}`
 
-test('a reload while the engine holds the wake: its own turn lets it go, with no copy', async ($, on) => {
+test('a reload while the engine holds the wake: its own turn lets it go, with no copy', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   w.plan = leftOut()
   await start($)
@@ -2946,7 +2949,7 @@ test('a reload while the engine holds the wake: its own turn lets it go, with no
   expect(w.submits).toEqual([])
 })
 
-test('a reload while the engine holds the wake: no copy at the first turn, and its turn after that lets it go', async ($, on) => {
+test('a reload while the engine holds the wake: no copy at the first turn, and its turn after that lets it go', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   w.plan = leftOut()
   await start($)
@@ -2958,7 +2961,7 @@ test('a reload while the engine holds the wake: no copy at the first turn, and i
   expect([w.submits, w.plan?.wake]).toEqual([[], null])
 })
 
-test('a wake left out that never shows goes at the second turn', async ($, on) => {
+test('a wake left out that never shows goes at the second turn', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   w.plan = leftOut()
   await start($)
@@ -2976,7 +2979,7 @@ for (const [how, choice, native] of [
   ['an approval used by a rejection', 'approve', { result: 'User rejected the plan', isError: true }],
   ['a revise', 'revise', undefined],
 ] as const) {
-  test(`${how} never answers a later review killed before its round: one new round, no message`, async ($, on) => {
+  test(`${how} never answers a later review killed before its round: one new round, no message`, { options: { plan: 'inbox' } }, async ($, on) => {
     const { w, after } = world(on)
     await reviewing($, w, after)
     await answerPlan(w, after, answered(choice))
@@ -3004,7 +3007,7 @@ for (const [how, choice, native] of [
   })
 }
 
-test('a first child whose file clock is 5 seconds behind still approves, with one round', async ($, on) => {
+test('a first child whose file clock is 5 seconds behind still approves, with one round', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   await reviewing($, w, after)
   w.files[ANSWERS] = { text: answered('approve'), mtimeMs: NOW - 5000 }
@@ -3013,7 +3016,7 @@ test('a first child whose file clock is 5 seconds behind still approves, with on
   expect([texts(w), w.spawns.length]).toEqual([[approvedText()], 1])
 })
 
-test('the round started again is a first child: an old file time does not start a third', async ($, on) => {
+test('the round started again is a first child: an old file time does not start a third', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   w.plan = { ...held('review')!, since: NOW }
   await start($)
@@ -3028,7 +3031,7 @@ test('the round started again is a first child: an old file time does not start 
 })
 
 for (const [when, offset] of [['as the review began', 0], ['after it began', 3000]] as const) {
-  test(`a resumed child's answer written ${when} is that review's answer, with one round`, async ($, on) => {
+  test(`a resumed child's answer written ${when} is that review's answer, with one round`, { options: { plan: 'inbox' } }, async ($, on) => {
     const { w, after } = world(on)
     w.plan = { ...held('review')!, since: NOW }
     await start($)
@@ -3042,7 +3045,7 @@ for (const [when, offset] of [['as the review began', 0], ['after it began', 300
 }
 
 for (const since of [undefined, 'yesterday'] as const) {
-  test(`a resumed child with no usable since (${since}) takes no answer`, async ($, on) => {
+  test(`a resumed child with no usable since (${since}) takes no answer`, { options: { plan: 'inbox' } }, async ($, on) => {
     const { w, after } = world(on)
     w.plan = { ...held('review')!, since: since as never }
     await start($)
@@ -3052,7 +3055,7 @@ for (const since of [undefined, 'yesterday'] as const) {
   })
 }
 
-test('a respawn keeps the time the review began', async ($, on) => {
+test('a respawn keeps the time the review began', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on, { lock: false })
   w.plan = { ...held('review')!, since: NOW - 60_000 }
   await start($)
@@ -3064,7 +3067,7 @@ test('a respawn keeps the time the review began', async ($, on) => {
 })
 
 // The review's root: a move of the session's root does not move a review to another project's folder.
-test('a review keeps its root, and every respawn runs there', async ($, on) => {
+test('a review keeps its root, and every respawn runs there', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   w.plan = { ...held('review')!, since: NOW, root: `${ROOT}/src` }
   w.root = '/work' // a /cd, then a reload
@@ -3073,7 +3076,7 @@ test('a review keeps its root, and every respawn runs there', async ($, on) => {
   expect(w.spawns.map(s => s.cwd)).toEqual([`${ROOT}/src`])
 })
 
-test('a take-over keeps the root, and a resume by a later call runs there', async ($, on) => {
+test('a take-over keeps the root, and a resume by a later call runs there', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   await reviewing($, w, after)
   expect([w.plan?.root, w.plan?.since]).toEqual([`${ROOT}/src`, NOW])
@@ -3092,7 +3095,7 @@ test('a take-over keeps the root, and a resume by a later call runs there', asyn
 })
 
 // An approval is used up before the pass.
-test('two calls of the approved text at the same time give one pass', async ($, on) => {
+test('two calls of the approved text at the same time give one pass', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   w.plan = held('approved')
   await start($)
@@ -3106,7 +3109,7 @@ test('two calls of the approved text at the same time give one pass', async ($, 
   expect(passes).toBe(1)
 })
 
-test('a rejected pass leaves a newer review alone', async ($, on) => {
+test('a rejected pass leaves a newer review alone', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   w.plan = held('approved')
   await start($)
@@ -3122,7 +3125,7 @@ test('a rejected pass leaves a newer review alone', async ($, on) => {
   expect([w.spawns[0]?.isStopped, w.plan?.phase]).toEqual([false, 'review'])
 })
 
-test('a pass that succeeds still ends a newer review', async ($, on) => {
+test('a pass that succeeds still ends a newer review', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   w.plan = held('approved')
   await start($)
@@ -3137,7 +3140,7 @@ test('a pass that succeeds still ends a newer review', async ($, on) => {
   expect([w.spawns[0]?.isStopped, w.plan]).toEqual([true, idle])
 })
 
-test('an interrupt after the use-up loses the approval: it is never restored', { plugins: [interrupts] }, async ($, on) => {
+test('an interrupt after the use-up loses the approval: it is never restored', { options: { plan: 'inbox' }, plugins: [interrupts] }, async ($, on) => {
   const { w, after } = world(on)
   w.plan = held('approved', approvedText(), PLAN, true)
   await start($)
@@ -3153,7 +3156,7 @@ test('an interrupt after the use-up loses the approval: it is never restored', {
   expect([w.plan, w.submits]).toEqual([idle, []])
 })
 
-test('an interrupted call never restores a wake that entered meanwhile', { plugins: [interrupts] }, async ($, on) => {
+test('an interrupted call never restores a wake that entered meanwhile', { options: { plan: 'inbox' }, plugins: [interrupts] }, async ($, on) => {
   const { w, after } = world(on)
   w.plan = held('revise', notApprovedText, PLAN, true)
   await start($)
@@ -3176,7 +3179,7 @@ test('an interrupted call never restores a wake that entered meanwhile', { plugi
 })
 
 // The approval and the respawn are this session's.
-test('an approval of another session id does not pass: a new review with a topic of this session', async ($, on) => {
+test('an approval of another session id does not pass: a new review with a topic of this session', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   w.plan = held('approved')
   w.sessionId = OTHER_ID
@@ -3186,7 +3189,7 @@ test('an approval of another session id does not pass: a new review with a topic
   expect([w.native, w.spawns.map(s => s.argv[3])]).toEqual([[], [TOPIC.replace('0a1b2c3d', 'ffffffff')]])
 })
 
-test('a review of another session id is not respawned, at a load or by a call', async ($, on) => {
+test('a review of another session id is not respawned, at a load or by a call', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   w.plan = held('review')
   w.sessionId = OTHER_ID
@@ -3200,7 +3203,7 @@ test('a review of another session id is not respawned, at a load or by a call', 
   expect(w.spawns.map(s => s.argv)).toEqual([argv])
 })
 
-test('a /clear while the load reads the kept wake sends it no more', async ($, on) => {
+test('a /clear while the load reads the kept wake sends it no more', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   w.plan = held('approved', approvedText())
   let release = () => {}
@@ -3219,7 +3222,7 @@ test('a /clear while the load reads the kept wake sends it no more', async ($, o
 })
 
 // The load's one inbox home run.
-test('an interrupted first inbox home is asked again at the next need', { plugins: [interrupts] }, async ($, on) => {
+test('an interrupted first inbox home is asked again at the next need', { options: { plan: 'inbox' }, plugins: [interrupts] }, async ($, on) => {
   const { w, after } = world(on)
   await start($)
   let release = () => {}
@@ -3234,7 +3237,7 @@ test('an interrupted first inbox home is asked again at the next need', { plugin
   expect([w.spawns.length, homes, w.looked.some(p => p.includes('/requests'))]).toEqual([0, 2, true])
 })
 
-test('an interrupted wait for the timer run asks nothing again', { plugins: [interrupts] }, async ($, on) => {
+test('an interrupted wait for the timer run asks nothing again', { options: { plan: 'inbox' }, plugins: [interrupts] }, async ($, on) => {
   const { w, after } = world(on)
   let release = () => {}
   w.homeGate = new Promise(resolve => (release = resolve))
@@ -3261,7 +3264,7 @@ const homeFailsOnce = {
     })
   },
 }
-test('another failure of inbox home is still asked once per load', { plugins: [homeFailsOnce] }, async ($, on) => {
+test('another failure of inbox home is still asked once per load', { options: { plan: 'inbox' }, plugins: [homeFailsOnce] }, async ($, on) => {
   const { w, after } = world(on)
   await start($)
   await exitPlan($) // not interrupted
@@ -3273,7 +3276,7 @@ for (const [what, cwd, options] of [
   ['a root with a zero-width non-joiner', `${ROOT}/mi‌ravad`, {}],
   ['a folder setting with a joiner', `${ROOT}/src`, { folder: 'fam‍ily' }],
 ] as const) {
-  test(`${what} goes to Claude Code's own path, and no answer is lost`, { options }, async ($, on) => {
+  test(`${what} goes to Claude Code's own path, and no answer is lost`, { options: { plan: 'inbox', ...options } }, async ($, on) => {
     const { w, after } = world(on, { cwd })
     await start($, { cwd })
     expect(await exitPlan($)).toEqual(w.nativeAnswer)
@@ -3283,7 +3286,7 @@ for (const [what, cwd, options] of [
 }
 
 // The general review's race tests.
-test('a /clear during the write of the answer', async ($, on) => {
+test('a /clear during the write of the answer', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   await reviewing($, w, after)
   let release = () => {}
@@ -3306,7 +3309,7 @@ test('a /clear during the write of the answer', async ($, on) => {
   expect([w.plan, w.submits]).toEqual([null, []])
 })
 
-test('a call before the respawn timer starts the one child', async ($, on) => {
+test('a call before the respawn timer starts the one child', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   w.plan = held('review')
   await start($)
@@ -3315,7 +3318,7 @@ test('a call before the respawn timer starts the one child', async ($, on) => {
   expect(w.spawns).toHaveLength(1)
 })
 
-test('a child started by a decision queued before a native success ends with the plan', async ($, on) => {
+test('a child started by a decision queued before a native success ends with the plan', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   await start($)
   let releaseNative = () => {}
@@ -3335,7 +3338,7 @@ test('a child started by a decision queued before a native success ends with the
   expect([w.spawns.map(s => s.isStopped), w.plan]).toEqual([[true], idle])
 })
 
-test('an answer being taken in while a native success ends the plan', async ($, on) => {
+test('an answer being taken in while a native success ends the plan', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   await reviewing($, w, after)
   let releaseNative = () => {}
@@ -3362,7 +3365,7 @@ test('an answer being taken in while a native success ends the plan', async ($, 
   expect([w.plan, w.submits]).toEqual([idle, []])
 })
 
-test('a turn while the wake is out, then refused: no copy until the turn after', async ($, on) => {
+test('a turn while the wake is out, then refused: no copy until the turn after', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   await reviewing($, w, after)
   let release = () => {}
@@ -3381,7 +3384,7 @@ test('a turn while the wake is out, then refused: no copy until the turn after',
   expect(w.submits).toHaveLength(2)
 })
 
-test('a call interrupted while it looks for the project starts no child of a resume', { plugins: [interrupts] }, async ($, on) => {
+test('a call interrupted while it looks for the project starts no child of a resume', { options: { plan: 'inbox' }, plugins: [interrupts] }, async ($, on) => {
   const { w, after } = world(on, { lock: false })
   w.plan = held('review')
   await start($)
@@ -3417,7 +3420,7 @@ for (const [name, text, deny] of [
   ['revise', answered('revise'), REVISE_DENY],
   ['another source', answered('approve', 'elsewhere'), ANSWERED_DENY],
 ] as const) {
-  test(`an answer that waits for a hand-over (${name}): another text gets the fixed deny, and the answer follows`, async ($, on) => {
+  test(`an answer that waits for a hand-over (${name}): another text gets the fixed deny, and the answer follows`, { options: { plan: 'inbox' } }, async ($, on) => {
     const { w, after, clock } = world(on)
     const release = await answerBehindMessage($, w, after, () => clock.now(), text)
     expect(await exitPlan($, { plan: OTHER_PLAN })).toEqual({ deny })
@@ -3427,7 +3430,7 @@ for (const [name, text, deny] of [
   })
 }
 
-test('an answer whose submit is out is still dropped by another text: no wider deny', async ($, on) => {
+test('an answer whose submit is out is still dropped by another text: no wider deny', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   await reviewing($, w, after)
   let release = () => {}
@@ -3437,7 +3440,7 @@ test('an answer whose submit is out is still dropped by another text: no wider d
   release()
 })
 
-test('an approval that waits for a hand-over is still dropped by another text', async ($, on) => {
+test('an approval that waits for a hand-over is still dropped by another text', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after, clock } = world(on)
   const release = await answerBehindMessage($, w, after, () => clock.now(), answered('approve'))
   expect(await exitPlan($, { plan: OTHER_PLAN })).toEqual({ deny: DENY })
@@ -3446,7 +3449,7 @@ test('an approval that waits for a hand-over is still dropped by another text', 
   expect([wakes(w), w.spawns.length, w.native]).toEqual([[], 2, []])
 })
 
-test('an answer that waited, was sent and refused is still dropped by another text', async ($, on) => {
+test('an answer that waited, was sent and refused is still dropped by another text', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after, clock } = world(on)
   const release = await answerBehindMessage($, w, after, () => clock.now(), answered('revise'))
   w.drop = STOP
@@ -3461,7 +3464,7 @@ test('an answer that waited, was sent and refused is still dropped by another te
   expect([wakes(w).length, w.spawns.length, w.plan?.phase]).toEqual([1, 2, 'review'])
 })
 
-test('an answer that waited and went with a /clear leaves nothing of it for the next answer', async ($, on) => {
+test('an answer that waited and went with a /clear leaves nothing of it for the next answer', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after, clock } = world(on)
   const release = await answerBehindMessage($, w, after, () => clock.now(), answered('revise'))
   await $.session.end({ reason: 'clear', sessionId: w.sessionId, resume: { id: w.sessionId } })
@@ -3476,7 +3479,7 @@ test('an answer that waited and went with a /clear leaves nothing of it for the 
   expect(wakes(w)).toHaveLength(1)
 })
 
-test('a wake that waited and was refused is not sent again by time', async ($, on) => {
+test('a wake that waited and was refused is not sent again by time', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after, clock } = world(on)
   const release = await answerBehindMessage($, w, after, () => clock.now(), answered('approve'))
   w.drop = STOP
@@ -3487,7 +3490,7 @@ test('a wake that waited and was refused is not sent again by time', async ($, o
   expect(wakes(w)).toHaveLength(1)
 })
 
-test('a left out wake that entered is never sent at a later turn', async ($, on) => {
+test('a left out wake that entered is never sent at a later turn', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   w.plan = held('approved', approvedText(), PLAN, false, true)
   await start($)
@@ -3501,7 +3504,7 @@ test('a left out wake that entered is never sent at a later turn', async ($, on)
 })
 
 for (const isOut of [false, true]) {
-  test(`another session id gets no wake (${isOut ? 'left out' : 'kept'})`, async ($, on) => {
+  test(`another session id gets no wake (${isOut ? 'left out' : 'kept'})`, { options: { plan: 'inbox' } }, async ($, on) => {
     const { w, after } = world(on)
     w.plan = held('approved', approvedText(), PLAN, false, isOut)
     w.sessionId = OTHER_ID
@@ -3519,7 +3522,7 @@ for (const [why, mtimeMs] of [
   ['the file clock is 4 s ahead', NOW + 4000],
   ['the old file was touched after the take-over', NOW + 60_000],
 ] as const) {
-  test(`an old answer never answers a later review: ${why}`, async ($, on) => {
+  test(`an old answer never answers a later review: ${why}`, { options: { plan: 'inbox' } }, async ($, on) => {
     const { w, after } = world(on)
     await reviewing($, w, after)
     await answerPlan(w, after, answered('approve'))
@@ -3548,7 +3551,7 @@ for (const [why, since, saved, takes] of [
   ['no saved', NOW, null, false],
   ['a saved that is no time', NOW, 'yesterday', false],
 ] as const) {
-  test(`a resumed child's answer with ${why}: ${takes ? 'it approves' : 'no answer, a new round'}`, async ($, on) => {
+  test(`a resumed child's answer with ${why}: ${takes ? 'it approves' : 'no answer, a new round'}`, { options: { plan: 'inbox' } }, async ($, on) => {
     const { w, after } = world(on)
     w.plan = { ...held('review'), since }
     await start($)
@@ -3560,7 +3563,7 @@ for (const [why, since, saved, takes] of [
   })
 }
 
-test('a resumed child with a since that is text but reads as a number takes no answer', async ($, on) => {
+test('a resumed child with a since that is text but reads as a number takes no answer', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   w.plan = { ...held('review'), since: '0' as unknown as number }
   await start($)
@@ -3571,7 +3574,7 @@ test('a resumed child with a since that is text but reads as a number takes no a
   expect([texts(w), w.spawns.length]).toEqual([[], 2])
 })
 
-test('a child without --resume is never checked by saved', async ($, on) => {
+test('a child without --resume is never checked by saved', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   await reviewing($, w, after)
   await answerPlan(w, after, answered('approve', 'user', true, '2026-11-09T09:00:00Z'))
@@ -3580,7 +3583,7 @@ test('a child without --resume is never checked by saved', async ($, on) => {
 
 // The hook's budget runs in real time, also in the kit, and each stand-in has its own 10 seconds: two gates of 7.
 declare const setTimeout: (done: () => void, ms: number) => unknown // the mod's types have no timers
-test('past the hook budget the .catch still ends the plan state after a native success', { timeoutMs: 40_000 }, async ($, on) => {
+test('past the hook budget the .catch still ends the plan state after a native success', { options: { plan: 'inbox' }, timeoutMs: 40_000 }, async ($, on) => {
   const { w, after } = world(on)
   w.plan = held('approved')
   await start($)
@@ -3632,7 +3635,7 @@ async function inWindow($: Engine, w: World, after: (ms: number) => Promise<void
   return { calling, release }
 }
 
-test('an approval from Signoff passes the dialog: one allow with the request own input, no mode', async ($, on) => {
+test('an approval from Signoff passes the dialog: one allow with the request own input, no mode', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   await reviewing($, w, after)
   await answerPlan(w, after, answered('approve'))
@@ -3660,7 +3663,7 @@ for (const c of [
   { name: 'agent_id', more: { agent_id: 'a1b2c3', agent_type: 'general-purpose' }, leaves: true },
   { name: 'another tool', more: { tool_name: 'Bash' }, leaves: true },
 ]) {
-  test(`in the pass window a request with ${c.name} goes to the dialog, and ${c.leaves ? 'leaves' : 'uses up'} the allow`, async ($, on) => {
+  test(`in the pass window a request with ${c.name} goes to the dialog, and ${c.leaves ? 'leaves' : 'uses up'} the allow`, { options: { plan: 'inbox' } }, async ($, on) => {
     const { w, after } = world(on)
     w.plan = held('approved')
     await start($)
@@ -3672,7 +3675,7 @@ for (const c of [
   })
 }
 
-test('a hook beneath that decides wins over the allow, and its answer goes back as it is', async ($, on) => {
+test('a hook beneath that decides wins over the allow, and its answer goes back as it is', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   w.plan = held('approved')
   w.permissionBelow = { decision: { behavior: 'deny', message: 'my own rule' } }
@@ -3683,7 +3686,7 @@ test('a hook beneath that decides wins over the allow, and its answer goes back 
   await calling
 })
 
-test('a rejection of the approved text itself in the dialog ends a kept approval', async ($, on) => {
+test('a rejection of the approved text itself in the dialog ends a kept approval', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   w.plan = held('approved')
   w.nativeAnswer = { result: 'User rejected the plan', isError: true }
@@ -3694,7 +3697,7 @@ test('a rejection of the approved text itself in the dialog ends a kept approval
   expect([w.native, w.plan]).toEqual([[CALLED.plan], idle])
 })
 
-test('a second request in the same window gets the dialog', async ($, on) => {
+test('a second request in the same window gets the dialog', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   w.plan = held('approved')
   await start($)
@@ -3704,7 +3707,7 @@ test('a second request in the same window gets the dialog', async ($, on) => {
   await calling
 })
 
-test('no window, no allow: before the pass, in review, with no state, and after the call', async ($, on) => {
+test('no window, no allow: before the pass, in review, with no state, and after the call', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   w.plan = held('approved')
   await start($)
@@ -3718,7 +3721,7 @@ test('no window, no allow: before the pass, in review, with no state, and after 
   expect([w.plan?.phase, await asks($)]).toEqual(['review', DIALOG])
 })
 
-test('a call that takes Claude Code own path with no state opens no window', async ($, on) => {
+test('a call that takes Claude Code own path with no state opens no window', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on, { lock: false })
   await start($)
   const { calling, release } = await inWindow($, w, after)
@@ -3727,7 +3730,7 @@ test('a call that takes Claude Code own path with no state opens no window', asy
   await calling
 })
 
-test('two calls of the approved text whose dialogs overlap: one allow in all', async ($, on) => {
+test('two calls of the approved text whose dialogs overlap: one allow in all', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   w.plan = held('approved')
   await start($)
@@ -3742,7 +3745,7 @@ test('two calls of the approved text whose dialogs overlap: one allow in all', a
   expect(await asks($)).toEqual(DIALOG)
 })
 
-test('a call interrupted during the use-up write opens no window', { plugins: [interrupts] }, async ($, on) => {
+test('a call interrupted during the use-up write opens no window', { options: { plan: 'inbox' }, plugins: [interrupts] }, async ($, on) => {
   const { w, after } = world(on)
   w.plan = held('approved')
   await start($)
@@ -3762,7 +3765,7 @@ test('a call interrupted during the use-up write opens no window', { plugins: [i
   await after(1000)
 })
 
-test('a use-up that found the state gone opens no window', async ($, on) => {
+test('a use-up that found the state gone opens no window', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   w.plan = held('approved')
   await start($)
@@ -3779,7 +3782,7 @@ test('a use-up that found the state gone opens no window', async ($, on) => {
   await calling
 })
 
-test('an approved plan file that is not the kept text is no approval', async ($, on) => {
+test('an approved plan file that is not the kept text is no approval', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   w.drop = STOP // the message waits, so its phase stays
   await reviewing($, w, after)
@@ -3790,7 +3793,7 @@ test('an approved plan file that is not the kept text is no approval', async ($,
 })
 
 // R1 without a clock: a resumed child's answer from a round the topic folder held at the take-over is older.
-test('an old answer whose times look new never answers a resumed review: its round is not above the take-over', async ($, on) => {
+test('an old answer whose times look new never answers a resumed review: its round is not above the take-over', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   w.plan = { ...held('review')!, since: NOW - 60_000, after: 1 } // a clock set back since: the old answer looks newer
   w.files[ANSWERS] = { text: answered('approve'), mtimeMs: NOW }
@@ -3801,7 +3804,7 @@ test('an old answer whose times look new never answers a resumed review: its rou
   expect([texts(w), w.spawns.map(s => s.argv)]).toEqual([[], [planArgv('--resume'), planArgv()]])
 })
 
-test('a resumed child answer from a round above the take-over approves', async ($, on) => {
+test('a resumed child answer from a round above the take-over approves', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   const second = ANSWERS.replace('round-01', 'round-02')
   w.plan = { ...held('review')!, after: 1 }
@@ -3813,7 +3816,7 @@ test('a resumed child answer from a round above the take-over approves', async (
   expect([texts(w), w.spawns.length]).toEqual([[approvedText(second)], 1])
 })
 
-test('a resumed review with no round from its take-over (an older build) takes no answer', async ($, on) => {
+test('a resumed review with no round from its take-over (an older build) takes no answer', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   const { after: _, ...older } = held('review')!
   w.plan = older
@@ -3823,7 +3826,7 @@ test('a resumed review with no round from its take-over (an older build) takes n
   expect([texts(w), w.spawns.map(s => s.argv)]).toEqual([[], [planArgv('--resume'), planArgv()]])
 })
 
-test('a take-over notes the highest round or plan number of its topic folder', async ($, on) => {
+test('a take-over notes the highest round or plan number of its topic folder', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   w.files[`${ROOT}/.signoff/${TOPIC}/round-03.json`] = { text: '{}', mtimeMs: NOW }
   w.files[`${ROOT}/.signoff/${TOPIC}/plan-04.md`] = { text: PLAN, mtimeMs: NOW }
@@ -3832,7 +3835,7 @@ test('a take-over notes the highest round or plan number of its topic folder', a
   expect(w.plan?.after).toBe(4)
 })
 
-test('a saved whose text cannot be made is no answer and no message', async ($, on) => {
+test('a saved whose text cannot be made is no answer and no message', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   w.plan = held('review')
   await start($)
@@ -3847,7 +3850,7 @@ test('a saved whose text cannot be made is no answer and no message', async ($, 
 })
 
 // Expiry of a kept approval.
-test('a rejection of another text in the dialog ends a kept approval', async ($, on) => {
+test('a rejection of another text in the dialog ends a kept approval', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on, { lock: false })
   w.plan = held('approved')
   w.nativeAnswer = { result: 'User rejected the plan', isError: true }
@@ -3857,7 +3860,7 @@ test('a rejection of another text in the dialog ends a kept approval', async ($,
   expect([w.native, w.plan]).toEqual([[OTHER_PLAN], idle])
 })
 
-test('a prompt outside plan mode ends a kept approval; one in plan mode keeps it, and with none a prompt costs nothing', async ($, on) => {
+test('a prompt outside plan mode ends a kept approval; one in plan mode keeps it, and with none a prompt costs nothing', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   const prompt = (mode: string | undefined) =>
     $.classic.UserPromptSubmit({ hook_event_name: 'UserPromptSubmit', session_id: 's', transcript_path: '/t', cwd: ROOT, permission_mode: mode, prompt: 'go on' } as never)
@@ -3885,7 +3888,26 @@ test('plan off at a load with an approval: it ends', { options: { plan: 'off' } 
   expect([w.plan, w.submits]).toEqual([idle, []])
 })
 
-test('an approval is for its root: after a /cd into another project the same text is a new review there', async ($, on) => {
+for (const [name, phase, wake, isOut] of [
+  ['an approval with its wake kept', 'approved', approvedText(), false],
+  ['an approval with its wake left out', 'approved', approvedText(), true],
+  ['a revise with its wake kept', 'revise', notApprovedText, false],
+  ['another answer with its wake kept', 'answered', unreadText, false],
+] as const) {
+  test(`plan off at a load with ${name}: no later turn sends it, and no state keeps the plan`, { options: { plan: 'off' } }, async ($, on) => {
+    const { w, after } = world(on)
+    w.plan = held(phase, wake, PLAN, false, isOut)
+    await start($)
+    await after(1000)
+    await turn($)
+    await after(1000)
+    await turn($)
+    await after(1000)
+    expect([w.plan, texts(w)]).toEqual([idle, []])
+  })
+}
+
+test('an approval is for its root: after a /cd into another project the same text is a new review there', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   w.plan = held('approved')
   w.root = '/work'
@@ -3898,7 +3920,7 @@ test('an approval is for its root: after a /cd into another project the same tex
 // As the .catch test: the budget runs in real time, two gates of 7 seconds. It pins the outcome only: the kit's
 // engine, as the measured one, gives a call past its own budget a next(e) that settles at once, so no window of its
 // own lives. The two tests after it pin the guards for another call's lapse.
-test('a call of the approved text past its hook budget never gets the allow', { timeoutMs: 40_000 }, async ($, on) => {
+test('a call of the approved text past its hook budget never gets the allow', { options: { plan: 'inbox' }, timeoutMs: 40_000 }, async ($, on) => {
   const { w, after } = world(on)
   w.plan = held('approved')
   await start($)
@@ -3932,7 +3954,7 @@ test('a call of the approved text past its hook budget never gets the allow', { 
 // The two cross-call budget guards, driven in real time (from the security review of this change). A call's own
 // clock stops in its $ calls (the gates below) and ticks while it waits on the queue; each stand-in has 10 s of its
 // own, so no gate holds 10 s.
-test('another call past its budget during a pass decision: that pass opens no window', { timeoutMs: 40_000 }, async ($, on) => {
+test('another call past its budget during a pass decision: that pass opens no window', { options: { plan: 'inbox' }, timeoutMs: 40_000 }, async ($, on) => {
   const { w, after } = world(on)
   w.plan = held('approved')
   await start($)
@@ -3960,7 +3982,7 @@ test('another call past its budget during a pass decision: that pass opens no wi
   await Promise.all([passing, late].map(call => call.catch(() => undefined)))
 })
 
-test('another call past its budget while a pass window is open closes it', { timeoutMs: 40_000 }, async ($, on) => {
+test('another call past its budget while a pass window is open closes it', { options: { plan: 'inbox' }, timeoutMs: 40_000 }, async ($, on) => {
   const { w, after } = world(on)
   w.plan = held('approved')
   await start($)
@@ -3991,7 +4013,7 @@ test('another call past its budget while a pass window is open closes it', { tim
   await Promise.all([passing, holding, late].map(call => call.catch(() => undefined)))
 })
 
-test('a hook beneath that blocks (a command hook exit 2) keeps its block: no allow', async ($, on) => {
+test('a hook beneath that blocks (a command hook exit 2) keeps its block: no allow', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   w.plan = held('approved')
   w.permissionBelow = { block: 'my rule' }
@@ -4002,7 +4024,7 @@ test('a hook beneath that blocks (a command hook exit 2) keeps its block: no all
   await calling
 })
 
-test('a continue: false from beneath stays beside the allow', async ($, on) => {
+test('a continue: false from beneath stays beside the allow', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   w.plan = held('approved')
   w.permissionBelow = { preventContinuation: true, stopReason: 'stop' }
@@ -4013,7 +4035,7 @@ test('a continue: false from beneath stays beside the allow', async ($, on) => {
   await calling
 })
 
-test('the use-up takes only this session own approval: another one written meanwhile opens no window', async ($, on) => {
+test('the use-up takes only this session own approval: another one written meanwhile opens no window', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   w.plan = held('approved')
   await start($)
@@ -4030,7 +4052,7 @@ test('the use-up takes only this session own approval: another one written meanw
   await calling
 })
 
-test('an Esc at the dialog of another text keeps a kept approval, as the words say', { plugins: [interrupts] }, async ($, on) => {
+test('an Esc at the dialog of another text keeps a kept approval, as the words say', { options: { plan: 'inbox' }, plugins: [interrupts] }, async ($, on) => {
   const { w, after } = world(on, { lock: false })
   w.plan = held('approved')
   w.nativeAnswer = { result: 'The user interrupted', isError: true }
@@ -4047,7 +4069,7 @@ test('an Esc at the dialog of another text keeps a kept approval, as the words s
 })
 
 // The mod's copy of project_root(): the .signoff arm, the home folder skipped, and no root.
-test('a take-over in a project marked only by its .signoff folder lists the topic there', async ($, on) => {
+test('a take-over in a project marked only by its .signoff folder lists the topic there', { options: { plan: 'inbox' } }, async ($, on) => {
   const { w, after } = world(on)
   delete w.files[`${ROOT}/.git`] // an entry of the kit's file table, not a file
   w.files['/work/.git'] = { text: '', mtimeMs: NOW } // an outer repository
@@ -4060,7 +4082,7 @@ for (const [why, options] of [
   ['the home folder is never one', { env: { HOME: ROOT, SIGNOFF_INBOX_HOME: SO } }],
   ['no folder up from the root has a marker', {}],
 ] as const) {
-  test(`a take-over with no project root keeps no after (${why})`, async ($, on) => {
+  test(`a take-over with no project root keeps no after (${why})`, { options: { plan: 'inbox' } }, async ($, on) => {
     const { w, after } = world(on, options as never)
     if (why.startsWith('no folder')) delete w.files[`${ROOT}/.git`]
     await reviewing($, w, after)
@@ -4089,7 +4111,7 @@ const PROJECT_ROOT_CASES: RootCase[] = [
 // project_root cases: end
 
 for (const c of PROJECT_ROOT_CASES) {
-  test(`the mod finds the project root as project_root() does: ${c.why}`, { options: { folder: 'notes' } }, async ($, on) => {
+  test(`the mod finds the project root as project_root() does: ${c.why}`, { options: { folder: 'notes', plan: 'inbox' } }, async ($, on) => {
     // A relative folder that is no marker, so the round planted at the expected root marks nothing itself.
     const links: Record<string, string> = {}
     for (const [path, kind] of Object.entries(c.markers)) if (kind === 'link') links[path] = '/work/elsewhere'

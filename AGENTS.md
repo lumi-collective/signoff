@@ -38,7 +38,7 @@ Instructions for coding agents working on Signoff. The README says what it does 
   register a name with a colon, so the file declares it and the mod's `command.run` hook answers it; its body is
   the prompt the model gets when no mod runs). Its session values are declared in `plugin/types/index.d.ts`
   (`types` in `plugin.json`); the `hint` option in `plugin.json` lists `band`, `status` and `off`, and `plan`
-  lists `inbox` and `off`, under `options`, the values the mod accepts (a test checks).
+  lists `inbox` and `off`, under `options`, the values the mod accepts (a test checks); `plan` defaults to `off`.
   `plugin/hooks/register.test.tsx` is its test, run by `claude plugin test plugin`.
 - `plugin/commands/demo.md`: `/signoff:demo`, typed only (`disable-model-invocation: true`); its body asks the model
   to write one synthetic round in a `mktemp -d` folder, run Signoff on it, and give the user the `rm -r` command
@@ -317,7 +317,7 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   main-loop success, the end of the plan state, not awaited (past the hook's 10 seconds it is the only one that
   sees that success), and `classic.PermissionRequest`, which answers that call's permission request for an
   approved plan (below; its `.catch` is `next(e)`). Its allow carries `updatedInput` and no mode. It takes a
-  call over only when the `plan` option is not `off`, it has armed, not on Windows, the inbox is live and the
+  call over only when the `plan` option is `inbox` (off by default; any other value is off), it has armed, not on Windows, the inbox is live and the
   session's project found (checked at the call, also with `hint` `off`; a call during the load's first
   `inbox home` run waits for it; a run that this call's own interrupt killed is asked again at the next need, any
   other failure is asked once per load), the session id's first 8 characters are letters, digits or hyphens, the
@@ -332,7 +332,7 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   in that root, as every respawn does, with the plan on stdin and never in argv. The decisions, a child's end and a respawn run one at a time. While the
   child runs, any call gets the deny and that a review is already open, with no new round; with a review and no
   child in this load it starts `signoff plan --resume` with the kept text, as it does at a load while that review
-  waits and an inbox lives (with `plan` `off` at that load the review ends instead, and nothing is sent). A respawn
+  waits and an inbox lives (with `plan` not `inbox` at that load the review ends instead, and nothing is sent). A respawn
   and a pass need a topic that ends with this session id's first 8 characters. `--resume` takes the newest round,
   an older review's when this one's round was not written yet: so an old answer never answers a later review. A
   resumed child's answer from a round not above `after` (no clock decides that), or with no `after`, is no answer,
@@ -382,7 +382,8 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   on 2.1.323), and either gets the same approved plan once. A call past its hook budget (the `.catch`) closes an
   open window, and a decision under way meanwhile opens none. A kept approval ends at a rejection in Claude Code's
   own dialog (not at an Esc there: that call is interrupted, and an interrupted call ends nothing), at a `classic.UserPromptSubmit` whose `permission_mode` is not `plan` (the user left plan mode by
-  hand; until a load has seen an approval, a prompt costs no `$` call), and at a load with `plan` `off`.
+  hand; until a load has seen an approval, a prompt costs no `$` call), and at a load with `plan` not `inbox`. Such a load takes no wake into memory and
+  makes any kept plan state idle, so no answer's message is sent there.
   Any native success of a main-loop `ExitPlanMode` (no `deny`, not `isError`) is the user's later word and ends
   the whole plan state: the child stopped, nothing sent, nothing written back by a submit that settles later. A
   rejection changes nothing else, and a subagent's call nothing. A `/clear` and a `/resume` (`session.end`) stop the child, clear

@@ -1214,8 +1214,11 @@ class HooksFile(unittest.TestCase):
         manifest = json.loads((ROOT / "plugin" / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
         mod = (ROOT / "plugin" / "hooks" / "register.tsx").read_text(encoding="utf-8")
         hint = re.search(r"^const hint = \(\) => (.*)$", mod, re.M).group(1)
-        self.assertIn("plan", manifest["userConfig"])
+        self.assertEqual(manifest["userConfig"]["plan"]["default"], "off")  # plan review is opt-in
         plan = re.search(r"^const planReview = \(\) => (.*)$", mod, re.M).group(1)
+        # Only inbox turns it on. `claude plugin test` hands a mod the default for a missing or unknown value, so
+        # the mod's test cannot reach this fallback.
+        self.assertEqual(plan, "(look.options.plan === 'inbox' ? 'inbox' : 'off')")
         choices = {"hint": re.findall(r"'(\w+)'", hint), "plan": re.findall(r"'(\w+)'", plan)}
         for name, field in manifest["userConfig"].items():
             self.assertLessEqual(set(field) - {"options"}, {"type", "title", "description", "default"}, name)

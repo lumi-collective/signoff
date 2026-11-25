@@ -40,7 +40,8 @@ or is too long, is not sent; a later session
 start with no other live session of the project hands it over). Whoever can write the home's `requests/` folder
 can put such a line before the agent; that folder is the user's own, in the 0700 home, as before.
 
-For a plan review (the `plan` setting, on by default while an inbox lives) the mod has three hooks more: a tool hook
+For a plan review (the `plan` setting at `inbox`, while an inbox lives; it is off by default, and off these hooks
+pass every call on) the mod has three hooks more: a tool hook
 on `ExitPlanMode`, a permission hook (Claude Code's `PermissionRequest`), which answers only the request described
 below, and a prompt hook (`UserPromptSubmit`), which reads only the prompt's permission mode, to end a kept
 approval when you left plan mode, and passes the prompt on unchanged. The tool hook refuses a main conversation's `ExitPlanMode` call with fixed text and runs

@@ -124,7 +124,7 @@ const look = {
 }
 
 const hint = () => (look.options.hint === 'status' || look.options.hint === 'off' ? look.options.hint : 'band')
-const planReview = () => (look.options.plan === 'off' ? 'off' : 'inbox')
+const planReview = () => (look.options.plan === 'inbox' ? 'inbox' : 'off')
 const isAbsolute = (path: string | undefined): path is string => typeof path === 'string' && path.startsWith('/')
 const line = (n: number) => `Signoff: ${n} waiting`
 
@@ -698,11 +698,11 @@ async function wakeAtTurn($: Engine, wake: string, turnText: string) {
   await sendWake($)
 }
 
-// At a load: a review the last module's child waited on. With the setting off the review or an approval ends, and
-// nothing is sent.
+// At a load: a review the last module's child waited on. With the setting off a review, an approval or a kept answer
+// ends, and nothing is sent: arm took no wake into memory.
 async function resumeReview($: Engine) {
   if (planReview() === 'off') {
-    await update($, planA, old => (old?.phase === 'review' || old?.phase === 'approved' ? idle(old.topic) : old))
+    await update($, planA, old => (old?.phase || old?.wake ? idle(old.topic) : old))
     return
   }
   if (look.child) return
@@ -1028,6 +1028,7 @@ async function arm($: Engine) {
   // In the queue, so a /clear during the read ends what it read.
   const held = await oneAtATime(async () => {
     const got = await read($, planA)
+    if (planReview() === 'off') return got // no wake or approval in memory: resumeReview ends them
     // This session's only, as the pass and the respawn; the id is read only with a wake kept.
     const wake = got?.wake && isOwn(got, (await $.session.id()).slice(0, 8)) ? got.wake : undefined
     look.wake = wake?.text
@@ -1036,7 +1037,7 @@ async function arm($: Engine) {
     return got
   }).catch(() => null)
   // From a timer: the band's drawing can arm, and a child dies with the dispatch that started it when that aborts.
-  if (held?.phase === 'review' || (held?.phase === 'approved' && planReview() === 'off'))
+  if (held?.phase === 'review' || ((held?.phase || held?.wake) && planReview() === 'off'))
     $.clock.after(0, () => void oneAtATime(() => resumeReview($)).catch(err => logPlanError($, err)))
 }
 

@@ -48,15 +48,15 @@ too; a bigger batch, or one with a picture, goes on the page.
 In the clip above, a small script stands in for the person at the browser (`media/demo/answer.py`): the terminal
 has no browser. It sends the same requests the page does.
 
-**Plan review.** While the [inbox](#the-inbox) runs, a plan waits on you in Signoff when Claude leaves plan mode
+**Plan review.** It is off by default: set the plugin's Plan review option in `/config` to inbox (`plan: inbox`)
+to turn it on. Then, while the [inbox](#the-inbox) runs, a plan waits on you in Signoff when Claude leaves plan mode
 (`ExitPlanMode`) in the main conversation. The plan is open on a Plan review round, where you can note single
 lines. You choose Approve the plan or Ask for changes, with a comment if you like, and press Done; there is no
 recommendation. Then the agent gets a message from the Signoff plugin. After Approve it calls ExitPlanMode again,
 that exact plan goes through once with no second dialog, and Claude Code goes back to the mode from before plan
 mode (the plugin sets none; seen in the terminal and the desktop app). After Ask for changes the agent reads your comment and notes and revises. If you
-pressed Esc meanwhile, the message waits for your next turn, and a notice says so. Set the plugin's Plan review
-option in `/config` to off to keep Claude Code's own dialog. Where it falls back to that dialog, and what it does
-not cover: [Plan review](docs/running.md#plan-review).
+pressed Esc meanwhile, the message waits for your next turn, and a notice says so. Off, plans get Claude Code's
+own dialog. Where it falls back to that dialog, and what it does not cover: [Plan review](docs/running.md#plan-review).
 
 ## Requirements
 
@@ -194,7 +194,7 @@ the app can find it. Other ways to build it, and the details: [docs/inbox.md](do
   setting moves the count to the status line or turns it off. The mod also hands an open session the messages you
   send its project from the inbox: it lists the project's `requests/` folder when its time changed, and only for a
   message it has not handed over runs `signoff inbox requests`, whose lines it sends as one prompt from the plugin
-  (also with the `hint` off). For a plan review the mod starts `signoff plan` with the plan on its stdin, never in
+  (also with the `hint` off). For a plan review (off by default) the mod starts `signoff plan` with the plan on its stdin, never in
   an argument; that command writes the plan as `plan-NN.md` and its round into a topic folder of your decisions
   folder, and waits on that round until you answer. No other background process stays in a session (see
   [docs/security.md](docs/security.md)). The inbox and the macOS app are extra processes only when you start them.

@@ -85,7 +85,8 @@ Code runs as a turn of its own once the session is idle. It never reads what the
 stream. It keeps which messages it handed over in Claude Code's session state, so a reload of the mod sends none
 twice.
 
-While the inbox runs, the mod also takes a plan over when Claude leaves plan mode in the main conversation: it
+Plan review is off by default: set the Plan review setting in /config to inbox to turn it on. With it on, while
+the inbox runs, the mod also takes a plan over when Claude leaves plan mode in the main conversation: it
 refuses that call with a fixed text and starts the signoff command's plan, with the plan on that command's standard
 input. That command writes the plan and a Plan review round into your decisions folder and waits until you answer
 in the inbox; after a reload of the mod, the mod starts it again on that round, or on a new one when the round was
@@ -115,8 +116,7 @@ setting off and when you approve a plan in Claude Code's own dialog, and quittin
 too. It keeps the plan's text in Claude
 Code's session state until the review is over and an
 approved plan went to that dialog. The mod sends one message at a time: a message from the inbox waits while the
-plan review's message does. The Plan
-review setting in /config turns this off (off); the default is inbox. Only the main conversation's plan is
+plan review's message does. Only the main conversation's plan is
 reviewed: a subagent's goes to Claude Code's own dialog. The plan review was tried by hand only in the terminal on
 macOS; in the desktop app and VS Code it is not tried yet (the repository's README has the details).
 

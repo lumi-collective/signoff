@@ -78,7 +78,10 @@ browser, and see [the security model](security.md#security-model).
 
 ## Plan review
 
-While the inbox runs, when Claude is about to leave plan mode, the plugin's mod holds the plan back and puts it on
+Plan review is off by default. To turn it on, set the plugin's Plan review setting in `/config` to inbox
+(`plan: inbox`); any other value is off.
+
+With it on, while the inbox runs, when Claude is about to leave plan mode, the plugin's mod holds the plan back and puts it on
 a Plan review round in the inbox. The agent is told the plan waits and ends its turn; Claude Code shows that as a
 refused ExitPlanMode. You approve it there, or ask for changes with a comment and line notes, and press Done. The
 agent then gets a message that says it comes from the Signoff plugin: after an approval it calls ExitPlanMode again
@@ -116,7 +119,7 @@ run says so to the agent, and plans then get Claude Code's own dialog until the 
 restarts. Claude Code's own dialog is also what you get with no inbox, in a folder that is no project, for a
 subagent's plan, for a plan over 256 KiB, with `claude -p`, on Windows, when the session's folder or the decisions
 folder setting holds an invisible format or control character (a zero-width non-joiner, as in some Persian
-names), and with the Plan review setting in `/config` set to off (the default is inbox).
+names), and while the Plan review setting in `/config` is off (the default).
 
 The command the mod runs for it:
 

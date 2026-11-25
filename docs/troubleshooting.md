@@ -27,7 +27,7 @@ Signoff prints what went wrong on stderr, starting with `signoff:`. Its exit cod
   same run, or a second run on the same folder, saved first. Copy any text you have not saved, reload, and go
   on. Run one Signoff per topic at a time.
 - **A plan went to Claude Code's own dialog, not to Signoff.** Plan review needs a running inbox and the Plan
-  review setting not off, in an interactive session (not `claude -p`) and not on Windows; it takes only the main
+  review setting at inbox (it is off by default), in an interactive session (not `claude -p`) and not on Windows; it takes only the main
   conversation's plan, so a subagent's always gets the dialog. Ask the agent to open the Signoff inbox, or check the
   setting in `/config`. The other cases: [Plan review](running.md#plan-review).
 - **"the Signoff review did not run, so the plan is not approved".** The command the mod starts for a review ended
