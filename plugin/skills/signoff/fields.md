@@ -72,5 +72,5 @@
   table"`, 1 to 200 characters, no line break or tab. The margin shows "Cannot be undone" and the line; the
   sidebar marks the item. Leave it out when it can be undone. Needs Signoff 0.5.0 or newer.
 - `settled` when the user decided this in an earlier round: one line saying where and when (`"round-01, 11-14"`),
-  never the choice itself (the notes copy shows the line even when the answer is private), 1 to 200 characters, and `recommended` set to that decision (required with it). The item starts folded with
+  never the choice itself (the Markdown copy shows the line even when the answer is private), 1 to 200 characters, and `recommended` set to that decision (required with it). The item starts folded with
   that choice and a Change button, and counts as decided while it holds that choice. Needs Signoff 0.5.0 or newer.

@@ -30,8 +30,7 @@ recommendation, so you can go through them in a few minutes and leave a comment 
 
 A quick go or skip that blocks the agent's next step stays Claude Code's own question prompt in the terminal; the
 skill tells the agent so. A batch of up to four short questions, text only with 2 to 4 options each, goes there
-too; a bigger batch, or one with a picture, goes on the page. The plugin's Questions in chat option in `/config`
-sets that number, from 0 (no batch in the terminal) to 4.
+too; a bigger batch, or one with a picture, goes on the page.
 
 ## How it works
 
@@ -139,12 +138,6 @@ a round you finished with Done stays read only, and once every round is done Sig
 
 You can also ask for it directly: "put these on a Signoff page".
 
-**A copy in your notes:** set the plugin's Notes folder option in `/config` to an absolute path of a folder of your
-own, such as an Obsidian vault (outside the project, and not under a dot folder such as `.config`), and each round that ends with Done also lands there as Markdown,
-`<project> - <topic folder> - <round>.md`, with a private answer shown only as `(private)`. Signoff never replaces a
-file there and sends nothing anywhere; if another app syncs the folder, the copy goes where that app sends it. Not on
-Windows yet. Details: [docs/running.md](docs/running.md#notes-folder).
-
 **Look back** at earlier decisions of a project, from a clone of this repository:
 
 ```
@@ -211,8 +204,7 @@ the app can find it. Other ways to build it, and the details: [docs/inbox.md](do
 - **Written to disk:** the answers files, their Markdown copies and, when the folder has none, a `.gitignore`;
   for a plan review, the plan and its round (and an outcome file for each round of the topic it closes);
   once the inbox has run, also locks, run notes, the hooks' notes of projects and sessions (no prompt or message)
-  and the inbox's own files, all in the Signoff home; outside it, with the Notes folder setting, a note per round
-  done, in that folder (which may be synced by another app). Nothing is deleted, with two narrow exceptions.
+  and the inbox's own files, all in the Signoff home. Nothing is deleted, with two narrow exceptions.
 
 The full list: [docs/security.md](docs/security.md#what-runs-and-what-leaves-your-machine).
 

@@ -1210,17 +1210,13 @@ class NoMonitor(unittest.TestCase):
 class HooksFile(unittest.TestCase):
     def test_the_choice_settings_list_what_the_code_accepts(self):
         # /config shows an "options" list as a picker. The lists come from the readers: the mod's hint() and
-        # planReview() and the skill's chat limit; their fallback for any other value stays, as settings.json can
-        # hold one.
+        # planReview(); their fallback for any other value stays, as settings.json can hold one.
         manifest = json.loads((ROOT / "plugin" / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
         mod = (ROOT / "plugin" / "hooks" / "register.tsx").read_text(encoding="utf-8")
         hint = re.search(r"^const hint = \(\) => (.*)$", mod, re.M).group(1)
         self.assertIn("plan", manifest["userConfig"])
         plan = re.search(r"^const planReview = \(\) => (.*)$", mod, re.M).group(1)
-        skill = " ".join((ROOT / "plugin" / "skills" / "signoff" / "SKILL.md").read_text(encoding="utf-8").split())
-        low, high = map(int, re.search(r"The limit is (\d) to (\d)", skill).groups())
-        choices = {"hint": re.findall(r"'(\w+)'", hint), "plan": re.findall(r"'(\w+)'", plan),
-                   "chat": [str(n) for n in range(low, high + 1)]}
+        choices = {"hint": re.findall(r"'(\w+)'", hint), "plan": re.findall(r"'(\w+)'", plan)}
         for name, field in manifest["userConfig"].items():
             self.assertLessEqual(set(field) - {"options"}, {"type", "title", "description", "default"}, name)
             if name in choices:

@@ -22,7 +22,7 @@ from unittest import mock
 import urllib.request
 from pathlib import Path
 
-from support import ROOT, Folder, Rounds, done_record, free_port, png_bytes, sample_decisions, signoff, write_outside
+from support import ROOT, Folder, Rounds, done_record, free_port, sample_decisions, signoff, write_outside
 
 SCRIPT = str(ROOT / "plugin" / "signoff" / "signoff.py")
 
@@ -230,289 +230,6 @@ class Cli(unittest.TestCase):
                               universal_newlines=True, timeout=20)
         self.assertEqual(proc.returncode, 0)
         self.assertIn("--timeout", proc.stdout)
-
-
-DONE = {"answers": {"layout": {"choice": "one", "comment": "a secret reason"}}, "free_text": "", "done": True}
-
-
-@unittest.skipIf(sys.platform == "win32", "the notes folder is POSIX only (its checks need owners and modes)")
-class CliNotes(unittest.TestCase):
-    """--notes: at Done, each round's Markdown copy goes to the user's notes folder, never over a file there."""
-
-    def setUp(self):
-        self.folder = Folder()
-        self._tmp = tempfile.TemporaryDirectory()
-        self.notes = Path(self._tmp.name) / "vault"  # under /var on macOS, a link: only the folder itself counts
-        self.notes.mkdir(mode=0o700)
-        self.name = "%s - decisions.md" % self.folder.path.name  # outside a project: topic folder and round stem
-
-    def tearDown(self):
-        stop_all()
-        self.folder.cleanup()
-        self._tmp.cleanup()
-
-    def run_done(self, notes, body=DONE, env=None):
-        proc = start(self.folder, "--notes", str(notes), env=env)
-        self.assertEqual(post(url_of(proc), body), 200)
-        out, err = proc.communicate(timeout=20)
-        self.assertEqual(proc.returncode, 0, err)  # a note never changes the exit code
-        self.assertEqual(out, str(self.folder.answers) + "\n")  # nor stdout
-        return err
-
-    def write_notes(self, notes, rounds=None, home=None):
-        """write_notes at a run's Done, in process (each run waits DONE_GRACE). Returns its stderr."""
-        if rounds is None:
-            if not self.folder.answers.exists():
-                write_outside(self.folder.answers, done_record())
-            rounds = [signoff.Round(self.folder.decisions)]
-        err = io.StringIO()
-        with mock.patch.object(sys, "stderr", err):
-            signoff.write_notes(str(notes), rounds, home or signoff.inbox_home())
-        return err.getvalue()
-
-    def project_rounds(self, *topics):
-        """Done rounds in a project: <tmp>/proj (a git work tree), its decisions under decisions/<topic>/."""
-        found = []
-        for topic in topics:
-            folder = Path(self._tmp.name) / "proj" / "decisions" / topic
-            (folder / "mockups").mkdir(parents=True)
-            (folder / "mockups" / "a.png").write_bytes(png_bytes())
-            (folder / "round-01.json").write_text(json.dumps(sample_decisions()), encoding="utf-8")
-            write_outside(folder / "round-01.answers.json", done_record())
-            found.append(signoff.Round(folder / "round-01.json"))
-        (Path(self._tmp.name) / "proj" / ".git").mkdir(exist_ok=True)
-        return found
-
-    def refused(self, notes, why, home=None, rounds=None):
-        """One stderr line, nothing written."""
-        before = sorted(p.name for p in self.notes.iterdir())
-        lines = self.write_notes(notes, rounds, home).splitlines()
-        self.assertEqual(len(lines), 1, lines)
-        self.assertIn("signoff: notes: ", lines[0])
-        self.assertIn(why, lines[0])
-        self.assertEqual(sorted(p.name for p in self.notes.iterdir()), before)
-
-    def test_a_refused_folder_changes_nothing_of_the_run(self):
-        err = self.run_done(self.notes / "missing")
-        self.assertEqual([line for line in err.splitlines() if "notes:" in line],
-                         ["signoff: notes: %s is missing; no note written" % (self.notes / "missing")])
-        self.assertEqual(list(self.notes.iterdir()), [])
-
-    def test_a_done_run_writes_one_note(self):
-        err = self.run_done(self.notes)
-        self.assertNotIn("notes:", err)
-        [note] = self.notes.iterdir()
-        self.assertEqual(note.name, self.name)
-        self.assertEqual(stat.S_IMODE(note.stat().st_mode), 0o600)
-        beside = self.folder.path / "decisions.answers.md"
-        self.assertEqual(note.read_text(encoding="utf-8"), beside.read_text(encoding="utf-8"))  # nothing private
-
-    def test_a_private_answer_shows_only_private_there(self):
-        body = {"answers": {"layout": {"choice": "one", "comment": "a secret reason", "private": True}},
-                "free_text": "", "done": True}
-        self.run_done(self.notes, body)
-        note = (self.notes / self.name).read_text(encoding="utf-8")
-        item = note.split("Two columns or one?")[1].split("###")[0]
-        self.assertEqual(item.split(), ["(private)"])
-        self.assertIn("Which filters?", note)  # the other items as usual
-        beside = (self.folder.path / "decisions.answers.md").read_text(encoding="utf-8")
-        self.assertIn("Keep one", beside)  # the copy beside the round as before
-        self.assertNotIn("secret", beside)
-
-    def test_a_private_line_note_shows_only_private_there(self):
-        (self.folder.path / "change.diff").write_text("--- a/x\n+++ b/x\n", encoding="utf-8")
-        data = sample_decisions()
-        data["items"][0].update(attachments=[{"src": "change.diff"}], lines=True, sensitive=True, comment=False)
-        self.folder.write(data)
-        line_note = {"att": 0, "line": 2, "quote": "+++ b/x", "comment": "a secret reason"}
-        body = {"answers": {"layout": {"choice": "one", "comment": "", "lines": [line_note], "private": True}},
-                "free_text": "", "done": True}
-        self.run_done(self.notes, body)
-        note = (self.notes / self.name).read_text(encoding="utf-8")
-        item = note.split("Two columns or one?")[1].split("###")[0]
-        self.assertEqual(item.split(), ["(private)"])
-        self.assertNotIn("+++", note)
-        beside = (self.folder.path / "decisions.answers.md").read_text(encoding="utf-8")
-        self.assertIn("- Line note, change.diff line 2, “+++ b/x”: (private)\n", beside)
-        self.assertNotIn("secret", beside)
-
-    def test_a_line_note_goes_there_without_the_line_it_quotes(self):
-        # The noted line is the agent's file text, which a synced notes folder must not get: name, number, comment.
-        (self.folder.path / "change.diff").write_text("--- a/x\n+API_KEY=abc\n", encoding="utf-8")
-        data = sample_decisions()
-        data["items"][0].update(attachments=[{"src": "change.diff"}], lines=True)
-        self.folder.write(data)
-        line_note = {"att": 0, "line": 2, "quote": "+API_KEY=abc", "comment": "not in git"}
-        body = {"answers": {"layout": {"choice": "one", "comment": "", "lines": [line_note]}}, "free_text": "",
-                "done": True}
-        self.run_done(self.notes, body)
-        note = (self.notes / self.name).read_text(encoding="utf-8")
-        self.assertIn("- Line note, change.diff line 2: not in git\n", note)
-        self.assertNotIn("API", note)
-        beside = (self.folder.path / "decisions.answers.md").read_text(encoding="utf-8")
-        self.assertIn("- Line note, change.diff line 2, “+API\\_KEY=abc”: not in git\n", beside)
-
-    def test_an_empty_setting_writes_nothing(self):
-        err = self.run_done("")
-        self.assertNotIn("notes:", err)
-        self.assertEqual(list(self.notes.iterdir()), [])
-
-    def test_a_setting_placeholder_left_as_typed_writes_nothing(self):
-        # An unsaved option reaches a command as its placeholder: off, as an empty value is, with no line.
-        err = self.run_done("${user_config.notes}")
-        self.assertNotIn("notes:", err)
-        self.assertEqual(list(self.notes.iterdir()), [])
-
-    def test_every_round_of_the_run_gets_its_note(self):
-        rounds = Rounds(2)
-        self.addCleanup(rounds.cleanup)
-        proc = start(rounds, "--notes", str(self.notes))
-        url = url_of(proc)
-        empty = {"answers": {}, "free_text": "", "done": False}
-        for n in (0, 1):
-            self.assertEqual(post(url, dict(empty, accepted=True), n), 200)
-        for n in (0, 1):
-            self.assertEqual(post(url, dict(empty, done=True), n), 200)
-        out, err = proc.communicate(timeout=20)
-        self.assertEqual(proc.returncode, 0, err)
-        self.assertNotIn("notes:", err)
-        self.assertEqual(sorted(p.name for p in self.notes.iterdir()),
-                         ["%s - round-%02d.md" % (rounds.path.name, n) for n in (1, 2)])
-
-    def test_one_bad_answers_file_costs_only_its_own_note(self):
-        rounds = Rounds(2)
-        self.addCleanup(rounds.cleanup)
-        record = done_record()
-        del record["free_text"]  # check_answers lets it go; the copy takes it as empty
-        write_outside(rounds.answers(1), record)
-        write_outside(rounds.answers(2), done_record())
-        err = self.write_notes(self.notes, [signoff.Round(rounds.round(n)) for n in (1, 2)])
-        self.assertEqual(err, "")
-        self.assertEqual(sorted(p.name for p in self.notes.iterdir()),
-                         ["%s - round-%02d.md" % (rounds.path.name, n) for n in (1, 2)])
-        broken = [signoff.Round(rounds.round(n)) for n in (1, 2)]
-        write_outside(rounds.answers(1), "not json")  # after the run took it in
-        other = self.notes / "other"
-        other.mkdir(mode=0o700)
-        lines = self.write_notes(other, broken).splitlines()
-        self.assertEqual(len(lines), 1, lines)
-        self.assertIn("round-01", lines[0])
-        self.assertEqual([p.name for p in other.iterdir()], ["%s - round-02.md" % rounds.path.name])
-
-    def test_a_relative_path_is_refused(self):
-        self.refused("vault", "absolute")
-
-    def test_a_missing_folder_is_refused(self):
-        self.refused(self.notes / "missing", "missing")
-
-    def test_a_linked_folder_is_refused(self):
-        link = Path(self._tmp.name) / "link"
-        link.symlink_to(self.notes)
-        self.refused(link, "link")
-        for tail in ("/", "/.", "/./", "//./"):  # each makes the system follow it
-            self.refused(str(link) + tail, "link")
-
-    def test_a_folder_with_a_dot_part_is_refused(self):
-        # Tool and config folders (.claude, .config, .git) are where an injected agent would aim a note.
-        hidden = Path(self._tmp.name) / ".config" / "rules"
-        hidden.mkdir(parents=True, mode=0o700)
-        self.refused(hidden, "starts with a dot")
-        alias = Path(self._tmp.name) / "plain"
-        alias.symlink_to(Path(self._tmp.name) / ".config")  # a link above the folder, to a dot folder
-        self.refused(alias / "rules", "starts with a dot")
-
-    def test_a_folder_inside_the_project_of_the_rounds_is_refused(self):
-        rounds = self.project_rounds("2026-11-14-a", "2026-11-14-b")
-        proj = Path(self._tmp.name) / "proj"
-        for inside in (proj, proj / "docs", proj / "decisions", proj / "decisions" / "2026-11-14-b"):
-            inside.mkdir(mode=0o700, exist_ok=True)
-            self.refused(inside, "inside", rounds=rounds[:1])  # a sibling topic too: git add -A would take it
-            self.assertFalse(any(p.suffix == ".md" for p in inside.iterdir()), inside)
-
-    def test_a_folder_others_can_write_is_refused(self):
-        self.notes.chmod(0o777)
-        self.refused(self.notes, "other users")
-        self.notes.chmod(0o770)
-        self.refused(self.notes, "other users")
-
-    @unittest.skipIf(hasattr(os, "getuid") and os.getuid() == 0, "root owns the folder used here")
-    def test_another_users_folder_is_refused(self):
-        self.refused("/", "not your own")
-
-    def test_a_folder_inside_the_decisions_folder_or_the_home_is_refused(self):
-        inside = self.folder.path / "notes"
-        inside.mkdir(mode=0o700)
-        self.refused(inside, "inside")
-        self.refused(self.folder.path, "inside")
-        if os.path.isdir(str(inside).upper()):  # a file system that ignores case (macOS): another spelling, same folder
-            self.refused(str(inside).upper(), "inside")
-        self.assertEqual(list(inside.iterdir()), [])
-        self.refused(self.notes, "inside", home=Path(self._tmp.name))
-
-    def test_a_note_already_there_is_never_replaced(self):
-        mine = self.notes / self.name
-        mine.write_bytes(b"my own note\n")
-        mine.chmod(0o644)
-        self.refused(self.notes, "already there; not replaced")
-        self.assertEqual(mine.read_bytes(), b"my own note\n")
-        self.assertEqual(stat.S_IMODE(mine.stat().st_mode), 0o644)
-
-    def test_a_link_at_the_name_is_never_followed(self):
-        target = Path(self._tmp.name) / "elsewhere.md"
-        (self.notes / self.name).symlink_to(target)
-        self.refused(self.notes, "already there")
-        self.assertFalse(os.path.lexists(str(target)))
-
-    def test_a_run_that_does_not_end_with_done_writes_no_note(self):
-        proc = start(self.folder, "--notes", str(self.notes), "--timeout", "0.02")
-        post(url_of(proc), dict(DONE, done=False))
-        out, err = proc.communicate(timeout=20)
-        self.assertEqual(proc.returncode, 2, err)
-        proc = start(self.folder, "--notes", str(self.notes))
-        post(url_of(proc), dict(DONE, done=False))
-        proc.send_signal(signal.SIGINT)
-        out, err = proc.communicate(timeout=20)
-        self.assertEqual(proc.returncode, 130, err)
-        self.assertEqual(list(self.notes.iterdir()), [])
-
-    def test_a_later_folder_run_writes_only_its_own_rounds(self):
-        rounds = Rounds(1)
-        self.addCleanup(rounds.cleanup)
-        empty = {"answers": {}, "free_text": "", "done": True}
-        for n in (1, 2):
-            if n == 2:
-                rounds.write(2, sample_decisions())
-            proc = start(rounds, "--notes", str(self.notes))
-            self.assertEqual(post(url_of(proc), empty, n - 1), 200)  # round 1 shows read only in the second run
-            out, err = proc.communicate(timeout=20)
-            self.assertEqual(proc.returncode, 0, err)
-            self.assertEqual(out, "%s\n" % rounds.answers(n))
-            self.assertNotIn("notes:", err)
-        self.assertEqual(sorted(p.name for p in self.notes.iterdir()),
-                         ["%s - round-%02d.md" % (rounds.path.name, n) for n in (1, 2)])
-
-    def test_the_name_is_project_topic_and_round_in_plain_characters(self):
-        project = Path(self._tmp.name) / "my project"
-        topic = project / ".signoff" / "2026-11-14-ünnep*?"
-        topic.mkdir(parents=True)
-        (project / ".git").mkdir()
-        self.assertEqual(signoff.note_name(topic / "round-03.json"), "my project - 2026-11-14-_nnep__ - round-03.md")
-        self.assertEqual(signoff.note_name(Path(self._tmp.name) / ".hidden" / "round-01.json"),
-                         "_hidden - round-01.md")
-        # The cut takes the topic and project, never the round: two rounds of a long topic keep two names.
-        names = [signoff.note_name(Path(self._tmp.name) / ("t" * 250) / ("round-%02d.json" % n)) for n in (1, 2)]
-        self.assertEqual(names, ["t" * 189 + " - round-%02d.md" % n for n in (1, 2)])  # 200 bytes, then .md
-        self.assertEqual(signoff.note_name(Path(self._tmp.name) / ("ő" * 120) / ("x" * 250 + ".json")),
-                         "x" * 200 + ".md")  # a stem that alone is too long is cut too
-
-    def test_on_windows_it_says_so_and_writes_nothing(self):
-        rounds = [signoff.Round(self.folder.decisions)]
-        err = io.StringIO()
-        with mock.patch.object(sys, "platform", "win32"), mock.patch.object(sys, "stderr", err):
-            signoff.write_notes(str(self.notes), rounds, Path(self._tmp.name) / "home")
-        self.assertIn("not supported on Windows yet", err.getvalue())
-        self.assertEqual(list(self.notes.iterdir()), [])
-
 
 
 def post_status(url, body, round_=0):
@@ -1509,7 +1226,7 @@ class CliPlan(unittest.TestCase):
                 mock.patch.object(signoff, "make_server", side_effect=AssertionError("a page run")), \
                 mock.patch.object(sys, "stdout", out):
             t = threading.Thread(target=lambda: codes.append(signoff._run(
-                argparse.Namespace(decisions=str(self.topic / "round-01.json"), notes=""), waiter=True)))
+                argparse.Namespace(decisions=str(self.topic / "round-01.json")), waiter=True)))
             t.start()
             deadline = time.monotonic() + 20
             while not ((self.home / "runs").is_dir() and self.entries()):
@@ -1819,6 +1536,27 @@ class OldPython(unittest.TestCase):
                             err.getvalue())
             self.assertNotIn("Traceback", err.getvalue())
         self.assertEqual(sorted(p.name for p in folder.path.iterdir()), before)
+
+    def test_notes_is_a_usage_error_and_writes_nothing(self):
+        # The Notes folder setting is gone: a run with --notes is refused before it looks at the home or the round,
+        # so no note, answers, lock or .gitignore is written.
+        folder = Folder()
+        self.addCleanup(folder.cleanup)
+        vault = folder.path / "vault"
+        vault.mkdir()
+        before = sorted(p.name for p in folder.path.iterdir())
+        for args in (["--notes", str(vault)], ["--notes=" + str(vault)], ["--notes", "${user_config.notes}"]):
+            out, err = io.StringIO(), io.StringIO()
+            with mock.patch.object(sys, "stdout", out), mock.patch.object(sys, "stderr", err), \
+                    mock.patch.object(signoff, "inbox_home", side_effect=AssertionError("looked at the home")):
+                with self.assertRaises(SystemExit) as stop:
+                    signoff.main([str(folder.decisions)] + args)
+            self.assertEqual((stop.exception.code, out.getvalue()), (1, ""), args)
+            self.assertTrue(err.getvalue().endswith("signoff: unrecognized arguments: %s\n" % " ".join(args)),
+                            err.getvalue())
+            self.assertNotIn("Traceback", err.getvalue())
+        self.assertEqual(sorted(p.name for p in folder.path.iterdir()), before)
+        self.assertEqual(list(vault.iterdir()), [])
 
     def test_the_file_parses_as_python_3_7(self):
         # The guard speaks only if the old Python compiles the file first; 3.8 was also run by hand (NOTES).

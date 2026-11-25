@@ -44,8 +44,7 @@ finishes its answers files with Done, when it sits idle too long, or when you st
 inbox is open, it starts no server and opens no page: it waits, with no time limit, for the answers the inbox
 writes. The plugin also adds a signoff command that runs the same program. The agent asks a batch of up to four short
 text-only questions, 2 to 4 options each, in the terminal instead of on a page; a bigger batch, or one with a
-picture, goes on the page. The Questions in chat setting in /config sets that number, from 0 (no batch in the
-terminal) to 4.
+picture, goes on the page.
 
 The plugin also has hooks: in every Claude Code session, when the session starts or ends, when you send a
 prompt, when it asks for your permission or an answer, after each tool call and when a turn ends, Claude Code
@@ -150,11 +149,7 @@ It writes your answers next to them, as JSON and as Markdown, and a .gitignore i
 none. For a plan review, the signoff command writes the plan (plan-NN.md) and its round in a topic folder of the
 decisions folder, and an outcome file for each round of that topic it closes.
 An answer you mark Private stays in the JSON for the agent, which is asked not to repeat it; the
-Markdown copy leaves it out. It is not encrypted. With the Notes folder setting in /config set to a folder of
-your own (an absolute path outside the project and not under a dot folder; empty, the default, is off; not on
-Windows yet), a run that ends with Done also
-puts each round's Markdown copy there, with only (private) for a private answer, and never replaces a file
-there. If another app syncs that folder, the copy leaves your machine through that app, not Signoff. The past-decisions view reads the decisions folder you
+Markdown copy leaves it out. It is not encrypted. The past-decisions view reads the decisions folder you
 set (the Decisions folder setting; by default `.signoff` in the project) and writes nothing. Once the inbox has run on
 your computer, a run also writes an empty lock file beside each open round, and a short note of the run in the
 inbox's folder: the topic folder, a hash of the project folder's path, the round file names, its process id and

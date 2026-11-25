@@ -14,9 +14,9 @@ prints the answers files' absolute paths. You run it in the background, so the e
 - **Signoff:** every other open decision, and every task that waits on the user (a command to run, a click in a
   GUI), goes on one round: collect them, one page per batch. Put a picture on each option where you can.
 - **AskUserQuestion:** a gate that blocks your next step (go or skip on a commit, a push, a publish); a remote or
-  mobile session where no browser page can open; and a batch of at most `${user_config.chat}` short questions,
-  each text only and not `sensitive` (no picture, board, attachment or marks) with 2 to 4 options. A bigger
-  batch, or one with a picture, goes whole on the page. The limit is 0 to 4 (0: no batch in chat); any other value means 4.
+  mobile session where no browser page can open; and a batch of at most 4 short questions, each text only and
+  not `sensitive` (no picture, board, attachment or marks) with 2 to 4 options. A bigger batch, or one with a
+  picture, goes whole on the page.
 - Nothing at all when the answer is obvious: do the obvious step and say so.
 - The user's own instructions win: if they would rather answer in chat, or set another threshold, follow that.
 - A todo item that waits on the user gets a marker while the Signoff inbox is on: the `signoff-inbox` skill says how.
@@ -100,8 +100,6 @@ python3 -I "${CLAUDE_PLUGIN_ROOT}/signoff/signoff.py" "<folder>"
 On Windows write `py -3` for `python3`. Signoff opens the browser
 itself, with a link that works once. Add `--no-open` when there is no browser on this machine (an SSH
 session); the link is on stderr then, and the user forwards the same port number.
-The notes folder is `${user_config.notes}`; when that is an absolute path, add `--notes "<it>"` to every run
-command, else leave it out.
 
 A subagent's background command dies with it: a subagent may write the round files; the main session runs Signoff.
 
@@ -142,7 +140,7 @@ and outcome files directly instead.
 
 - **Never delete anything**, including old decision folders and answers files. If something should go,
   tell the user and give them the exact command to run.
-- **Sensitive data stays local.** Signoff sends nothing out (a notes folder the user syncs aside). Do not copy a decisions
+- **Sensitive data stays local.** Signoff sends nothing out. Do not copy a decisions
   file, its images or its answers into a cloud service, an issue, a pull request or a chat that leaves the
   machine. Screenshots of real systems may show secrets or personal data: crop them or use a mockup.
   Put nothing secret in a board or an attachment either.

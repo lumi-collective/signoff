@@ -37,8 +37,8 @@ Instructions for coding agents working on Signoff. The README says what it does 
   (`plugin/commands/open.md`: a mod cannot
   register a name with a colon, so the file declares it and the mod's `command.run` hook answers it; its body is
   the prompt the model gets when no mod runs). Its session values are declared in `plugin/types/index.d.ts`
-  (`types` in `plugin.json`); the `hint` option in `plugin.json` lists `band`, `status` and `off`, `plan`
-  lists `inbox` and `off`, and `chat` lists `0` to `4`, under `options`, the values the mod and the skill accept (a test checks).
+  (`types` in `plugin.json`); the `hint` option in `plugin.json` lists `band`, `status` and `off`, and `plan`
+  lists `inbox` and `off`, under `options`, the values the mod accepts (a test checks).
   `plugin/hooks/register.test.tsx` is its test, run by `claude plugin test plugin`.
 - `plugin/commands/demo.md`: `/signoff:demo`, typed only (`disable-model-invocation: true`); its body asks the model
   to write one synthetic round in a `mktemp -d` folder, run Signoff on it, and give the user the `rm -r` command
@@ -50,10 +50,8 @@ Instructions for coding agents working on Signoff. The README says what it does 
   SKILL.md loads whole on every use, so it stays under 9 KiB (`test_skill.py`): the less used fields are in
   `fields.md` beside it, and what to do once Signoff exits (the exit codes, the answers file, the actions) in
   `answers.md`. It links each by a relative path (a test checks that every `.md` beside it is linked), and they
-  hold no `${...}`, which only SKILL.md gets filled in. It reads two options of `plugin.json`, strings as `hint`
-  is: `folder` (the decisions folder) and `chat` (the largest batch of short text-only questions that goes to
-  AskUserQuestion instead, 0 to 4; any other value counts as 4); a test checks that the directory listing names
-  each option as a setting.
+  hold no `${...}`, which only SKILL.md gets filled in. It reads one option of `plugin.json`, `folder` (the
+  decisions folder); a test checks that the directory listing names each option as a setting.
 - `plugin/signoff/signoff.py`: the server and command line. Python 3.9+, standard library only. Importable:
   `load_decisions`, `check_answers`, `make_server`, `main`. Also the inbox (`signoff inbox serve|open|stop`,
   `InboxServer`), its `todo.md` reader (`parse_todos`, `markdown_blocks`), its control socket client
@@ -719,20 +717,7 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   `state.json` (see the state rule), `inbox.sock`, `requests/<project>/<id>.json` (see the request rule),
   `prefs.json` (see the theme rule), and
   `logs/inbox.log` when `signoff inbox open` or the app starts it (the app makes the home and `logs/` for it,
-  0700, when absent); `signoff inbox done` writes `<id>.done`. With `--notes`
-  (POSIX), a run that exits 0 creates one note per round open at its start in that folder (`write_notes`). The
-  agent writes that argument: the skill takes it from the Notes folder setting, but nothing binds the two, so the
-  checks keep a misled agent's note out of dot folders and the rounds' own project only (another project's folder
-  is accepted). The folder: an absolute
-  path, normalised (`normpath`) before it is looked at, not a link itself, no part of it or of its real path
-  starting with a dot, the user's own, not writable by group or others, outside the rounds' project root (else
-  their topic folder) and the home, its real path checked against the descriptor the note is created through. A
-  value that is still a `${user_config.…}` placeholder is off, as an empty one. The note `O_CREAT | O_EXCL |
-  O_NOFOLLOW`, 0600, never over a file or link already at its name (one stderr line, nothing replaced), its
-  private answers left out (`answers_markdown(..., hide_private=True)`), and a line note's `quote` too (the
-  agent's file text, which a synced folder must not get); one round that fails costs only its own
-  note. A SIGINT, SIGTERM or SIGHUP while the notes are written acts as the signal does (the run's handlers are put
-  back by then), so the exit code may not be 0 although the paths are on stdout. The inbox never writes one. The one thing Signoff removes is a
+  0700, when absent); `signoff inbox done` writes `<id>.done`. The one thing Signoff removes is a
   dead `inbox.sock`: only when it is a socket in the inbox's own home, the starting inbox holds `inbox.lock`, and
   a connect to it is refused. Anything else at that path stops the inbox with an error. A test checks both.
 - **One writer per round, once an inbox has run.** The switch is `inbox.lock` in the Signoff home
@@ -886,8 +871,7 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   (`inbox_test.go` parses the source for every op it sends).
   The app never sends a choice. Quitting the app leaves the inbox running.
 - **stdout is answers paths and nothing else**, one per line, in tab order. Agents parse it. Messages go to
-  stderr (`--notes` too: its notes print nothing on stdout, and each refusal or failure is one stderr line starting
-  `signoff: notes:` that changes neither stdout nor the exit code). The exceptions: `signoff inbox home` prints the Signoff home (`inbox_home()`, never creating it),
+  stderr. The exceptions: `signoff inbox home` prints the Signoff home (`inbox_home()`, never creating it),
   `signoff inbox hook` prints nothing but the SessionStart hand-over, `signoff inbox requests <folder> <project> <id>…` prints one JSON line, its
   reply, for the mod, and `signoff inbox rows <folder>` prints one JSON line, the `rows` reply (for a folder outside any
   project `{"rounds": [], "more": 0}`), for the mod. `signoff inbox serve|open|stop|done`

@@ -19,21 +19,22 @@ class SkillTest(unittest.TestCase):
         # Text, not raw bytes: a Windows checkout with CRLF line ends must not count more.
         self.assertLess(len((SKILL / "SKILL.md").read_text(encoding="utf-8").encode("utf-8")), MAX_SKILL)
 
-    def test_short_questions_follow_the_chat_setting(self):
-        # A string, as hint is: an `options` list is only for a string field (the manifest schema). The skill reads
-        # it as it reads the folder, and a value it cannot use falls back to the default.
-        self.assertEqual((SETTINGS["chat"]["type"], SETTINGS["chat"]["default"]), ("string", "4"))
-        skill = " ".join((SKILL / "SKILL.md").read_text(encoding="utf-8").split())
-        self.assertIn("${user_config.chat}", skill)
-        self.assertIn("any other value means %s." % SETTINGS["chat"]["default"], skill)
+    def test_the_settings_are_folder_hint_and_plan(self):
+        self.assertEqual(sorted(SETTINGS), ["folder", "hint", "plan"])
 
-    def test_every_run_passes_the_notes_setting(self):
-        # Off by default: an empty value writes no note. The skill names the setting in prose and has the agent add
-        # its value to every run command, the per-round form too, only when it is an absolute path.
-        self.assertEqual((SETTINGS["notes"]["type"], SETTINGS["notes"]["default"]), ("string", ""))
+    def test_short_questions_follow_a_fixed_rule(self):
+        # No setting for it: at most 4 short text-only questions go to chat, a bigger batch goes whole on the page.
         skill = " ".join((SKILL / "SKILL.md").read_text(encoding="utf-8").split())
-        self.assertIn("`${user_config.notes}`", skill)
-        self.assertIn('add `--notes "<it>"` to every run command', skill)
+        self.assertIn("a batch of at most 4 short questions, each text only and not `sensitive` (no picture, board, "
+                      "attachment or marks) with 2 to 4 options. A bigger batch, or one with a picture, goes whole on "
+                      "the page.", skill)
+        self.assertIn("The user's own instructions win", skill)
+
+    def test_the_skill_reads_no_removed_setting(self):
+        for path in sorted(SKILL.glob("*.md")):
+            text = path.read_text(encoding="utf-8")
+            for gone in ("${user_config.chat}", "${user_config.notes}", "--notes", "signoff: notes:"):
+                self.assertNotIn(gone, text, path.name)
 
     def test_no_setting_placeholder_sits_in_a_command(self):
         # Claude Code (2.1.325) fills ${user_config.X} only from saved options: an unsaved one stays as typed, and a
