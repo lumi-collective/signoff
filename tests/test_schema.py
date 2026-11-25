@@ -775,7 +775,7 @@ class NumberItem(unittest.TestCase):
 
     def test_a_recommendation_whose_grid_point_is_out_of_range_is_kept_as_written(self):
         # A max off the grid: the nearest grid point lies past it, so the snap would make an answer that
-        # check_answers refuses (an Accept from a notification would end as failed).
+        # check_answers refuses (a save of the recommendation would then fail).
         for rng, rec in (({"min": 0, "max": 9.9999999999}, 9.9999999999),
                          ({"min": 0.1, "max": 0.2999999999999999, "step": 0.1}, 0.2999999999999999)):
             item = self.load(number_item(range=rng, recommended=rec))

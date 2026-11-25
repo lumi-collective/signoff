@@ -1352,10 +1352,10 @@ class InboxTodoPath(unittest.TestCase):
 
 
 @unittest.skipIf(sys.platform == "win32", "the inbox's control socket is a Unix socket; no inbox on Windows yet")
-class InboxOffer(unittest.TestCase):
-    """An answer from a notification, over the control socket of an inbox in a separate process: offer, open with
-    the offer (its start link lands on the item in Focus), accept once (the recommendation, with Done), and the
-    refusals, which write nothing."""
+class InboxOldOps(unittest.TestCase):
+    """Requests an older app sends to an inbox in a separate process: `offer` and `accept` are unknown requests and
+    write nothing, and a plain `open` with an `offer` key (or any other key it does not know) gives the list's start
+    link."""
 
     @classmethod
     def setUpClass(cls):
@@ -1366,7 +1366,7 @@ class InboxOffer(unittest.TestCase):
         os.makedirs(os.path.join(cls.home, "runs"), mode=0o700)
         os.makedirs(cls.folder)
         data = sample_decisions()
-        data["items"] = [cls.item(data)]  # one item, with a recommendation: the one a tap may answer
+        data["items"] = [dict(data["items"][0], images=[])]  # one item, with a recommendation
         with open(os.path.join(cls.folder, "round-01.json"), "w", encoding="utf-8") as f:
             json.dump(data, f)
         cls.answers = os.path.join(cls.folder, "round-01.answers.json")
@@ -1391,13 +1391,6 @@ class InboxOffer(unittest.TestCase):
                 assert cls.proc.poll() is None and time.monotonic() < deadline, "the inbox did not start"
                 time.sleep(0.1)
 
-    # The item offered, and what the offer and the answers file must say for it.
-    ANSWER, CHOICE = "Two columns", "two"
-
-    @staticmethod
-    def item(data):
-        return dict(data["items"][0], images=[])
-
     @classmethod
     def ask(cls, request):
         with socket.socket(socket.AF_UNIX) as s:
@@ -1415,124 +1408,22 @@ class InboxOffer(unittest.TestCase):
         conn.close()
         return resp
 
-    def test_offer_open_accept_once(self):
-        for bad in (None, 12, "0" * 32, "0" * 33, "Z" * 32, ["0" * 32]):
-            self.assertEqual(self.ask({"op": "accept", "offer": bad}), {"error": "gone"}, bad)
+    def test_offer_and_accept_are_unknown_and_write_nothing(self):
+        unknown = self.ask({"op": "ping"})
+        self.assertEqual(sorted(unknown), ["error"])
+        for request in ({"op": "offer"}, {"op": "accept", "offer": "0" * 32},
+                        {"op": "accept", "offer": "0" * 32, "choice": "one"}, {"op": "accept"}):
+            self.assertEqual(self.ask(request), unknown, request)
+        self.assertNotIn("http", unknown["error"])
         self.assertFalse(os.path.exists(self.answers))
-        offer = self.ask({"op": "offer"})["offer"]
-        self.assertEqual((offer["round"], offer["question"], offer["answer"]),
-                         ("Pick the settings layout", "Two columns or one?", self.ANSWER))
-        self.assertRegex(offer["id"], r"^[0-9a-f]{32}$")
-        for text in (self.home, self.folder, "round-01", "fedcba9876543210", "http"):
-            self.assertNotIn(text, json.dumps(offer))
-        resp = self.get(self.ask({"op": "open", "offer": offer["id"]})["link"])
-        self.assertEqual(resp.status, 303)
-        self.assertRegex(resp.getheader("Location"), r"^/[A-Za-z0-9_-]+/run/0/#focus=0/layout$")
-        resp = self.get(self.ask({"op": "open", "offer": "f" * 32})["link"])
-        self.assertRegex(resp.getheader("Location"), r"^/[A-Za-z0-9_-]+/$")
-        self.assertEqual(self.ask({"op": "accept", "offer": offer["id"], "choice": "one"}), {"ok": True})
-        with open(self.answers, "rb") as f:
-            before = f.read()
-        saved = json.loads(before.decode("utf-8"))
-        self.assertEqual((saved["done"], saved["accepted"]), (True, True))
-        self.assertEqual((saved["answers"]["layout"]["choice"], saved["answers"]["layout"]["source"]),
-                         (self.CHOICE, "notification"))
-        self.assertIs(type(saved["answers"]["layout"]["choice"]), type(self.CHOICE))
-        self.assertEqual(self.ask({"op": "accept", "offer": offer["id"]}), {"error": "gone"})
-        with open(self.answers, "rb") as f:
-            self.assertEqual(f.read(), before)
-        self.assertEqual(self.ask({"op": "offer"}), {"offer": None})
         self.assertIsNone(self.proc.poll())
 
-
-@unittest.skipIf(sys.platform == "win32", "the inbox's control socket is a Unix socket; no inbox on Windows yet")
-class InboxNumberOffer(InboxOffer):
-    """The same, for a number item: the offer's answer is its value and unit, and accept stores the number."""
-
-    ANSWER, CHOICE = "12.5 %", 12.5
-
-    @staticmethod
-    def item(data):
-        return {"id": "layout", "title": "Two columns or one?", "select": "number",
-                "range": {"min": -10, "max": 90, "step": 2.5, "unit": "%"}, "recommended": 12.5}
-
-
-@unittest.skipIf(sys.platform == "win32", "the inbox's control socket is a Unix socket; no inbox on Windows yet")
-class InboxOfferSkips(unittest.TestCase):
-    """Rounds a notification never offers, in an inbox in a separate process: one with a settled item the user has
-    not saved on its page (a tap's Done would answer it unseen), and one whose last item cannot be undone (the banner
-    cannot say so). High stakes are offered, and so is a round whose settled item is saved; accept then writes the
-    offered item only."""
-
-    ROUNDS = [  # title, item changes, the settled item's saved answer or None
-        ("Settled unsaved", {}, None),
-        ("Cannot be undone", {"irreversible": "Drops the old table"}, None),
-        ("High stakes", {"stakes": "high"}, None),
-        ("Settled saved", {}, {"choice": ["date", "tag"], "comment": "", "source": "recommended"}),
-    ]
-    ask = InboxOffer.__dict__["ask"]  # the same classmethod, on this class's home
-
-    @classmethod
-    def setUpClass(cls):
-        cls._tmp = tempfile.TemporaryDirectory()
-        cls.addClassCleanup(cls._tmp.cleanup)
-        base = os.path.realpath(cls._tmp.name)
-        cls.home = os.path.join(base, "home")
-        os.makedirs(os.path.join(cls.home, "runs"), mode=0o700)
-        cls.answers = []
-        for n, (title, change, saved) in enumerate(cls.ROUNDS):
-            folder = os.path.join(base, "topic-%d" % n)
-            os.makedirs(folder)
-            data = sample_decisions()
-            data["title"] = title
-            layout = dict(data["items"][0], images=[], **change)
-            data["items"] = [layout] + ([dict(data["items"][1], settled="round-01, 11-14")]
-                                        if title.startswith("Settled") else [])
-            with open(os.path.join(folder, "round-01.json"), "w", encoding="utf-8") as f:
-                json.dump(data, f)
-            cls.answers.append(os.path.join(folder, "round-01.answers.json"))
-            if saved:
-                with open(cls.answers[-1], "w", encoding="utf-8") as f:
-                    json.dump({"version": 1, "done": False, "saved": "2026-01-01T12:00:00Z", "free_text": "",
-                               "answers": {"filters": saved}}, f)
-            run = "%016x" % (n + 1)
-            entry = {"schema": 1, "run": run, "project": None, "folder": folder, "rounds": ["round-01.json"],
-                     "mode": "waiter", "pid": os.getpid(), "started": "2026-01-01T00:00:0%dZ" % n}
-            with open(os.path.join(cls.home, "runs", run + ".json"), "w", encoding="utf-8") as f:
-                json.dump(entry, f)
-        cls.proc = subprocess.Popen(COMMAND + ["inbox", "serve"], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                    env=dict(os.environ, SIGNOFF_INBOX_HOME=cls.home))
-
-        def stop():
-            if cls.proc.poll() is None:
-                cls.proc.kill()
-            cls.proc.communicate()
-        cls.addClassCleanup(stop)
-        deadline = time.monotonic() + 30
-        while True:
-            try:
-                cls.ask({"op": "ping"})
-                break
-            except OSError:
-                assert cls.proc.poll() is None and time.monotonic() < deadline, "the inbox did not start"
-                time.sleep(0.1)
-
-    def offer_and_accept(self, title):
-        offer = self.ask({"op": "offer"})["offer"]
-        self.assertEqual(offer and offer["round"], title)
-        self.assertEqual(self.ask({"op": "accept", "offer": offer["id"]}), {"ok": True})
-
-    def test_which_rounds_are_offered(self):
-        self.offer_and_accept("High stakes")
-        self.offer_and_accept("Settled saved")
-        with open(self.answers[3], encoding="utf-8") as f:
-            saved = json.load(f)
-        self.assertTrue(saved["done"])
-        self.assertEqual(saved["answers"], {"filters": dict(self.ROUNDS[3][2]),
-                                            "layout": {"choice": "two", "comment": "", "source": "notification"}})
-        self.assertEqual(self.ask({"op": "offer"}), {"offer": None})
-        self.assertFalse(os.path.exists(self.answers[0]) or os.path.exists(self.answers[1]))
-        self.assertIsNone(self.proc.poll())
+    def test_a_plain_open_with_keys_it_does_not_know_gives_the_list(self):
+        for extra in ({"offer": "f" * 32}, {"offer": 12}, {"offer": "f" * 32, "x": 1}):
+            resp = self.get(self.ask(dict({"op": "open"}, **extra))["link"])
+            self.assertEqual(resp.status, 303, extra)
+            self.assertRegex(resp.getheader("Location"), r"^/[A-Za-z0-9_-]+/$", extra)
+        self.assertFalse(os.path.exists(self.answers))
 
 
 @unittest.skipIf(sys.platform == "win32", "the inbox's control socket is a Unix socket; no inbox on Windows yet")
@@ -1540,7 +1431,7 @@ class InboxRows(unittest.TestCase):
     """The mod's panel list from an inbox in a separate process: `rows` on the control socket and `inbox rows
     <cwd>` on stdout, for a project's run the suite registers by hand. Numbers and one-line titles, nothing more."""
 
-    TOKEN = re.compile(r"[A-Za-z0-9_-]{32,}")  # a start, page or board token, an offer id
+    TOKEN = re.compile(r"[A-Za-z0-9_-]{32,}")  # a start, page or board token
 
     @classmethod
     def setUpClass(cls):
@@ -1582,7 +1473,7 @@ class InboxRows(unittest.TestCase):
                 assert cls.proc.poll() is None and time.monotonic() < deadline, "the inbox did not start"
                 time.sleep(0.1)
 
-    ask = InboxOffer.__dict__["ask"]  # the classmethod itself, so cls is this class and its home
+    ask = InboxOldOps.__dict__["ask"]  # the classmethod itself, so cls is this class and its home
 
     def cli(self, *args):
         return subprocess.run(COMMAND + ["inbox", "rows"] + list(args), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -1609,7 +1500,7 @@ class InboxRows(unittest.TestCase):
         self.assertEqual(self.cli("relative/path").returncode, 1)
         self.assertIsNone(self.proc.poll())
 
-    get = InboxOffer.get
+    get = InboxOldOps.get
 
     def landing(self, link):
         resp = self.get(link)
@@ -1622,7 +1513,7 @@ class InboxRows(unittest.TestCase):
         reply = self.ask(good)
         self.assertEqual(sorted(reply), ["link"])
         self.assertRegex(self.landing(reply["link"]), r"^/[A-Za-z0-9_-]+/run/0/#focus=0/%s$" % re.escape(self.ids[1]))
-        # Gone, out of range or another inbox's number: the list's link, as an unknown offer gets.
+        # Gone, out of range or another inbox's number: the list's link, as a plain open gets.
         for stale in ({"run": 1}, {"round": 1}, {"item": len(self.ids)}, {"inbox": number % (2 ** 31 - 1) + 1}):
             self.assertRegex(self.landing(self.ask(dict(good, **stale))["link"]), r"^/[A-Za-z0-9_-]+/$", stale)
         # Malformed: an error, and no link.

@@ -144,8 +144,7 @@ rows, the app's Info.plist). It writes nothing.
 The Signoff inbox runs only when you start it: ask your agent to open the Signoff inbox (or use the optional macOS
 app, built from the repository and not part of the plugin), and until you stop it: one
 Python program in the background, serving one page on 127.0.0.1 with the open questions of every project and
-their todo items. It hands out its single-use start links only on a socket file readable by you alone; the optional app also asks
-there for a notification's recommended answer, and its Accept & send saves that answer with Done. It does
+their todo items. It hands out its single-use start links only on a socket file readable by you alone. It does
 not run on Windows yet. It never runs a command from a todo file; it only offers it to copy. On an open todo item
 you can type a message to the project's agent; the agent gets it as your words. On one waiting on you, Later asks
 the agent, in a fixed line the inbox writes, to take its waiting mark off and keep it open. An item and the items

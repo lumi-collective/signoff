@@ -25,25 +25,24 @@ func TestTakesPendingOnlyOnActivateWithALiveInbox(t *testing.T) {
 func TestWindowStaysOnlyOnItsOwnLiveInbox(t *testing.T) {
 	cases := []struct {
 		name                         string
-		link, offer, win, hidden     bool
+		link, win, hidden            bool
 		alive                        bool
 		server, loaded               string
 		want, aliveAsked, serverRead bool
 	}{
-		{"same live inbox", false, false, true, false, true, "a1", "a1", true, true, true},
-		{"pending link wins", true, false, true, false, true, "a1", "a1", false, false, false},
-		{"offer loads a link", false, true, true, false, true, "a1", "a1", false, false, false},
-		{"hidden window", false, false, true, true, true, "a1", "a1", false, false, false},
-		{"no window", false, false, false, false, true, "a1", "a1", false, false, false},
-		{"inbox dead", false, false, true, false, false, "a1", "a1", false, true, false},
-		{"another server_id", false, false, true, false, true, "b2", "a1", false, true, true},
-		{"inbox.json unreadable", false, false, true, false, true, "", "a1", false, true, true},
+		{"same live inbox", false, true, false, true, "a1", "a1", true, true, true},
+		{"pending link wins", true, true, false, true, "a1", "a1", false, false, false},
+		{"hidden window", false, true, true, true, "a1", "a1", false, false, false},
+		{"no window", false, false, false, true, "a1", "a1", false, false, false},
+		{"inbox dead", false, true, false, false, "a1", "a1", false, true, false},
+		{"another server_id", false, true, false, true, "b2", "a1", false, true, true},
+		{"inbox.json unreadable", false, true, false, true, "", "a1", false, true, true},
 	}
 	for _, c := range cases {
 		asked, read := false, false
 		alive := func() bool { asked = true; return c.alive }
 		server := func() string { read = true; return c.server }
-		got := windowStays(c.link, c.offer, c.win, c.hidden, alive, server, c.loaded)
+		got := windowStays(c.link, c.win, c.hidden, alive, server, c.loaded)
 		if got != c.want || asked != c.aliveAsked || read != c.serverRead {
 			t.Errorf("%s: windowStays = %v (alive asked %v, server read %v), want %v (%v, %v)",
 				c.name, got, asked, read, c.want, c.aliveAsked, c.serverRead)

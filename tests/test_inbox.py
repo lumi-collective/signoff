@@ -1448,7 +1448,7 @@ class InboxState(InboxTest):
             self.assertEqual((resp.status, resp.getheader("Content-Type")), (200, "application/json"))
             self.assertEqual(json.loads(body)["waiting"], 3)
             # No page load from here on: the inbox looks by itself.
-            InboxOffer.end(self, e)
+            InboxControl.end(self, e)
             self.assertEqual(self.wait_state(1)["projects"], [{"id": self.pid, "monogram": "PR", "waiting": 1}])
             with open(str(self.root / "TODO.md"), "a", encoding="utf-8") as f:
                 f.write("- [ ] (waiting on you: sign the release) Release 1.0\n")
@@ -1706,17 +1706,16 @@ def record(answers, done=False):
     return {"version": 1, "done": done, "saved": "2026-01-01T12:00:00Z", "answers": answers, "free_text": "kept"}
 
 
-class InboxOffer(InboxTest):
-    """An answer from a notification, asked for on the control socket: offer names the one item a tap may answer,
-    accept saves its recommendation with Done through the run's own writer, open gives a start link to that item in
-    Focus. The client never sends a choice, and the offer id goes nowhere but the socket's reply."""
+class InboxControl(InboxTest):
+    """The control socket with runs waiting on rounds: ops it no longer knows get the unknown-request reply, a plain
+    open ignores keys it does not know, and a bad line gets an error. Its helpers serve the other socket tests."""
 
     cases = 0
 
     def case(self, rounds, answers=None):
         """A topic folder of these rounds (answers files by round number), and a run waiting on it."""
-        InboxOffer.cases += 1
-        topic = self.root / ".signoff" / ("case-%d" % InboxOffer.cases)
+        InboxControl.cases += 1
+        topic = self.root / ".signoff" / ("case-%d" % InboxControl.cases)
         topic.mkdir(parents=True)
         names = []
         for n, data in enumerate(rounds, 1):
@@ -1738,11 +1737,6 @@ class InboxOffer(InboxTest):
     def ctl(self, op, **fields):
         return signoff.inbox_request(self.home, op, **fields)
 
-    def offer(self):
-        reply = self.ctl("offer")
-        self.assertEqual(sorted(reply), ["offer"], reply)
-        return reply["offer"]
-
     def files(self, *folders):
         """Every file's bytes under these folders, by path."""
         found = {}
@@ -1754,144 +1748,29 @@ class InboxOffer(InboxTest):
                         found[p] = Path(p).read_bytes()
         return found
 
-    def test_offer_names_the_only_undecided_item_and_holds_no_path_or_token(self):
+    def test_offer_and_accept_are_unknown_requests(self):
         topic, e = self.case([one_round(question("q"))])
         self.start()
-        start, page = self.open()
-        offer = self.offer()
-        self.assertEqual(sorted(offer), ["answer", "id", "project", "question", "round"])
-        self.assertRegex(offer["id"], r"^[0-9a-f]{32}$")
-        self.assertEqual((offer["project"], offer["round"], offer["question"], offer["answer"]),
-                         ("project", "R3", "Question q", "Alpha"))
-        raw = json.dumps(offer)
-        for text in (str(self.home), str(self.root), str(topic), "round-01", e["run"], page.strip("/"), "http"):
-            self.assertNotIn(text, raw)
-        self.assertNotEqual(self.offer()["id"], offer["id"])  # each ask is a new offer
+        unknown = self.ctl("ping")
+        self.assertEqual(sorted(unknown), ["error"])
+        self.assertTrue(unknown["error"].startswith("unknown request"), unknown)
+        for op, fields in (("offer", {}), ("accept", {"offer": "0" * 32}),
+                           ("accept", {"offer": "0" * 32, "choice": "a"})):
+            self.assertEqual(self.ctl(op, **fields), unknown, op)
+        for word in ("offer", "accept", "http", "127.0.0.1"):
+            self.assertNotIn(word, unknown["error"])
+        self.assertFalse((topic / "round-01.answers.json").exists())
 
-    def test_which_item_is_offered(self):
-        two = [one_round(question("q")), one_round(question("r"), title="Second", tab=None)]
-        cases = [
-            ("two undecided items", [one_round(question("q"), question("r"))], None, None),
-            ("no recommendation", [one_round(question("q", rec=None))], None, None),
-            ("sensitive", [one_round(question("q", sensitive=True))], None, None),
-            # The banner cannot show "Cannot be undone"; high stakes it may answer.
-            ("irreversible", [one_round(question("q", irreversible="Drops the old table"))], None, None),
-            ("high stakes", [one_round(question("q", stakes="high"))], None, ("R3", "Question q", "Alpha")),
-            ("many, a list", [one_round(question("q", select="many", rec=["a", "c"]), tab=None)], None,
-             ("Ship it", "Question q", "Alpha + Gamma")),
-            ("many, recommends nothing", [one_round(question("q", select="many", rec=[]))], None, None),
-            ("not the run's last open round", two, None, None),
-            ("the last open round after a done one", two, {1: record({}, done=True)},
-             ("Second", "Question r", "Alpha")),
-            ("the other decided by the user", [one_round(question("q"), question("r"))],
-             {1: record({"q": {"choice": "b", "comment": "", "source": "user"}})}, ("R3", "Question r", "Alpha")),
-            ("decided by Accept all, or with no source", [one_round(question("q"), question("r"), question("s"))],
-             {1: record({"q": {"choice": "a", "source": "accept_all"}, "r": {"choice": "a"}})},
-             ("R3", "Question s", "Alpha")),
-            ("skipped is decided", [one_round(question("q", skippable=True), question("r"))],
-             {1: record({"q": {"choice": "_skip", "source": "user"}})}, ("R3", "Question r", "Alpha")),
-            ("the other only preselected", [one_round(question("q"), question("r"))],
-             {1: record({"q": {"choice": "a", "source": "recommended"}})}, None),
-            ("an untouched item without a recommendation", [one_round(question("q"), question("n", rec=None))],
-             {1: record({"n": {"choice": None, "source": "user"}})}, None),
-            # The user unticked a recommendation: "none of these" is an answer, never one a tap may replace.
-            ("none picked by the user on a recommended many item",
-             [one_round(question("m", select="many", rec=["a"]), question("q"))],
-             {1: record({"m": {"choice": [], "source": "user"}})}, ("R3", "Question q", "Alpha")),
-            ("the only item, none picked by the user", [one_round(question("m", select="many", rec=["a"]))],
-             {1: record({"m": {"choice": [], "source": "user"}})}, None),
-            ("an untouched many item without a recommendation",
-             [one_round(question("m", select="many", rec=None), question("q"))],
-             {1: record({"m": {"choice": [], "source": "user"}})}, None),
-            # A settled item is decided while it holds its recommendation, the user's earlier answer. Unsaved, the
-            # user never saw it on this round's page, and a tap's Done would answer it unseen: no offer.
-            ("a settled item, unsaved", [one_round(question("s", settled="round-01"), question("q"))], None, None),
-            ("a settled item, unsaved, beside a saved round",
-             [one_round(question("s", settled="round-01"), question("q"), question("r"))],
-             {1: record({"r": {"choice": "a", "source": "user"}})}, None),
-            ("a settled item left at its recommendation",
-             [one_round(question("s", settled="round-01"), question("q"))],
-             {1: record({"s": {"choice": "a", "source": "recommended"}})}, ("R3", "Question q", "Alpha")),
-            ("a settled many item, the same options in another order",
-             [one_round(question("s", select="many", rec=["a", "c"], settled="round-01"), question("q"))],
-             {1: record({"s": {"choice": ["c", "a"], "source": "recommended"}})}, ("R3", "Question q", "Alpha")),
-            ("a settled number item at its recommendation",
-             [one_round({"id": "n", "title": "How many?", "select": "number", "range": {"min": 0, "max": 5},
-                         "recommended": 2, "settled": "round-01"}, question("q"))],
-             {1: record({"n": {"choice": 2.0, "source": "recommended"}})}, ("R3", "Question q", "Alpha")),
-            ("a settled item changed but only preselected", [one_round(question("s", settled="round-01"),
-                                                                       question("q"))],
-             {1: record({"s": {"choice": "b", "source": "recommended"}})}, None),
-            ("only settled items", [one_round(question("s", settled="round-01"))], None, None),
-        ]
+    def test_a_plain_open_ignores_keys_it_does_not_know(self):
+        # A 0.3.0 or 0.4.0 app opens a banner's item with {"op": "open", "offer": <id>}: it gets the list.
+        self.case([one_round(question("q"))])
         self.start()
-        for label, rounds, answers, want in cases:
-            with self.subTest(label):
-                topic, e = self.case(rounds, answers)
-                offer = self.offer()
-                got = offer and (offer["round"], offer["question"], offer["answer"])
-                self.assertEqual(got, want)
-                self.end(e)
-
-    def test_a_round_held_by_another_run_is_not_offered(self):
-        topic, e = self.case([one_round(question("q"))])
-        held = signoff.try_lock(topic / "round-01.json.lock")
-        self.addCleanup(signoff.unlock, held)
-        self.start()
-        self.assertIsNone(self.offer())
-
-    def test_the_oldest_waiting_round_comes_first(self):
-        first, _ = self.case([one_round(question("q"), title="Old", tab=None)])
-        time.sleep(1.1)  # started is in whole seconds
-        self.case([one_round(question("q"), title="New", tab=None)])
-        self.start()
-        self.assertEqual(self.offer()["round"], "Old")
-
-    def test_accept_saves_the_recommendation_with_done_and_keeps_the_rest(self):
-        rounds = [one_round(question("q"), question("r", other=True))]
-        topic, e = self.case(rounds, {1: record({
-            "q": {"choice": "b", "comment": "mine", "source": "user"},
-            "r": {"choice": "_other", "other": "dropped", "comment": "keep me", "private": True,
-                  "source": "recommended"}})})
-        with mock.patch.object(signoff, "STATE_EVERY", 0.05):
-            self.start()
-            self.assertEqual(json.loads((self.home / "state.json").read_text(encoding="utf-8"))["waiting"], 2)
-            offer = self.offer()
-            self.assertEqual(offer["question"], "Question r")
-            # A choice smuggled in by the client counts for nothing: the answer is always the recommendation.
-            self.assertEqual(self.ctl("accept", offer=offer["id"], choice="b"), {"ok": True})
-            saved = json.loads((topic / "round-01.answers.json").read_text(encoding="utf-8"))
-            self.assertEqual((saved["done"], saved["accepted"], saved["free_text"]), (True, True, "kept"))
-            self.assertEqual(saved["answers"]["q"], {"choice": "b", "comment": "mine", "source": "user"})
-            self.assertEqual(saved["answers"]["r"], {"choice": "a", "comment": "keep me", "private": True,
-                                                     "source": "notification"})
-            md = (topic / "round-01.answers.md").read_text(encoding="utf-8")
-            self.assertIn("- Source: recommendation, accepted from a notification", md)
-            before = (topic / "round-01.answers.json").read_bytes()
-            self.assertEqual(self.ctl("accept", offer=offer["id"]), {"error": "gone"})  # once only
-            self.assertEqual((topic / "round-01.answers.json").read_bytes(), before)
-            deadline = time.monotonic() + 10
-            while json.loads((self.home / "state.json").read_text(encoding="utf-8"))["waiting"] != 1:
-                self.assertLess(time.monotonic(), deadline, "state.json never counted the round down")
-                time.sleep(0.02)
-            self.assertIsNone(self.offer())  # a done round is offered no more
-
-    def test_accept_keeps_line_notes_even_when_their_file_changed_since(self):
-        attached = {"attachments": [{"src": "change.diff"}], "lines": True}
-        stale = {"att": 0, "line": 2, "quote": "+what line 2 said before", "comment": "mine"}
-        topic, e = self.case([one_round(question("q", **attached), question("r", **attached))], {1: record({
-            "q": {"choice": None, "comment": "", "source": "user", "lines": [stale], "private": True},
-            "r": {"choice": "b", "comment": "", "source": "user", "lines": [stale]}})})
-        (topic / "change.diff").write_text("--- a/x\n+++ b/x\n", encoding="utf-8")  # line 2 is not the quote now
-        self.start()
-        offer = self.offer()
-        self.assertEqual(offer["question"], "Question q")
-        self.assertEqual(self.ctl("accept", offer=offer["id"]), {"ok": True})
-        saved = json.loads((topic / "round-01.answers.json").read_text(encoding="utf-8"))
-        self.assertTrue(saved["done"])
-        self.assertEqual(saved["answers"]["q"], {"choice": "a", "comment": "", "lines": [stale], "private": True,
-                                                 "source": "notification"})
-        self.assertEqual(saved["answers"]["r"]["lines"], [stale])
+        for fields in ({"offer": "f" * 32}, {"offer": 7}, {"offer": None}, {"offer": "f" * 32, "x": [1]}, {"x": 1}):
+            reply = self.ctl("open", **fields)
+            self.assertEqual(sorted(reply), ["link"], fields)
+            resp, _ = self.request("GET", reply["link"].split(self.host, 1)[1])
+            self.assertEqual(resp.status, 303)
+            self.assertRegex(resp.getheader("Location"), r"^/[A-Za-z0-9_-]+/$", fields)
 
     def test_an_inbox_save_checks_line_notes(self):
         attached = {"attachments": [{"src": "change.diff"}], "lines": True}
@@ -1912,241 +1791,37 @@ class InboxOffer(InboxTest):
         saved = json.loads((topic / "round-01.answers.json").read_text(encoding="utf-8"))
         self.assertEqual(saved["answers"]["q"]["lines"], [good])
 
-    def test_a_round_is_offered_once_its_settled_items_are_saved_and_accept_writes_only_the_offered_one(self):
-        rounds = [one_round(question("s", settled="round-01"), question("q"),
-                            question("m", select="many", rec=["a", "c"], settled="round-01"))]
-        topic, e = self.case(rounds)
-        with mock.patch.object(signoff, "STATE_EVERY", 0.05):
-            self.start()
-            self.assertIsNone(self.offer())  # the settled items were never on a page the user saved
-            # A page save sends every item: the settled ones as their recommendation, the rest untouched.
-            settled = {"s": {"choice": "a", "comment": "", "source": "recommended"},
-                       "m": {"choice": ["c", "a"], "comment": "", "source": "recommended"}}
-            write_outside(topic / "round-01.answers.json", dict(record(settled), saved=signoff.utc_now()))
-            deadline = time.monotonic() + 10
-            offer = self.offer()
-            while offer is None:
-                self.assertLess(time.monotonic(), deadline, "the round was never offered once saved")
-                time.sleep(0.05)
-                offer = self.offer()
-            self.assertEqual(offer["question"], "Question q")
-            self.assertEqual(self.ctl("accept", offer=offer["id"]), {"ok": True})
-        saved = json.loads((topic / "round-01.answers.json").read_text(encoding="utf-8"))
-        self.assertEqual((saved["done"], saved["accepted"]), (True, True))
-        self.assertEqual(saved["answers"], dict(settled, q={"choice": "a", "comment": "", "source": "notification"}))
-
-    def test_a_number_item_is_offered_as_its_value_and_unit_and_accepted_as_a_number(self):
-        num = {"id": "n", "title": "How many?", "select": "number", "range": {"min": -10, "max": 10, "step": 0.5,
-                                                                             "unit": "%"}, "recommended": 2.5}
-        bare = dict(num, range={"min": 0, "max": 3000000, "step": 500}, recommended=1234500)
-        self.start()
-        cases = [("value and unit", [one_round(dict(num))], None, "2.5 %"),
-                 ("no unit, a big whole number", [one_round(dict(bare))], None, "1234500"),
-                 ("zero", [one_round(dict(num, recommended=0))], None, "0 %"),
-                 ("a noisy recommendation, as its grid point",
-                  [one_round(dict(num, range={"min": 0.1, "max": 1, "step": 0.1}, recommended=0.30000000000000004))],
-                  None, "0.3"),
-                 ("the longest, never cut", [one_round(dict(num, range={
-                     "min": -10 ** 15, "max": -10 ** 15 + 10 ** 7, "step": 1000, "unit": "u" * 15 + "Z"},
-                     recommended=-999999999999000))], None, "-999999999999000 " + "u" * 15 + "Z"),
-                 ("sensitive", [one_round(dict(num, sensitive=True))], None, None),
-                 ("moved by the user is decided", [one_round(dict(num), question("q"))],
-                  {1: record({"n": {"choice": 0, "source": "user"}})}, "Alpha"),
-                 ("only preselected is not", [one_round(dict(num), question("q"))],
-                  {1: record({"n": {"choice": 2.5, "source": "recommended"}})}, None)]
-        for label, rounds, answers, want in cases:
-            with self.subTest(label):
-                topic, e = self.case(rounds, answers)
-                offer = self.offer()
-                self.assertEqual(offer and offer["answer"], want)
-                self.end(e)
-        topic, e = self.case([one_round(question("q"), dict(num))],
-                             {1: record({"q": {"choice": "b", "comment": "", "source": "user"}})})
-        offer = self.offer()
-        self.assertEqual((offer["question"], offer["answer"]), ("How many?", "2.5 %"))
-        self.assertEqual(self.ctl("accept", offer=offer["id"], choice=9), {"ok": True})
-        saved = json.loads((topic / "round-01.answers.json").read_text(encoding="utf-8"))
-        self.assertEqual((saved["done"], saved["accepted"]), (True, True))
-        self.assertEqual(saved["answers"]["n"], {"choice": 2.5, "comment": "", "source": "notification"})
-        self.assertIs(type(saved["answers"]["n"]["choice"]), float)
-        md = (topic / "round-01.answers.md").read_text(encoding="utf-8")
-        self.assertIn("- Choice: 2.5 % (recommended)\n", md)
-        self.end(e)
-
-    def test_refusals_are_one_word_and_write_nothing(self):
-        topic, e = self.case([one_round(question("q"))])
-        self.start()
-        start, page = self.open()
-        self.view(page)
-        answers = topic / "round-01.answers.json"
-        for bad in (None, 123, "", "x" * 32, "A" * 32, "0" * 31, "0" * 33, ["0" * 32], {"id": "0" * 32}, "0" * 32):
-            reply = self.ctl("accept", offer=bad) if bad is not None else self.ctl("accept")
-            self.assertEqual(reply, {"error": "gone"}, bad)
-        with mock.patch.object(signoff, "OFFER_TTL", 0.0):
-            late = self.offer()["id"]
-            time.sleep(0.02)
-            self.assertEqual(self.ctl("accept", offer=late), {"error": "gone"})
-        self.assertFalse(answers.exists())
-        # The page saved since the offer: the offer's rev is old.
-        offer = self.offer()["id"]
-        resp, body = self.save(page, {"answers": {"q": {"choice": "b", "source": "user"}}, "free_text": "",
-                                      "done": False})
-        self.assertEqual(resp.status, 200, body)
-        before = answers.read_bytes()
-        self.assertEqual(self.ctl("accept", offer=offer), {"error": "changed"})
-        self.assertEqual(answers.read_bytes(), before)
-        # Another program wrote the answers file.
-        topic, e = self.case([one_round(question("q"), tab="R4")])
-        offer = self.offer()
-        self.assertEqual(offer["round"], "R4")
-        signoff.write_atomic(topic / "round-01.answers.json", json.dumps(record({})))
-        before = (topic / "round-01.answers.json").read_bytes()
-        self.assertEqual(self.ctl("accept", offer=offer["id"]), {"error": "changed"})
-        self.assertEqual((topic / "round-01.answers.json").read_bytes(), before)
-        self.end(e)
-
-    def test_done_held_gone_and_failed(self):
-        topic, e = self.case([one_round(question("q"))])
-        self.start()
-        start, page = self.open()
-        self.view(page)
-        answers = topic / "round-01.answers.json"
-        # Done on the page since the offer.
-        offer = self.offer()["id"]
-        resp, body = self.save(page, {"answers": {"q": {"choice": "b", "source": "user"}}, "free_text": "",
-                                      "done": True})
-        self.assertEqual(resp.status, 200, body)
-        before = answers.read_bytes()
-        self.assertEqual(self.ctl("accept", offer=offer), {"error": "done"})
-        self.assertEqual(answers.read_bytes(), before)
-        self.end(e)
-        # Another run took the round's lock after the offer.
-        topic, e = self.case([one_round(question("q"))])
-        offer = self.offer()["id"]
-        g = [g for g in self.server.groups if g and g.entry["run"] == e["run"]][0]
-        g.release()
-        held = signoff.try_lock(topic / "round-01.json.lock")
-        self.addCleanup(signoff.unlock, held)
-        self.assertEqual(self.ctl("accept", offer=offer), {"error": "held"})
-        self.assertFalse((topic / "round-01.answers.json").exists())
-        self.end(e)
-        # The run ended after the offer.
-        topic, e = self.case([one_round(question("q"))])
-        offer = self.offer()["id"]
-        self.end(e)  # no look of the inbox in between: the op itself must let the run go
-        link = self.ctl("open", offer=offer)["link"]  # its run is gone: the list
-        self.assertRegex(self.request("GET", link.split(self.host, 1)[1])[0].getheader("Location"),
-                         r"^/[A-Za-z0-9_-]+/$")
-        self.assertEqual(self.ctl("accept", offer=offer), {"error": "gone"})
-        self.assertFalse((topic / "round-01.answers.json").exists())
-        # The write fails.
-        topic, e = self.case([one_round(question("q"))])
-        offer = self.offer()["id"]
-        with mock.patch.object(signoff, "write_atomic", side_effect=PermissionError(13, "denied")):
-            self.assertEqual(self.ctl("accept", offer=offer), {"error": "failed"})
-        self.assertFalse((topic / "round-01.answers.json").exists())
-
-    def test_accept_alone_lets_an_ended_run_go(self):
-        topic, e = self.case([one_round(question("q"))])
-        self.start()
-        offer = self.offer()["id"]
-        self.end(e)  # nothing else asks the inbox in between: accept's own look must find the run gone
-        self.assertEqual(self.ctl("accept", offer=offer), {"error": "gone"})
-        self.assertFalse((topic / "round-01.answers.json").exists())
-
-    def test_a_closed_inbox_accepts_nothing(self):
-        topic, e = self.case([one_round(question("q"))])
-        self.start()
-        offer = self.offer()["id"]
-        self.server.close()  # the round locks go with it: the offer is gone, not held
-        self.assertEqual(self.server.accept_offer(offer), "gone")
-        self.assertFalse((topic / "round-01.answers.json").exists())
-
-    def test_offer_texts_name_the_project_and_home_folders(self):
-        home = "/home/tester"
-        item = question("q", title="Edit %s/src/app.py, see https://example.com/x" % self.root)
-        item["options"][0]["label"] = "Keep %s/.zshrc" % home
-        self.case([one_round(item, title="Round in %s" % self.root, tab=None)])
-        with mock.patch.dict(os.environ, {"HOME": home}):
-            self.start()
-            offer = self.offer()
-        self.assertEqual((offer["project"], offer["round"], offer["question"], offer["answer"]),
-                         ("project", "Round in project", "Edit project/src/app.py, see https://example.com/x",
-                          "Keep ~/.zshrc"))
-
-    def test_at_most_max_offers_are_kept(self):
-        self.case([one_round(question("q"))])
-        self.start()
-        ids = [self.offer()["id"] for _ in range(signoff.MAX_OFFERS + 1)]
-        self.assertEqual(len(self.server.offers), signoff.MAX_OFFERS)
-        self.assertEqual(self.ctl("accept", offer=ids[0]), {"error": "gone"})  # the oldest went
-        self.assertEqual(self.ctl("accept", offer=ids[-1]), {"ok": True})
-
-    def test_open_with_an_offer_opens_its_item_in_focus(self):
-        topic, e = self.case([one_round(question("q"), tab=None)])
-        self.start()
-        self.view(self.open()[1])
-        offer = self.offer()["id"]
-        link = self.ctl("open", offer=offer)["link"]
-        resp, _ = self.request("GET", link.split(self.host, 1)[1])
-        self.assertEqual(resp.status, 303)
-        page, _, target = resp.getheader("Location").partition("run/")
-        self.assertEqual(target, "0/#focus=0/q")
-        self.assertEqual(self.request("GET", page + "run/0/")[0].status, 200)
-        for bad in ("f" * 32, 7, None):  # an unknown offer: the list's link
-            link = self.ctl("open", offer=bad)["link"]
-            resp, _ = self.request("GET", link.split(self.host, 1)[1])
-            self.assertRegex(resp.getheader("Location"), r"^/[A-Za-z0-9_-]+/$")
-        self.assertEqual(self.ctl("accept", offer=offer), {"ok": True})  # open used nothing up
-
-    def test_the_offer_id_reaches_no_log_and_no_file(self):
-        topic, e = self.case([one_round(question("q"))])
-        err = io.StringIO()
-        with mock.patch.object(sys, "stderr", err):
-            self.start()
-            offer = self.offer()["id"]
-            self.ctl("open", offer=offer)
-            self.ctl("accept", offer=offer)
-            self.ctl("accept", offer=offer)
-            self.stop()
-        self.assertTrue((topic / "round-01.answers.json").exists())
-        self.assertNotIn(offer, err.getvalue())
-        for path, data in self.files(self.home, self.root).items():
-            self.assertNotIn(offer.encode(), data, path)
-
-    def test_offer_texts_are_one_line_and_capped(self):
+    def test_rows_titles_are_one_line_and_capped(self):
         hostile = "Line one\nline two ‮evil\u0000 " + "x" * 500
         item = question("q", title=hostile)
-        item["options"][0]["label"] = hostile
         self.case([one_round(item, title=hostile, tab=None)])
         self.start()
-        offer = self.offer()
-        for key in ("round", "question", "answer"):
-            text = offer[key]
-            self.assertLessEqual(len(text), signoff.MAX_OFFER_TEXT, key)
+        (r,) = self.ctl("rows", project=self.pid)["rounds"]
+        for key, text in (("round", r["title"]), ("question", r["items"][0]["title"])):
+            self.assertLessEqual(len(text), signoff.MAX_PANEL_TEXT, key)
             self.assertFalse(any(c in text for c in "\n ‮\u0000"), (key, text))
-        self.assertTrue(offer["question"].startswith("Line one line two  evil"))
+        self.assertTrue(r["items"][0]["title"].startswith("Line one line two  evil"))
 
     def test_hostile_requests_get_an_error(self):
         self.case([one_round(question("q"))])
         self.start()
-        for raw in (b'{"op": "offer"' + b" " * 5000 + b"}\n", b'{"op": ["offer"]}\n', b'{"op": "accept", "offer": '
-                    + json.dumps("0" * 32).encode() + b", " + b'"x": "' + b"y" * 5000 + b'"}\n'):
+        for raw in (b'{"op": "open"' + b" " * 5000 + b"}\n", b'{"op": ["open"]}\n', b'{"op": "elsewhere", "round": '
+                    + json.dumps(str(self.root)).encode() + b", " + b'"x": "' + b"y" * 5000 + b'"}\n'):
             with socket.socket(socket.AF_UNIX) as s:
                 s.settimeout(5)
                 s.connect(str(self.home / "inbox.sock"))
                 s.sendall(raw)
                 reply = json.loads(s.makefile("rb").readline())
-            self.assertIn("error", reply, raw[:30])
-        self.assertIsNotNone(self.offer())  # nothing burnt, nothing written
+            self.assertEqual(sorted(reply), ["error"], raw[:30])
+        self.assertEqual(len(self.ctl("rows", project=self.pid)["rounds"]), 1)  # nothing written, the inbox goes on
         self.assertFalse(any(p.name.endswith(".answers.json") for p in (self.root / ".signoff").rglob("*")))
 
 
 class InboxRows(InboxTest):
     """The mod's panel list, asked for on the control socket: a project's open rounds of live runs and their items
-    not decided yet, by number, with one-line titles as an offer has them. No path, link or token."""
+    not decided yet, by number, with one-line titles. No path, link or token."""
 
-    case, end, ctl = InboxOffer.case, InboxOffer.end, InboxOffer.ctl
+    case, end, ctl = InboxControl.case, InboxControl.end, InboxControl.ctl
 
     def rows(self, project=None):
         return self.ctl("rows", project=self.pid if project is None else project)
@@ -2190,6 +1865,48 @@ class InboxRows(InboxTest):
         (r,) = self.rows()["rounds"]
         self.assertEqual(r["items"], [{"item": 0, "title": "Question q"}, {"item": 1, "title": "How many?"}])
 
+    def test_which_items_are_decided(self):
+        # Decided: a choice that is not null or an empty list, from a source other than recommended; a settled item
+        # while it holds its recommendation; a recommendation the user unticked.
+        cases = [
+            ("decided by the user", [question("q"), question("r")],
+             {"q": {"choice": "b", "comment": "", "source": "user"}}, ["r"]),
+            ("decided by Accept all, or with no source", [question("q"), question("r"), question("s")],
+             {"q": {"choice": "a", "source": "accept_all"}, "r": {"choice": "a"}}, ["s"]),
+            ("skipped is decided", [question("q", skippable=True), question("r")],
+             {"q": {"choice": "_skip", "source": "user"}}, ["r"]),
+            ("only preselected is not", [question("q"), question("r")],
+             {"q": {"choice": "a", "source": "recommended"}}, ["q", "r"]),
+            ("an untouched item without a recommendation", [question("q"), question("n", rec=None)],
+             {"n": {"choice": None, "source": "user"}}, ["q", "n"]),
+            ("none picked by the user on a recommended many item",
+             [question("m", select="many", rec=["a"]), question("q")], {"m": {"choice": [], "source": "user"}}, ["q"]),
+            ("the only item, none picked by the user", [question("m", select="many", rec=["a"])],
+             {"m": {"choice": [], "source": "user"}}, []),
+            ("an untouched many item without a recommendation",
+             [question("m", select="many", rec=None), question("q")], {"m": {"choice": [], "source": "user"}},
+             ["m", "q"]),
+            ("a settled item, unsaved", [question("s", settled="round-01"), question("q")], None, ["q"]),
+            ("a settled item left at its recommendation", [question("s", settled="round-01"), question("q")],
+             {"s": {"choice": "a", "source": "recommended"}}, ["q"]),
+            ("a settled many item, the same options in another order",
+             [question("s", select="many", rec=["a", "c"], settled="round-01"), question("q")],
+             {"s": {"choice": ["c", "a"], "source": "recommended"}}, ["q"]),
+            ("a settled number item at its recommendation",
+             [{"id": "n", "title": "How many?", "select": "number", "range": {"min": 0, "max": 5}, "recommended": 2,
+               "settled": "round-01"}, question("q")], {"n": {"choice": 2.0, "source": "recommended"}}, ["q"]),
+            ("a settled item changed but only preselected", [question("s", settled="round-01"), question("q")],
+             {"s": {"choice": "b", "source": "recommended"}}, ["s", "q"]),
+            ("only settled items", [question("s", settled="round-01")], None, []),
+        ]
+        self.start()
+        for label, items, answers, want in cases:
+            with self.subTest(label):
+                topic, e = self.case([one_round(*items)], answers and {1: record(answers)})
+                (r,) = self.rows()["rounds"]
+                self.assertEqual([items[i["item"]]["id"] for i in r["items"]], want)
+                self.end(e)
+
     def test_oldest_run_first_and_a_held_round_listed(self):
         topic, older = self.case([one_round(question("o"), tab="Older")])
         self.write(self.home / "runs" / (older["run"] + ".json"), dict(older, started="2026-01-01T00:00:00Z"))
@@ -2203,27 +1920,31 @@ class InboxRows(InboxTest):
     def test_titles_are_one_line_capped_with_the_folder_and_home_replaced(self):
         home = os.path.expanduser("~")
         self.case([one_round(question("q", title="See %s/notes and %s/x%s%s" % (self.root, home, chr(0x202E), chr(0x2028))),
-                             question("r", title="z" * 300), tab="Tab\x1b[31m\nred")])
+                             question("r", title="z" * 300), question("u", title="See https://example.com/x"),
+                             tab="Tab\x1b[31m\nred")])
         self.start()
         (r,) = self.rows()["rounds"]
         self.assertEqual(r["title"], "Tab [31m red")
-        self.assertEqual([i["title"] for i in r["items"]], ["See project/notes and ~/x  ", "z" * 200])
+        self.assertEqual([i["title"] for i in r["items"]], ["See project/notes and ~/x  ", "z" * 200,
+                                                            "See https://example.com/x"])  # a URL stays
 
     def test_a_waiting_round_row_carries_its_context_as_one_line_and_nothing_else_does(self):
         # The agent's own line, shown on its round's row the way the rows' titles are: folder and home replaced (the
-        # load already refused a format character). Answered rows, the mod's rows and the offer do not get it.
+        # load already refused a format character). Answered rows and the mod's rows do not get it.
         home = os.path.expanduser("~")
         line = "feat/x in %s, notes in %s/n" % (self.root, home)
         signoff.MAX_CONTEXT, kept = 1000, signoff.MAX_CONTEXT  # a long temporary folder must not trip the load
         self.addCleanup(setattr, signoff, "MAX_CONTEXT", kept)
-        _, first = self.case([one_round(question("q"), context="answered from a notification")])
+        _, first = self.case([one_round(question("q"), context="answered on its page")])
         self.write(self.home / "runs" / (first["run"] + ".json"), dict(first, started="2026-01-01T00:00:00Z"))
         self.case([one_round(question("r"), context=line)])
         self.start()
-        offer = self.ctl("offer")
-        self.assertNotIn("answered from", json.dumps(offer))
-        self.assertEqual(self.ctl("accept", offer=offer["offer"]["id"]), {"ok": True})
-        data = self.view(self.open()[1])[0]
+        page = self.open()[1]
+        self.view(page)
+        resp, body = self.save(page, {"answers": {"q": {"choice": "a", "source": "user"}}, "free_text": "",
+                                      "done": True})  # group 0: the first run
+        self.assertEqual(resp.status, 200, body)
+        data = self.view(page)[0]
         (w,) = [w for w in data["waiting"] if w["kind"] == "round"]
         self.assertEqual(w["context"], "feat/x in project, notes in ~/n")
         self.assertTrue(data["sent"])
@@ -2249,10 +1970,10 @@ class InboxRows(InboxTest):
 
 
 class InboxPlan(InboxTest):
-    """signoff plan's fixed round, as the inbox shows it: a row in Waiting on you and in the panel's rows, and never
-    an offer, since it has no recommendation (a notification would approve a plan unseen)."""
+    """signoff plan's fixed round, as the inbox shows it: a row in Waiting on you and in the panel's rows, with no
+    recommendation."""
 
-    ctl = InboxOffer.ctl
+    ctl = InboxControl.ctl
 
     def plan_topic(self, data):
         topic = self.root / ".signoff" / "2026-11-15-plan-abcd1234"
@@ -2262,33 +1983,23 @@ class InboxPlan(InboxTest):
         e = entry(topic, ["round-01.json"], project=self.pid)
         self.write(self.home / "runs" / (e["run"] + ".json"), e)
 
-    def test_the_plan_round_waits_on_you_is_listed_and_never_offered(self):
+    def test_the_plan_round_waits_on_you_and_is_listed(self):
+        self.assertNotIn("recommended", signoff.plan_round(1)["items"][0])
         self.plan_topic(signoff.plan_round(1))
         self.start()
         data, _ = self.view(self.open()[1])
         self.assertIn(("round", "Plan review"), [(w["kind"], w.get("title")) for w in data["waiting"]])
-        self.assertEqual(self.ctl("offer"), {"offer": None})
         reply = self.ctl("rows", project=self.pid)
         self.assertEqual([(r["title"], r["item"], r["items"]) for r in reply["rounds"]],
                          [("Plan", 0, [{"item": 0, "title": "Approve this plan?"}])])
 
-    def test_the_same_round_with_a_recommendation_would_be_offered(self):
-        # The control for the test above: only the missing recommendation keeps the plan round out of an offer.
-        data = signoff.plan_round(1)
-        data["items"][0]["recommended"] = "approve"
-        self.plan_topic(data)
-        self.start()
-        self.open()
-        offer = self.ctl("offer")["offer"]
-        self.assertEqual((offer["question"], offer["answer"]), ("Approve this plan?", "Approve the plan"))
-
 
 class InboxElsewhere(InboxTest):
     """signoff elsewhere while the inbox holds the round's lock: the command sends the `elsewhere` op, and the inbox
-    writes the mark through the run's own writer at the round's rev, as `accept` does. Refusals are one word and
+    writes the mark through the run's own writer at the round's rev, as a page save does. Refusals are one word and
     write nothing; any other error the inbox answers makes the command exit 1, writing nothing."""
 
-    case, end, ctl, offer, files = InboxOffer.case, InboxOffer.end, InboxOffer.ctl, InboxOffer.offer, InboxOffer.files
+    case, end, ctl, files = InboxControl.case, InboxControl.end, InboxControl.ctl, InboxControl.files
     rows = InboxRows.rows
 
     def mark(self, *args):
@@ -2434,29 +2145,14 @@ class InboxElsewhere(InboxTest):
         self.assertEqual(saved["answers"]["q"]["lines"], [stale])
         self.assertEqual(saved["answers"]["r"]["source"], "elsewhere")
 
-    def test_a_round_with_a_mark_is_never_offered(self):
+    def test_a_mark_is_decided_in_the_rows(self):
         two, _ = self.case([one_round(question("q"), question("r"))])
         only, _ = self.case([one_round(question("q"))])
         self.start()
-        self.assertEqual(self.offer()["question"], "Question q")  # the one-item round
         self.assertEqual(self.op(only, "q"), {"ok": True})
-        self.assertIsNone(self.offer())  # nothing undecided there now, two in the other
         self.assertEqual(self.op(two, "q"), {"ok": True})
-        self.assertIsNone(self.offer())  # one undecided item left, but the round has a mark the user never saw
         (r,) = [x for x in self.rows()["rounds"] if len(x["items"])]
         self.assertEqual((r["item"], r["items"]), (1, [{"item": 1, "title": "Question r"}]))  # a mark is decided
-
-    def test_an_offer_made_before_the_mark_is_changed(self):
-        topic, _ = self.case([one_round(question("q"), question("r"))],
-                             {1: record({"r": {"choice": "b", "comment": "", "source": "user"}})})
-        self.start()
-        offer = self.offer()
-        self.assertEqual(offer["question"], "Question q")
-        self.assertEqual(self.op(topic, "q"), {"ok": True})
-        before = self.files(topic)
-        self.assertEqual(self.ctl("accept", offer=offer["id"]), {"error": "changed"})
-        self.assertEqual(self.files(topic), before)
-        self.assertEqual(self.saved(topic)["done"], False)
 
     def test_a_note_at_the_cap_fits_the_control_line_and_one_that_does_not_is_never_sent(self):
         deep = self.root / ".signoff" / ("d" * 200) / ("e" * 200) / ("f" * 200)
@@ -2541,7 +2237,7 @@ class InboxTarget(InboxTest):
     gives a start link to that item in Focus on its run's page. Anything gone, done, out of range or from another
     inbox gives the list's link; a malformed target is refused."""
 
-    case, end, ctl = InboxOffer.case, InboxOffer.end, InboxOffer.ctl
+    case, end, ctl = InboxControl.case, InboxControl.end, InboxControl.ctl
 
     def at(self, e, started):
         self.write(self.home / "runs" / (e["run"] + ".json"), dict(e, started=started))
@@ -2626,7 +2322,7 @@ class InboxAppTarget(InboxTest):
     wins, for APP_TARGET_TTL, in memory only) and `app_open` gives the app the start link to it once: that item in
     Focus, or the list when it is gone; null when none waits. Nothing else takes it."""
 
-    case, end, ctl = InboxOffer.case, InboxOffer.end, InboxOffer.ctl
+    case, end, ctl = InboxControl.case, InboxControl.end, InboxControl.ctl
 
     def land(self, link):
         """Where a start link's first visit goes, after the page token: None for the list."""
@@ -2646,8 +2342,7 @@ class InboxAppTarget(InboxTest):
         self.assertEqual(self.ctl("app_open"), {"link": None})  # none waits: the app does what it does today
         self.assertEqual(self.ctl("app_target", run=0, round=0, item=0, inbox=k), {"ok": True})
         self.assertEqual(self.ctl("app_target", run=0, round=0, item=1, inbox=k), {"ok": True})  # the last wins
-        for other in ("open", "offer"):  # a browser's open, a notification's offer: neither takes it
-            self.ctl(other)
+        self.ctl("open")  # a browser's open does not take it
         self.ctl("rows", project=self.pid)
         self.assertEqual(self.taken(), "0/#focus=0/r")
         self.assertEqual(self.ctl("app_open"), {"link": None})  # used once
@@ -2655,7 +2350,7 @@ class InboxAppTarget(InboxTest):
         self.assertIsNone(self.taken())  # the list, as in the browser
         self.ctl("app_target", run=0, round=0, item=2, inbox=k)  # out of range
         self.assertIsNone(self.taken())
-        self.assertEqual(signoff.APP_TARGET_TTL, 60.0)  # a launch takes seconds; an offer's hour is not its own
+        self.assertEqual(signoff.APP_TARGET_TTL, 60.0)  # a launch takes seconds
         with mock.patch.object(signoff, "APP_TARGET_TTL", 0.0):
             self.ctl("app_target", run=0, round=0, item=0, inbox=k)
             time.sleep(0.02)
@@ -2906,7 +2601,7 @@ class InboxOrphan(InboxTest):
     """An orphan round (AD-24): open, listed by a recent project run that is gone, and by no live run. The inbox
     shows, counts and writes it as it does a live run's, under one group number for as long as it is orphan."""
 
-    case, ctl = InboxOffer.case, InboxOffer.ctl
+    case, ctl = InboxControl.case, InboxControl.ctl
 
     def rounds_waiting(self, page):
         return [w for w in self.view(page)[0]["waiting"] if w["kind"] == "round"]
@@ -3030,16 +2725,6 @@ class InboxOrphan(InboxTest):
         self.assertEqual([(w["title"], w["group"], w["orphan"]) for w in self.rounds_waiting(page)],
                          [("Round 1, asked again", 1, False)])
         self.assertEqual(len(server.groups), 2)
-
-    def test_an_offer_on_an_orphan_round_changed_since_is_gone(self):
-        topic, e = self.case([one_round(question("q"))])
-        self.write(self.home / "runs" / (e["run"] + ".json"), dict(e, pid=dead_pid()))
-        self.start()
-        offer = self.ctl("offer")["offer"]["id"]
-        (topic / "round-01.json").write_text(json.dumps(one_round(question("q", rec="b"))), encoding="utf-8")
-        os.utime(str(topic / "round-01.json"), (time.time() + 5,) * 2)
-        self.assertEqual(self.ctl("accept", offer=offer), {"error": "gone"})
-        self.assertFalse((topic / "round-01.answers.json").exists())
 
     def test_a_round_file_of_another_user_is_no_orphan(self):
         server = self.start()  # the home is the user's; the round files then count as another's
@@ -3168,29 +2853,29 @@ class InboxOrphan(InboxTest):
         self.assertFalse(self.locked())
         self.assertEqual([g for g in server.groups if g], [])
 
-    def test_rows_offer_and_accept_carry_an_orphan_round(self):
+    def test_rows_carry_an_orphan_round(self):
         topic, e = self.case([one_round(question("q"))])
         self.write(self.home / "runs" / (e["run"] + ".json"), dict(e, pid=dead_pid()))
         self.start()
         rows = self.ctl("rows", project=self.pid)
         self.assertEqual([(r["run"], r["title"]) for r in rows["rounds"]], [(0, "R3")])
-        offer = self.ctl("offer")["offer"]
-        self.assertEqual((offer["round"], offer["answer"]), ("R3", "Alpha"))
-        self.assertEqual(self.ctl("accept", offer=offer["id"]), {"ok": True})
-        saved = json.loads((topic / "round-01.answers.json").read_text(encoding="utf-8"))
-        self.assertEqual((saved["done"], saved["answers"]["q"]["source"]), (True, "notification"))
+        start, page = self.open()
+        self.assertEqual(self.save(page, {"answers": {"q": {"choice": "a", "source": "user"}}, "free_text": "",
+                                          "done": True})[0].status, 200)
+        self.assertTrue(json.loads((topic / "round-01.answers.json").read_text(encoding="utf-8"))["done"])
         self.assertEqual(self.ctl("rows", project=self.pid)["rounds"], [])
 
-    def test_an_offer_and_a_target_outlive_their_run_while_its_round_is_orphan(self):
+    def test_a_target_outlives_its_run_while_its_round_is_orphan(self):
         topic, e = self.case([one_round(question("q"))])
         self.start()
-        offer = self.ctl("offer")["offer"]["id"]
         k = self.ctl("rows", project=self.pid)["inbox"]
         self.write(self.home / "runs" / (e["run"] + ".json"), dict(e, ended=signoff.utc_now()))  # no outcome
         self.assertEqual([r["run"] for r in self.ctl("rows", project=self.pid)["rounds"]], [0])
         resp, _ = self.request("GET", self.ctl("open", run=0, round=0, item=0, inbox=k)["link"].split(self.host, 1)[1])
         self.assertTrue(resp.getheader("Location").endswith("/run/0/#focus=0/q"), resp.getheader("Location"))
-        self.assertEqual(self.ctl("accept", offer=offer), {"ok": True})
+        page = resp.getheader("Location").partition("run/")[0]
+        self.assertEqual(self.save(page, {"answers": {"q": {"choice": "a", "source": "user"}}, "free_text": "",
+                                          "done": True})[0].status, 200)
         self.assertTrue(json.loads((topic / "round-01.answers.json").read_text(encoding="utf-8"))["done"])
 
     def test_the_orphan_row_holds_no_path_link_or_token(self):
@@ -3340,7 +3025,7 @@ class InboxOrphan(InboxTest):
         self.start()
         start, page = self.open()
         self.assertEqual(self.save(page, dict(ANSWER, accepted=True), round_=1)[0].status, 200)
-        InboxOffer.end(self, e)  # the run ended and its agent took the rounds in: nothing of it waits now
+        InboxControl.end(self, e)  # the run ended and its agent took the rounds in: nothing of it waits now
         resp, body = self.save(page, dict(ANSWER, done=True))
         self.assertEqual((resp.status, body), (404, b"this round is no longer in the inbox; reload the page\n"))
         self.assertFalse((self.topic / "round-01.answers.json").exists())
@@ -3531,13 +3216,6 @@ class InboxOrphan(InboxTest):
         for _ in range(3):
             self.assertEqual(self.rounds_waiting(page), [])
         self.assert_one_answer()
-
-    def test_accept_from_a_notification_hands_an_orphan_answer_over(self):
-        topic, e = self.case([one_round(question("q"))])
-        self.write(self.home / "runs" / (e["run"] + ".json"), dict(e, pid=dead_pid()))
-        self.start()
-        self.assertEqual(self.ctl("accept", offer=self.ctl("offer")["offer"]["id"]), {"ok": True})
-        self.assertEqual([(r["kind"], r["ref"]) for r in self.answers()], [("answer", topic.name + " / round-01")])
 
     def test_a_done_file_another_program_wrote_hands_an_orphan_answer_over(self):
         page = self.one_orphan_round()
@@ -3806,26 +3484,6 @@ class InboxCli(unittest.TestCase):
         self.assertEqual((waiter.returncode, out), (0, "%s\n" % rounds.answers(1)), err)
         self.assertNotIn("notes:", err)
         self.assertEqual([p.name for p in notes.iterdir()], ["%s - round-01.md" % rounds.path.name])
-
-    def test_an_accept_from_the_control_socket_wakes_the_waiting_run(self):
-        self.serve()
-        rounds = Rounds(1)
-        self.addCleanup(rounds.cleanup)
-        rounds.write(1, one_round(question("q")))
-        waiter = self.popen(str(rounds.target), "--no-open")
-        self.assertIn("inbox is open", waiter.stderr.readline())
-        deadline = time.monotonic() + 20
-        while True:  # the waiter registers itself first
-            offer = signoff.inbox_request(self.home, "offer")["offer"]
-            if offer:
-                break
-            self.assertLess(time.monotonic(), deadline, "the waiter's round was never offered")
-            time.sleep(0.2)
-        self.assertEqual(signoff.inbox_request(self.home, "accept", offer=offer["id"]), {"ok": True})
-        out, err = waiter.communicate(timeout=20)
-        self.assertEqual((waiter.returncode, out), (0, "%s\n" % rounds.answers(1)), err)
-        saved = json.loads(rounds.answers(1).read_text(encoding="utf-8"))
-        self.assertEqual((saved["done"], saved["answers"]["q"]["source"]), (True, "notification"))
 
 
 if __name__ == "__main__":

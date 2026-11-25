@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -27,7 +26,6 @@ type appShell struct {
 	app     *application.App
 	notes   *notifications.NotificationService
 	notesOK atomic.Bool // only once the notification centre started: without a bundle it would throw
-	offers  held        // the offer the last banner shows
 	dock    *dock.DockService
 	navOK   bool // set before Run
 
@@ -54,7 +52,7 @@ func main() {
 	shell.navOK = installNav() // before any window: WebKit looks at the delegate's methods when a webview gets it
 	shell.notes = notifications.New()
 	// Wails calls this from the notification delegate before its completion handler: it must return at once.
-	shell.notes.OnNotificationResponse(func(r notifications.NotificationResult) { go shell.answer(r) })
+	shell.notes.OnNotificationResponse(func(r notifications.NotificationResult) { go respond(r, shell.show) })
 	shell.dock = dock.New()
 	// Neither is registered as a service: that would expose their methods to the webview (AD-2).
 	shell.app = application.New(application.Options{
@@ -80,75 +78,32 @@ func main() {
 // askNotifications asks macOS once for leave to notify; the question waits on the user, so it runs on its own.
 func (s *appShell) askNotifications() {
 	if s.notes.ServiceStartup(context.Background(), application.ServiceOptions{}) == nil {
-		// Without the category an offer comes as a plain banner; a tap on it still opens the item.
-		s.notes.RegisterNotificationCategory(offerActions)
 		s.notesOK.Store(true)
 		s.notes.RequestNotificationAuthorization() // a no leaves the badge
 	}
 }
 
-// notify tells of a rise: the inbox's offer when it has one, with Accept & send and Other answer…; else the number.
-func (s *appShell) notify(home string, n int) {
-	if s.offerBanner(home) {
-		return
-	}
-	// state.json has no text: the number and nothing else.
+// notify tells of a rise. state.json has no text: the number and nothing else.
+func (s *appShell) notify(n int) {
 	s.notes.SendNotification(notifications.NotificationOptions{
 		ID: "waiting", Title: "Signoff inbox", Body: fmt.Sprintf("%d waiting", n),
 	})
 }
 
-// offerBanner sends the inbox's offer, when it has one, and says whether it did. The banner before it goes, so one
-// offer shows at a time.
-func (s *appShell) offerBanner(home string) bool {
-	o, _ := controlOffer(filepath.Join(home, "inbox.sock"))
-	if o == nil {
-		return false
-	}
-	note, prev := s.offers.put(o.ID, time.Now())
-	if prev != "" {
-		s.notes.RemoveDeliveredNotification(prev)
-	}
-	return s.notes.SendNotificationWithActions(noteFor(o, note)) == nil
-}
-
-// answer acts on a response to a banner, off the delegate's thread.
-func (s *appShell) answer(r notifications.NotificationResult) {
-	if r.Error != nil {
-		return
-	}
-	id := s.offers.take(r.Response.ID, time.Now())
-	if id != "" {
-		s.notes.RemoveDeliveredNotification(r.Response.ID) // its text stays nowhere once answered
-	}
-	s.showing.Lock()
-	home := s.home // set once, under showing, before the badge (and so any offer) starts
-	s.showing.Unlock()
-	accept := func(id string) error {
-		if err := ownFolder(home); err != nil { // also refuses "", a home not found yet
-			return err
-		}
-		return controlAccept(filepath.Join(home, "inbox.sock"), id)
-	}
-	// After a saved accept the count drops, so no rise names what waits next: offer it now. None: the badge shows it.
-	respond(id, r.Response.ActionIdentifier, accept, s.show, func() { s.offerBanner(home) })
-}
-
-// show brings the window up. A hidden one (closed by the user) or none gets a fresh start link; so does a window
-// asked to open an offer's item (offer, its id), which the link's first use opens in Focus. A start that failed is
-// tried again here, so a Dock click after a fix works.
-func (s *appShell) show(offer string) {
-	s.bringUp(offer, false)
+// show brings the window up. A hidden one (closed by the user) or none gets a fresh start link. A start that failed
+// is tried again here, so a Dock click after a fix works.
+func (s *appShell) show() {
+	s.bringUp(false)
 }
 
 // activate is show for the app coming up (its start, a Dock click, `open -a`): the window first takes the target
 // `signoff inbox open --app` left with the inbox, when one waits, and loads its start link. Only here: the menu
 // bar's panel, its menu and a banner never take it.
 func (s *appShell) activate() {
-	s.bringUp("", true)
+	s.bringUp(true)
 }
 
-func (s *appShell) bringUp(offer string, pending bool) {
+func (s *appShell) bringUp(pending bool) {
 	s.showing.Lock()
 	defer s.showing.Unlock()
 	if !s.ready() {
@@ -162,14 +117,14 @@ func (s *appShell) bringUp(offer string, pending bool) {
 	s.mu.Lock()
 	win, hidden := s.win, s.hidden
 	s.mu.Unlock()
-	if windowStays(link != "", offer != "", win != nil, hidden, alive, func() string { return inboxServer(s.home) }, s.winInbox) {
+	if windowStays(link != "", win != nil, hidden, alive, func() string { return inboxServer(s.home) }, s.winInbox) {
 		win.Show() // a minimised one comes back
 		win.Focus()
 		return
 	}
 	if link == "" {
 		var err error
-		if link, port, err = openInbox(s.launcher, s.home, offer); err != nil {
+		if link, port, err = openInbox(s.launcher, s.home); err != nil {
 			s.fail(err.Error())
 			return
 		}
@@ -207,11 +162,11 @@ func takesPending(pending bool, alive func() bool) bool {
 	return pending && alive()
 }
 
-// windowStays says whether the window is only shown and focused: no link to load, no offer, a window the user did
-// not close, and its page from the inbox that runs now. On a stopped inbox a fresh link starts it again; on a
+// windowStays says whether the window is only shown and focused: no link to load, a window the user did not
+// close, and its page from the inbox that runs now. On a stopped inbox a fresh link starts it again; on a
 // restarted one (same port or not) it opens its page. The probes are funcs, asked only when the rest holds.
-func windowStays(link, offer, win, hidden bool, alive func() bool, server func() string, loaded string) bool {
-	return !link && !offer && win && !hidden && alive() && server() == loaded
+func windowStays(link, win, hidden bool, alive func() bool, server func() string, loaded string) bool {
+	return !link && win && !hidden && alive() && server() == loaded
 }
 
 // ready finds the launcher and the home once, and starts the badge; false (after a dialog) when it cannot. The
@@ -271,7 +226,7 @@ func (s *appShell) badge(home string) {
 			}
 		}
 		if seen.next(n, ok) && s.notesOK.Load() {
-			s.notify(home, n)
+			s.notify(n)
 		}
 		time.Sleep(badgeEvery)
 	}

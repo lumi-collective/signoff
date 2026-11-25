@@ -2402,9 +2402,7 @@ STATE_EVERY = 2.0  # seconds between the inbox's own looks at runs, answers and 
 RUN_ROUTE = re.compile(r"^run/(0|[1-9][0-9]{0,8})/(.*)$", re.S)
 MAX_SOCKET_PATH = 100  # macOS takes 104 bytes for a Unix socket's path, Linux 108
 MAX_CONTROL = 4096
-OFFER_TTL = 3600.0  # seconds an offer (an item a notification may answer) can be accepted
-MAX_OFFERS = 32  # offers kept in memory; the oldest goes first
-MAX_OFFER_TEXT = 200  # characters in each of an offer's texts
+MAX_PANEL_TEXT = 200  # characters in each title of a rows reply (the mod's MAX_TEXT), and of a reply quoted on stderr
 MAX_ROWS = 24  # rounds and items in a rows reply: at 12 bytes a character JSON-escaped, within one 64 KiB line
 TARGET = ("run", "round", "item", "inbox")  # an open's target: the numbers a rows reply gives, each below MAX_NUMBER
 MAX_NUMBER = 2 ** 31
@@ -2414,7 +2412,6 @@ APP_OPEN = ["/usr/bin/open", "-a"]  # then that copy's path; no URL scheme: one 
 MAX_PLIST = 64 * 1024  # the mod's cap on a file it reads
 APP_TARGET_TTL = 60.0  # seconds of awake time a target waits for the app: a launch takes seconds
 APP_OPEN_TIMEOUT = 20  # seconds for `open -a`: within the mod's 30 for the whole command, so a take-back runs
-OFFER_ID = re.compile(r"[0-9a-f]{32}")
 MAX_REQUEST_BODY = 32 * 1024  # a message on a todo item, as the page sends it
 MAX_REQUEST_TEXT = 1000  # characters in one message
 MAX_HANDOVER = 10  # pending requests a SessionStart hands over, and the mod asks `inbox requests` for at once
@@ -2840,9 +2837,8 @@ def control_line(op, **fields):
 
 def inbox_request(home, op, timeout=5.0, **fields):
     """Ask the running inbox over its control socket: "open" gives {"link": a new start link}, "stop" ends it;
-    "offer", "accept" (with offer=<id>) and "open" with offer=<id> answer from a notification; "rows" (with
-    project=<id>) gives the mod's panel list, and "open" with its run, round, item and inbox numbers opens one of
-    its rows; "app_target" with those numbers keeps them for the app, whose "app_open" takes them once;
+    "rows" (with project=<id>) gives the mod's panel list, and "open" with its run, round, item and inbox numbers
+    opens one of its rows; "app_target" with those numbers keeps them for the app, whose "app_open" takes them once;
     "elsewhere" (round, item, note) marks an item. OSError when no inbox answers."""
     with socket.socket(socket.AF_UNIX) as s:
         s.settimeout(timeout)
@@ -2893,7 +2889,6 @@ class InboxServer(_Server):
         try:
             self.pairs = {}  # start token -> {page token (None once the pair is closed), made or last used at, used,
             # the path after the page token its first use goes to}
-            self.offers = {}  # offer id -> {group, round, item, rev, at}: in memory only, never written or logged
             self.groups, self.group_index, self.sent, self.failed, self.todo_cache = [], {}, {}, {}, {}
             # A group's number is never reused while this inbox lives, but a restart numbers the runs anew: rows
             # gives this number with them and an open's target sends it back, so an old row opens the list.
@@ -2994,60 +2989,12 @@ class InboxServer(_Server):
                     return pair["page"] + "/" + pair["to"]
         return None
 
-    def make_offer(self):
-        """The item a notification may answer, or None: in the first round of Waiting on you that is its run's last
-        open round, with its round locks held here, every settled item saved, and exactly one item not decided yet,
-        which has a recommendation and is neither sensitive nor irreversible. A tap saves that recommendation with
-        Done, so it shows all it accepts and wakes the run. The texts are the decisions file's own (and the project's name as the list shows it), one line each,
-        capped. Signoff adds no path, link or token of its own and replaces the project's folder and the user's
-        home, but does not filter the agent's text: a URL in it stays."""
-        with self.scan_lock:
-            if self.closed.is_set():
-                return None
-            self._scan()
-            for n, g in sorted([(n, g) for n, g in enumerate(self.groups) if g], key=lambda x: x[1].entry["started"]):
-                with g.lock:
-                    left = [ri for ri, r in enumerate(g.rounds) if not r.finished]
-                    if not g.writable or len(left) != 1:
-                        continue
-                    r = g.rounds[left[0]]
-                    saved = (r.saved or {}).get("answers", {})
-                    undecided = [it for it in r.decisions["items"] if not _decided(saved.get(it["id"]), it)]
-                    # A mark of the agent's, or a settled item never saved from the page: a tap's Done would send it
-                    # without the user having seen it.
-                    if len(undecided) != 1 or any(a.get("source") == "elsewhere" for a in saved.values()) or any(
-                            "settled" in it and it["id"] not in saved for it in r.decisions["items"]):
-                        continue
-                    item, rev = undecided[0], r.rev
-                rec = item.get("recommended")
-                if rec is None or rec == [] or item["sensitive"] or "irreversible" in item:  # the banner cannot warn
-                    continue
-                labels = {o["id"]: o["label"] for o in item.get("options", [])}
-                if item["select"] == "number":
-                    labels[rec] = _num_text(item, rec)
-                offer = {"id": secrets.token_hex(16), "project": g.name, "round": r.decisions.get("tab")
-                         or r.decisions["title"], "question": item["title"],
-                         "answer": " + ".join(labels[c] for c in (rec if isinstance(rec, list) else [rec]))}
-                for k in ("round", "question", "answer"):
-                    offer[k] = _unpathed(g, offer[k])
-                offer = {k: _one_line(v, MAX_OFFER_TEXT) for k, v in offer.items()}
-                now = time.monotonic()
-                with self.lock:
-                    for key, o in list(self.offers.items()):
-                        if now - o["at"] > OFFER_TTL:
-                            del self.offers[key]
-                    while len(self.offers) >= MAX_OFFERS:
-                        del self.offers[next(iter(self.offers))]  # the oldest: dicts keep their order
-                    self.offers[offer["id"]] = {"group": n, "round": left[0], "item": item["id"], "rev": rev,
-                                                "at": now}
-                return offer
-        return None
-
     def rows(self, project):
         """The mod's panel list for one project id: each open round of its live runs and orphan groups, oldest run
-        first, by its run's number (run/<n>/) and its index there, with the items not decided yet by index. Titles as an offer has them;
-        at most MAX_ROWS rounds and items in all, so the reply fits the control socket's line, and `more` counts the
-        rest."""
+        first, by its run's number (run/<n>/) and its index there, with the items not decided yet by index. Titles
+        are the decisions file's own, one line each, capped, with the project's folder and the user's home replaced
+        (a URL in them stays); at most MAX_ROWS rounds and items in all, so the reply fits the control socket's line,
+        and `more` counts the rest."""
         rounds, left, more = [], MAX_ROWS, 0
         with self.scan_lock:
             if self.closed.is_set():
@@ -3072,38 +3019,15 @@ class InboxServer(_Server):
                         # item: what the round's row opens, its first item not decided, else its last, whose Focus
                         # shows the round's tail (Accept, Done) under it.
                         rounds.append({"run": n, "round": ri, "title": _one_line(_unpathed(
-                            g, r.decisions.get("tab") or r.decisions["title"]), MAX_OFFER_TEXT),
+                            g, r.decisions.get("tab") or r.decisions["title"]), MAX_PANEL_TEXT),
                             "item": items[0][0] if items else len(r.decisions["items"]) - 1, "items": [
-                            {"item": k, "title": _one_line(_unpathed(g, t), MAX_OFFER_TEXT)} for k, t in shown]})
+                            {"item": k, "title": _one_line(_unpathed(g, t), MAX_PANEL_TEXT)} for k, t in shown]})
         return {"rounds": rounds, "more": more, "inbox": self.number}
 
-    def _offer(self, given, burn=False):
-        """A live offer by its id and its run's group, or None; burn takes it out, so its first use is its last.
-        The caller holds scan_lock: the look here lets go of a group that went since (its run ended and its rounds are
-        no orphan rounds), so its offer is gone."""
-        if not isinstance(given, str) or not OFFER_ID.fullmatch(given):
-            return None
-        with self.lock:
-            o = self.offers.pop(given, None) if burn else self.offers.get(given)
-        if o is None or time.monotonic() - o["at"] > OFFER_TTL or self.closed.is_set():
-            return None
-        self._scan()
-        g = self.groups[o["group"]]
-        return (o, g) if g else None
-
     def _look(self):
-        with self.scan_lock:  # an RLock: accept looks under it already
+        with self.scan_lock:
             if not self.closed.is_set():
                 self._scan()
-
-    def open_offer(self, given):
-        """A start link: with a live offer, to its item in Focus on its run's page; with any other, the list."""
-        found = None
-        if given is not None:  # a plain open never waits for a look in progress
-            with self.scan_lock:
-                found = self._offer(given)
-        o = found and found[0]
-        return self.new_pair("run/%d/#focus=%d/%s" % (o["group"], o["round"], o["item"]) if o else "")
 
     def open_target(self, run, ri, k, number):
         """A start link: to item k of round ri in Focus on run/<run>/, the numbers a rows reply gave, while that
@@ -3131,17 +3055,9 @@ class InboxServer(_Server):
             return None
         return self.open_target(*kept[0])
 
-    def accept_offer(self, given):
-        """Save an offer's recommendation with Done through its run's own writer, at the offer's rev: None when
-        saved, else why not in one word (gone, changed, held, done, failed). The answer is the item's recommended;
-        the client never sends one."""
-        with self.scan_lock:  # no look lets the run go in between
-            found = self._offer(given, burn=True)
-            return self._accept(*found) if found else "gone"
-
     def mark_elsewhere(self, path, item_id, note):
         """signoff elsewhere for a round this inbox holds: mark the item through its run's own writer, at the round's
-        rev, as accept does. path is matched against the rounds held here as text; the file is never opened from
+        rev, as a page save does. path is matched against the rounds held here as text; the file is never opened from
         it. None when written (or marked so already), else why not in one word of MARK_REFUSALS."""
         with self.scan_lock:  # no look lets the run go in between
             if self.closed.is_set():
@@ -3169,28 +3085,6 @@ class InboxServer(_Server):
             if isinstance(result, tuple):
                 return "done" if r.finished else "gone" if g.gone else "held" if not g.writable else "changed"
             return None
-
-    def _accept(self, o, g):
-        r = g.rounds[o["round"]]
-        with g.lock:  # a consistent snapshot; store() checks Done, the lock, the rev and the file
-            base = r.saved or {"answers": {}, "free_text": ""}
-        item = next(it for it in r.decisions["items"] if it["id"] == o["item"])
-        old = base["answers"].get(item["id"], {})
-        # An Other text goes with its choice.
-        answer = {k: old[k] for k in ("comment", "marks", "lines", "private") if k in old}
-        rec = item["recommended"]
-        answer.update(choice=list(rec) if isinstance(rec, list) else rec, source="notification")
-        answers = dict(base["answers"])
-        answers[item["id"]] = answer
-        try:
-            state = check_answers({"answers": answers, "free_text": base["free_text"], "accepted": True, "done": True},
-                                  r.decisions, previous=base)
-            result = g.store(o["round"], state, o["rev"])
-        except (ValueError, OSError):
-            return "failed"
-        if isinstance(result, tuple):
-            return "done" if r.finished else "gone" if g.gone else "held" if not g.writable else "changed"
-        return None
 
     def page_for(self, given):
         now = time.monotonic()
@@ -3246,8 +3140,8 @@ class InboxServer(_Server):
                     op = req.get("op") if isinstance(req, dict) else None
             except (OSError, ValueError, RecursionError):
                 pass
-            if op == "open" and not any(k in req for k in TARGET):
-                reply = {"link": self.open_offer(req.get("offer"))}
+            if op == "open" and not any(k in req for k in TARGET):  # a plain open ignores keys it does not know
+                reply = {"link": self.new_pair()}
             elif op == "open":
                 target = [req.get(k) for k in TARGET]
                 reply = ({"link": self.open_target(*target)} if "offer" not in req and all(map(_whole, target))
@@ -3262,15 +3156,10 @@ class InboxServer(_Server):
                     reply = {"error": "app_target takes run, round, item and inbox as whole numbers, and nothing else"}
             elif op == "app_open":
                 reply = {"link": self.app_open()} if list(req) == ["op"] else {"error": "app_open takes no other key"}
-            elif op == "offer":
-                reply = {"offer": self.make_offer()}
             elif op == "rows":
                 project = req.get("project")
                 reply = (self.rows(project) if isinstance(project, str) and HEX16.fullmatch(project)
                          else {"error": "rows needs a project id"})
-            elif op == "accept":
-                why = self.accept_offer(req.get("offer"))
-                reply = {"error": why} if why else {"ok": True}
             elif op == "elsewhere":
                 if sorted(req) == ["item", "note", "op", "round"] and isinstance(req["round"], str) \
                         and os.path.isabs(req["round"]) and isinstance(req["item"], str) \
@@ -3283,8 +3172,8 @@ class InboxServer(_Server):
             elif op == "stop":
                 reply = {"ok": True}
             else:
-                reply = {"error": 'unknown request; send {"op": "open"}, {"op": "stop"}, {"op": "offer"}, '
-                                  '{"op": "accept", "offer": <id>}, {"op": "rows", "project": <id>}, {"op": "open", '
+                reply = {"error": 'unknown request; send {"op": "open"}, {"op": "stop"}, '
+                                  '{"op": "rows", "project": <id>}, {"op": "open", '
                                   '"run": <n>, "round": <n>, "item": <n>, "inbox": <n>}, the same with "op": '
                                   '"app_target", {"op": "app_open"}, or {"op": "elsewhere", "round": <path>, '
                                   '"item": <id>, "note": <text>}'}
@@ -4376,7 +4265,7 @@ def _mark_by_inbox(home, r, item_id, note, say):
         return say("the Signoff inbox refused the request (%s); nothing was written. An inbox started before an "
                    "update may not know the request: restart it (signoff inbox stop, then signoff inbox open) and run "
                    "the same command again. If it still refuses, its Python may know fewer characters than this one: "
-                   "use plainer characters in the note" % _one_line(str(why), MAX_OFFER_TEXT))
+                   "use plainer characters in the note" % _one_line(str(why), MAX_PANEL_TEXT))
     return say(_mark_refusal("changed", r, item_id))
 
 
@@ -4434,8 +4323,7 @@ def _elsewhere(path, item_id, note):
 
 
 def plan_round(n):
-    """signoff plan's round n: fixed texts around plan-NN.md, Approve or Ask for changes, and no recommendation, so a
-    notification never offers it (a tap would approve a plan the user never saw)."""
+    """signoff plan's round n: fixed texts around plan-NN.md, Approve or Ask for changes, and no recommendation."""
     return {"version": 1, "title": PLAN_TITLE, "tab": PLAN_TAB, "context": PLAN_CONTEXT, "lang": "en",
             "items": [{"id": "plan", "title": PLAN_QUESTION, "description": PLAN_DESCRIPTION, "select": "one",
                        "options": [{"id": i, "label": label} for i, label in PLAN_OPTIONS],

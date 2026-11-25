@@ -26,8 +26,8 @@ or died before it was answered (and that has no outcome file) stays there for up
 its answers file is written as usual. Its row (**Run ended**) and its page say that the Signoff run that asked has
 ended and the answer goes to the project's sessions: once its rounds are done, the inbox sends the agent a
 message about them (see below). A round another Signoff run has open on its own page shows read only. A plan
-review's round ([Plan review](running.md#plan-review)) waits here like any other; it has no recommendation, so a
-notification never offers to answer it, and only counts it. A Claude Code session that waits on you for a permission or an answer to its
+review's round ([Plan review](running.md#plan-review)) waits here like any other; it has no recommendation.
+A Claude Code session that waits on you for a permission or an answer to its
 question (from about six seconds after it asks) is a row too, with its project and how long it has waited; the
 inbox does not answer it for you. Its row says to go to its terminal, or, for a background session (`claude
 --bg`), gives `claude attach <id>` to copy. **Answered** lists the rounds answered in the last day: *sent*, or *working* once
@@ -148,8 +148,8 @@ writes an empty `<id>.done` beside the request; a request without one comes back
 shows on it, and the agent still has the text it was sent on. A vulnerability finding handed over from the
 inbox of 0.3.0 or 0.4.0 and not yet marked done reaches the agent the same way.
 
-When the last open round of a run that had ended is finished (Done on its page, Accept & send from a
-notification, or an answers file another program wrote with Done), the inbox writes one more request, of kind
+When the last open round of a run that had ended is finished (Done on its page, or an answers file another
+program wrote with Done), the inbox writes one more request, of kind
 `answer`, for that run's rounds together: its `ref` is the topic folder and the rounds
 (`2026-11-05-settings / round-01, round-02`), its text the inbox's own, with none of your answers in it.
 It reaches the project's sessions the same way, and asks the agent to tell you first, then read the answers files
@@ -161,7 +161,7 @@ agent to check the answers first. The request route takes no `answer` from a pag
 
 The inbox listens on `127.0.0.1` with the same rules as a run. Start links come only from its control socket,
 `inbox.sock` in the home (readable by you only): each works once, within two minutes, and opens its own page,
-which closes after 12 hours without use (an open tab asks for the count, so it stays open). Opening one a second time closes that page only. The socket also names the one item a notification may answer (the only undecided item of a run's last open round, with a recommendation, not sensitive) and saves that recommendation with Done on request, through the same checks as the page; it never takes an answer from the client. A round with an item the agent marked [decided elsewhere](running.md#an-item-settled-in-chat) is never offered, as a tap's Done would send a mark you have not seen. For `signoff elsewhere` it marks one item of a round it holds (`elsewhere`: the round's path, matched against its own rounds and never opened, the item id and the note), through the same checks as a save, and answers `ok` or one word: `gone`, `done`, `held`, `answered`, `changed` or `failed`. For the plugin's mod it lists a project's open rounds and their undecided questions (`rows`: run and item numbers and one-line titles, at most 24 in all, no path, link or token of its own; a URL the agent wrote in a title stays). `signoff inbox rows <folder>` prints that list as one JSON line for the project the folder belongs to, and never starts an inbox. A row opens through `signoff inbox open --run <n> --focus <round>/<item> --inbox <k>`, with those numbers and the inbox's own (new at each start). Its start link opens that question in Focus on its round's page. It opens the list instead when the round is gone or done, or the numbers came from an inbox before a restart. With no inbox running, `open` starts one, and the list opens. On macOS, `signoff inbox open --app` with the same numbers finds the app where the mod looks: the first `Signoff.app` in `/Applications`, then `~/Applications`, that is a real folder of yours or root's whose `Info.plist` has the app's bundle id. It keeps the numbers in the inbox's memory as the app's target (`app_target`: one, the last wins, for a minute of awake time) and runs `open -a` with that app's path. The app takes the target once as it comes up (`app_open`), and gets none when none waits. When the app does not open, the command takes the target back. The inbox writes `inbox.lock` (empty, its time touched every two seconds while the inbox lives), `inbox.json` (its port and
+which closes after 12 hours without use (an open tab asks for the count, so it stays open). Opening one a second time closes that page only. For `signoff elsewhere` it marks one item of a round it holds (`elsewhere`: the round's path, matched against its own rounds and never opened, the item id and the note), through the same checks as a save, and answers `ok` or one word: `gone`, `done`, `held`, `answered`, `changed` or `failed`. For the plugin's mod it lists a project's open rounds and their undecided questions (`rows`: run and item numbers and one-line titles, at most 24 in all, no path, link or token of its own; a URL the agent wrote in a title stays). `signoff inbox rows <folder>` prints that list as one JSON line for the project the folder belongs to, and never starts an inbox. A row opens through `signoff inbox open --run <n> --focus <round>/<item> --inbox <k>`, with those numbers and the inbox's own (new at each start). Its start link opens that question in Focus on its round's page. It opens the list instead when the round is gone or done, or the numbers came from an inbox before a restart. With no inbox running, `open` starts one, and the list opens. On macOS, `signoff inbox open --app` with the same numbers finds the app where the mod looks: the first `Signoff.app` in `/Applications`, then `~/Applications`, that is a real folder of yours or root's whose `Info.plist` has the app's bundle id. It keeps the numbers in the inbox's memory as the app's target (`app_target`: one, the last wins, for a minute of awake time) and runs `open -a` with that app's path. The app takes the target once as it comes up (`app_open`), and gets none when none waits. When the app does not open, the command takes the target back. The inbox writes `inbox.lock` (empty, its time touched every two seconds while the inbox lives), `inbox.json` (its port and
 socket, no token), `state.json` (how many rows wait on you, in all and per project, with each project's id and
 two letters; no text), `prefs.json` (the palette, light or dark, the density and the order of Waiting on you you kept; see [Light, dark, phone,
 language](page.md#light-dark-phone-language)), the socket and the requests in the home, and the answers files and round locks a run would
@@ -171,7 +171,7 @@ write.
 
 `app/` builds Signoff, an optional macOS app that shows the inbox in its own
 window and in a panel from the menu bar, the number waiting on you as a Dock badge and beside its menu bar icon,
-and a notification when that number goes up, which can answer a single question. It needs Go 1.26
+and a notification when that number goes up. It needs Go 1.26
 or newer and the Xcode Command Line Tools; no npm.
 
 With Homebrew, the cask in [lumi-collective/homebrew-signoff](https://github.com/lumi-collective/homebrew-signoff)
@@ -215,13 +215,7 @@ app up with no question, and takes back one an earlier press left. The menu bar 
 inbox in a panel under it (a link of its own, the page's narrow layout; a round opens and can be answered there); it hides when
 you click elsewhere. A right click on the icon offers Open Signoff and Quit Signoff. With many menu bar icons,
 macOS may tuck it away with the others it hides. Quitting the app leaves the inbox running (`signoff inbox
-stop` ends it). macOS asks once whether the app may send notifications. When the one round left of a run has a
-single question still open, and it has a recommendation and is marked neither sensitive nor as one that cannot be
-undone (and any item settled earlier was saved once on the round's page), the notification shows the
-project, the round, the question and the recommended answer, as the agent wrote them (your home folder as `~`):
-Accept & send answers it with the recommendation and Done, and the agent goes on (the next such question, if any,
-comes as a new notification); Other answer… opens that question in the window. Otherwise a notification says only
-how many wait. To keep the text off a locked screen, look in System Settings > Notifications, under Signoff, for the
-previews setting (Show previews: When Unlocked or Never; the wording may differ by macOS version). Started from
+stop` ends it). macOS asks once whether the app may send notifications. A notification says only how many wait,
+and a click on it opens the window. Started from
 the Dock, the inbox runs on the `python3` of `/usr/bin`, which on a Mac without the Command Line Tools offers to
 install them.

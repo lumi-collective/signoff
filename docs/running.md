@@ -178,7 +178,7 @@ project the current folder is in. Each value is the word after its flag, as the 
 In `<folder>/<topic>/` it closes every older open round (no outcome file, no answers file that says done) with
 `round-NN.outcome.json` ("replaced by round-MM"), then writes `plan-MM.md` (the plan's bytes) and `round-MM.json`, a
 fixed round titled Plan review: one question, **Approve the plan** or **Ask for changes**, a comment and notes on
-the plan's lines, the plan attached and open, and no recommendation, so a notification never offers it. MM comes
+the plan's lines, the plan attached and open, and no recommendation. MM comes
 after every file of a round's number there (answers, Markdown copies, outcome files, locks), so an answers file
 left behind, as `git clean -fd` keeps the ignored ones, never answers a new round. Each file is created new, never
 over one and never through a link. It then waits on that round as any run waits beside the inbox, and the run puts

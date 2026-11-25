@@ -1407,7 +1407,7 @@ class CliPlan(unittest.TestCase):
     def test_resume_reuses_only_the_fixed_round_with_answers_a_run_takes(self):
         self.live()
         changed = signoff.plan_round(1)
-        changed["items"][0]["recommended"] = "approve"  # would be offered from a notification
+        changed["items"][0]["recommended"] = "approve"  # not the fixed round any more
         cases = {
             "a": lambda t: (t / "round-01.json").write_bytes(json.dumps(changed, indent=2).encode() + b"\n"),
             "b": lambda t: self.answer(1, t, choice="nope"),  # check_answers refuses it

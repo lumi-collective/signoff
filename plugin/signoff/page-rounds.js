@@ -1257,7 +1257,7 @@
   });
 
   if (!historyMode) {
-    // #focus=<round>/<item> (from the inbox's start link for a notification): that round's item in Focus. A hash
+    // #focus=<round>/<item> (from the inbox's start link for a panel row): that round's item in Focus. A hash
     // that names no round and item on this page is ignored.
     var asked = /^#focus=(\d{1,4})\/([A-Za-z0-9][A-Za-z0-9_.-]{0,63})$/.exec(location.hash);
     var askedRound = asked && rounds[Number(asked[1])];

@@ -31,7 +31,7 @@ func (s *appShell) newTray() {
 		s.mu.Unlock()
 	})
 	menu := application.NewMenu()
-	menu.Add("Open Signoff").OnClick(func(*application.Context) { go s.show("") })
+	menu.Add("Open Signoff").OnClick(func(*application.Context) { go s.show() })
 	menu.Add("Quit Signoff").OnClick(func(*application.Context) { s.app.Quit() })
 	s.tray = s.app.SystemTray.New()
 	s.tray.SetTemplateIcon(menubarIcon).SetMenu(menu)
@@ -59,7 +59,7 @@ func (s *appShell) togglePanel() {
 	hidden := time.Since(s.panelHid)
 	s.mu.Unlock()
 	if panelNeedsLink(s.panelInbox, inboxAlive(s.home), inboxServer(s.home), hidden) {
-		link, port, err := openInbox(s.launcher, s.home, "")
+		link, port, err := openInbox(s.launcher, s.home)
 		if err != nil {
 			s.fail(err.Error())
 			return

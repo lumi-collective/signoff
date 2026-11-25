@@ -317,6 +317,28 @@ class History(unittest.TestCase):
         shot = [e for e in view["entries"] if e["file"] == "round-01.json"][0]["decisions"]["items"][0]["images"][0]
         self.assertIn("--since", shot["missing"])
 
+    def test_an_answer_accepted_from_a_notification_still_loads(self):
+        # Signoff 0.3.0 and 0.4.0 wrote source "notification" from the app's Accept & send; a run resumes on such a
+        # round (read only, as done) and the past-decisions page shows it.
+        topic = self.root.path / ".signoff" / "2026-03-02-notified"
+        write(topic / "round-01.json", sample_decisions())
+        write(topic / "round-02.json", sample_decisions())
+        answer = {"choice": "two", "comment": "", "source": "notification"}
+        sha = hashlib.sha256((topic / "round-01.json").read_bytes()).hexdigest()
+        write(topic / "round-01.answers.json", {
+            "version": 1, "done": True, "accepted": True, "saved": "2026-03-02T10:00:00Z",
+            "decisions": {"file": "round-01.json", "sha256": sha}, "answers": {"layout": answer}, "free_text": ""})
+        (topic / "mockups").mkdir()
+        (topic / "mockups" / "a.png").write_bytes(png_bytes())
+        run = Running(type("Topic", (), {"target": topic})())
+        self.addCleanup(run.stop)
+        view, _ = view_of(run)
+        self.assertEqual([r["readonly"] for r in view["rounds"]], [True, False])
+        self.assertEqual(view["rounds"][0]["answers"]["answers"]["layout"], answer)
+        entry = self.entries()["2026-03-02-notified/round-01.json"]
+        self.assertEqual((entry["status"], entry["warning"]), ("done", None))
+        self.assertEqual(entry["answers"]["answers"]["layout"], answer)
+
     def test_read_only(self):
         run = self.serve()
         resp, _ = run.save({"answers": {}, "free_text": "", "done": True})

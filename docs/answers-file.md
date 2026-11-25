@@ -28,9 +28,9 @@ Beside each round, `round-NN.answers.json`, from the first change on the page:
   Neither can clash with an option id, which starts with a letter or digit. An answers file holding a number
   needs Signoff 0.5.0 or newer to be read.
 - `source`: `recommended` (the preselected recommendation, never touched), `accept_all` (set by **Accept all
-  recommendations**), `user`, `notification` (the recommendation, accepted with Done through the inbox's
-  control socket, as a tap on a notification asks), or `elsewhere` (the agent marked the item settled in chat
-  with [`signoff elsewhere`](running.md#an-item-settled-in-chat): `choice` is `null`, or `[]` for `many`, and the
+  recommendations**), `user`, `notification` (the recommendation, accepted with Done from the macOS app's
+  notification; Signoff 0.3.0 and 0.4.0 wrote it, and later versions still read it), or `elsewhere` (the agent
+  marked the item settled in chat with [`signoff elsewhere`](running.md#an-item-settled-in-chat): `choice` is `null`, or `[]` for `many`, and the
   agent's note is the `comment`). A Signoff older than 0.5.0 refuses an answers file with `elsewhere` in it: it
   cannot resume it, and a running one does not take it in and refuses saves. Restart a run an older plugin started,
   and an older inbox (`signoff inbox stop`, then `signoff inbox open`), before the agent marks an item.

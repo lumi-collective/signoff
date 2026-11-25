@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -35,7 +34,7 @@ func TestRealInbox(t *testing.T) {
 		t.Fatal("alive before the start")
 	}
 	t.Cleanup(func() { stopInbox(home) })
-	link, port, err := openInbox(launcher, home, "") // starts it
+	link, port, err := openInbox(launcher, home) // starts it
 	if err != nil {
 		t.Fatalf("no link: %v", err)
 	}
@@ -51,7 +50,7 @@ func TestRealInbox(t *testing.T) {
 	if n, err := waiting(home); err != nil || n != 0 {
 		t.Fatalf("waiting %d, err %v", n, err)
 	}
-	again, port2, err := openInbox(launcher, home, "") // finds it running
+	again, port2, err := openInbox(launcher, home) // finds it running
 	if err != nil || port2 != port || again == link {
 		t.Fatalf("second open: port %d, same link %v, err %v", port2, again == link, err)
 	}
@@ -59,11 +58,10 @@ func TestRealInbox(t *testing.T) {
 		t.Fatal(err)
 	}
 	time.Sleep(time.Second)
-	if _, _, err := askInbox(home, ""); err != nil || !inboxAlive(home) {
+	if _, _, err := askInbox(home); err != nil || !inboxAlive(home) {
 		t.Fatalf("the first inbox is gone: %v", err)
 	}
 	appTarget(t, launcher, home, dir)
-	answerFromANotification(t, launcher, home, dir)
 }
 
 // appTarget keeps a panel row's numbers as the app's target, as `signoff inbox open --app` does (over the socket
@@ -120,7 +118,7 @@ func appTarget(t *testing.T, launcher, home, dir string) {
 	if link, _, err := pendingLink(home); link != "" || err != nil { // used once
 		t.Fatalf("a second take: link %v, err %v", link != "", err)
 	}
-	plain, _, err := openInbox(launcher, home, "") // what the app then does: the list
+	plain, _, err := openInbox(launcher, home) // what the app then does: the list
 	if err != nil || strings.Contains(landing(t, plain), "/run/") {
 		t.Fatalf("the plain open: %v", err)
 	}
@@ -159,88 +157,6 @@ func landing(t *testing.T, link string) string {
 		t.Fatalf("start link: %d", resp.StatusCode)
 	}
 	return resp.Header.Get("Location")
-}
-
-// answerFromANotification runs a waiter on a round of one item with a recommendation, takes the inbox's offer for it,
-// opens it, and accepts it: the waiter wakes as on the page's Done.
-func answerFromANotification(t *testing.T, launcher, home, dir string) {
-	folder := filepath.Join(dir, "topic")
-	if err := os.Mkdir(folder, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	round := filepath.Join(folder, "round-01.json")
-	write(t, round, `{"version": 1, "title": "Pick the settings layout", "items": [{"id": "layout",
-		"title": "Two columns or one?", "select": "one", "recommended": "two",
-		"options": [{"id": "two", "label": "Two columns"}, {"id": "one", "label": "Keep one"}]}]}`)
-	var out bytes.Buffer
-	waiter := exec.Command(launcher, round, "--no-open")
-	waiter.Stdout = &out
-	if err := waiter.Start(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if waiter.ProcessState == nil {
-			waiter.Process.Kill()
-			waiter.Wait()
-		}
-	})
-	sock := filepath.Join(home, "inbox.sock")
-	var o *offer
-	for deadline := time.Now().Add(20 * time.Second); o == nil; time.Sleep(200 * time.Millisecond) {
-		if time.Now().After(deadline) {
-			t.Fatal("the waiter's round was never offered")
-		}
-		o, _ = controlOffer(sock) // the waiter registers itself first
-	}
-	n := noteFor(o, "offer-1")
-	if n.Title != "topic · Pick the settings layout" || n.Body != "Two columns or one?\nRecommended: Two columns" {
-		t.Fatalf("title %q, body %q", n.Title, n.Body)
-	}
-	port, err := inboxPort(home)
-	if err != nil {
-		t.Fatal(err)
-	}
-	link, err := controlOpen(sock, o.ID)
-	if err != nil || checkLink(link, port) != nil {
-		t.Fatalf("no start link for the offer: %v", err)
-	}
-	if err := controlAccept(sock, o.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err := controlAccept(sock, o.ID); err == nil {
-		t.Fatal("an offer accepted twice")
-	}
-	done := make(chan error, 1)
-	go func() { done <- waiter.Wait() }()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("the waiter: %v", err)
-		}
-	case <-time.After(20 * time.Second):
-		t.Fatal("the waiter did not wake")
-	}
-	real, err := filepath.EvalSymlinks(folder) // /tmp is a link on macOS; the run prints the real path
-	if err != nil {
-		t.Fatal(err)
-	}
-	answers := filepath.Join(real, "round-01.answers.json")
-	if out.String() != answers+"\n" {
-		t.Fatalf("stdout %q", out.String())
-	}
-	var saved struct {
-		Done    bool `json:"done"`
-		Answers map[string]struct {
-			Choice string `json:"choice"`
-			Source string `json:"source"`
-		} `json:"answers"`
-	}
-	if err := readJSON(answers, &saved); err != nil {
-		t.Fatal(err)
-	}
-	if a := saved.Answers["layout"]; !saved.Done || a.Choice != "two" || a.Source != "notification" {
-		t.Fatalf("saved %+v", saved)
-	}
 }
 
 // stopInbox asks the inbox to stop and waits until it has let go of its lock, before the folder goes.

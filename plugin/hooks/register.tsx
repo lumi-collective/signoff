@@ -22,7 +22,7 @@ const COMMAND = 'signoff:open' // commands/open.md: a mod cannot register a name
 const PANE = 'signoff'
 const TITLE = 'Signoff'
 const MAX_ROWS = 24 // MAX_ROWS in signoff.py: rounds and items in a rows reply
-const MAX_TEXT = 200 // MAX_OFFER_TEXT in signoff.py
+const MAX_TEXT = 200 // MAX_PANEL_TEXT in signoff.py
 const EVERY = 5_000
 // The inbox touches inbox.lock every STATE_EVERY (2 s) while it lives; a dead one changes no file.
 const LIVE_WITHIN = 15_000

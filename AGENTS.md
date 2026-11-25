@@ -91,9 +91,10 @@ Instructions for coding agents working on Signoff. The README says what it does 
   from the environment, so every run gets a random port and may open a browser unless a test says otherwise. Its inbox must touch `inbox.lock` at each look, as the mod reads that time. It must be the
   server process itself (a
   launcher that execs, as `plugin/bin/signoff` does): the suite stops it with kill, SIGINT, SIGTERM and SIGHUP. Its `Inbox` class
-  starts `<command> inbox serve` and takes start links from the control socket; its `InboxOffer` class starts
-  another for a `runs/` entry it writes by hand (a waiter with the suite's own pid) and asks it for `offer`,
-  `open` with the offer and `accept`; its `InboxRows` class starts a third for a project's `runs/` entry and asks
+  starts `<command> inbox serve` and takes start links from the control socket; its `InboxOldOps` class starts
+  another for a `runs/` entry it writes by hand (a waiter with the suite's own pid) and checks that `offer` and
+  `accept` get the unknown-request reply and write nothing, and that a plain `open` with an `offer` key gives the
+  list's link; its `InboxRows` class starts a third for a project's `runs/` entry and asks
   it for `rows`, on the socket and through `<command> inbox rows <folder>`, and for `open` with a row's target,
   on the socket and through `<command> inbox open --run <n> --focus <round>/<item> --inbox <k>`, and for
   `app_target` and `app_open` on the socket only (`--app` runs `open -a`, and an app started that way gets none
@@ -119,8 +120,8 @@ Instructions for coding agents working on Signoff. The README says what it does 
   between the looks); its `CliElsewhere` class covers `signoff elsewhere` in each of its writer's cases, the user's
   answer it never replaces, the note's checks and the hash before the rename. `test_inbox.py` covers the
   inbox in process: the `todo.md` reader and the `todo` key, the Markdown tree, routes, pairs, locks, the waiter it wakes, messages,
-  the theme it keeps, the answer from a notification, the panel's rows and their targets, the
-  `elsewhere` op (its refusals, any other error, offer and rows with a mark, a round lock the command held), and
+  the theme it keeps, the ops it no longer knows, the panel's rows and their targets, the
+  `elsewhere` op (its refusals, any other error, rows with a mark, a round lock the command held), and
   `inbox open --app` with its app opener (`APP_OPEN`) swapped for a stand-in and its app folders (`APP_DIRS`)
   for temporary ones: no test runs the real `open` or finds an installed app.
   `test_hooks.py` covers the hooks, the SessionStart hand-over, `inbox requests`,
@@ -149,10 +150,9 @@ Instructions for coding agents working on Signoff. The README says what it does 
   the link, it must be the same home),
   starts `signoff inbox serve` in its own session when no inbox holds `inbox.lock` (output to `logs/inbox.log`,
   as `inbox open` does), takes a start link from the control socket, and shows the count of `state.json` as a
-  Dock badge and a notification when it rises. That notification is the inbox's `offer` when it has one
-  (`notify.go`: its four texts, Accept & send and Other answer…, in the `signoff.offer` category), else the
-  number. Wails runs the response callback in the delegate before its completion handler, so it only starts a
-  goroutine. Closing the window hides it (its page, still asking for `state`,
+  Dock badge and a notification with the number when it rises; any response to a banner (`notify.go`), one an
+  older app sent with Accept & send included, only opens the window. Wails runs the response callback in the
+  delegate before its completion handler, so it only starts a goroutine. Closing the window hides it (its page, still asking for `state`,
   keeps its page token open while the app runs); a Dock click loads a fresh start link into it. `tray.go` adds a
   menu bar item: the icon `icon/menubar.png` (a template image, embedded), the same count as the badge beside it,
   a left click toggling a 420×600 frameless panel under it that hides when it loses focus, and a right-click menu
@@ -224,12 +224,14 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   Signoff again), stores nothing more and stops the run with exit code 1 (stderr tells the agent to run the same
   command again). A Done within `DONE_GRACE` seconds of the first use ends the run only when that time is up. No cookies.
 - **The inbox hands out start links only on its control socket.** `inbox.sock` in the Signoff home: a Unix
-  socket, 0600, in the 0700 home; one JSON line in (`{"op": "open"}`, `{"op": "stop"}`, `{"op": "offer"}`,
-  `{"op": "accept", "offer": <id>}`, `{"op": "open", "offer": <id>}`, `{"op": "rows", "project": <id>}`,
+  socket, 0600, in the 0700 home; one JSON line in (`{"op": "open"}`, `{"op": "stop"}`,
+  `{"op": "rows", "project": <id>}`,
   `{"op": "open", "run": <n>, "round": <n>, "item": <n>, "inbox": <n>}`, the same four with `"op": "app_target"`,
   `{"op": "app_open"}`, or `{"op": "elsewhere", "round": <path>, "item": <id>, "note": <text>}` (see the
   elsewhere rule); at
-  most 4 KiB), one out. Each `open`
+  most 4 KiB), one out. Any other op gets the unknown-request reply, `{error}` with no link or token: so do
+  `offer` and `accept`, which a 0.3.0 or 0.4.0 app still sends. A plain `open` ignores keys it does not know, so
+  such an app's `{"op": "open", "offer": <id>}` gets the list's link. Each `open`
   makes a pair: a start link that works once within `START_TTL` seconds, and the page token it
   opens, closed after `PAGE_IDLE` seconds without a request. A second use, or a late first one, gets 410 (404 once
   the inbox has dropped the closed pair) and closes that pair only (its page token opens nothing more); the inbox
@@ -242,43 +244,20 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   `MAX_REQUEST_BODY`; see the request rule), `POST /<page>/prefs` (the theme kept, the same rules with `MAX_PREFS_BODY`; see the theme rule), and each
   run's boards under that run's own board token. The list page asks for `state` every
   5 seconds, so an open tab keeps its page token alive; a closed one expires after `PAGE_IDLE`.
-- **An answer from a notification is its round's Done, asked for on the control socket.** `offer` names at most
-  one item, in the first round of Waiting on you that: belongs to a run whose round locks the inbox holds; is that
-  run's last open round; has exactly one item not yet decided (decided, `_decided`: a saved `choice` that is not
-  null or an empty list, with a `source` other than `recommended`; an empty list with `source` `user` on an item
-  with `recommended`, the recommendation the user unticked; a `source` of `elsewhere`; or an item with `settled`
-  whose saved choice (or, unsaved, its recommendation) equals `recommended`, a `many` list in any order), no item marked
-  `elsewhere` and no item with `settled` without a saved answer (a tap's Done would send what the user never saw:
-  a page save sends every item, so the round is offered once the user saved on its page); and that item has
-  `recommended` (not an empty list) and is neither `sensitive` nor `irreversible` (the banner cannot say it cannot
-  be undone; `stakes` does not matter). The reply is `{offer: null}` or `{offer: {id, project, round, question, answer}}`: `id` 32
-  hex digits; `project` the project's name as the list shows it (a run outside any project: its decisions
-  folder's name, the login name when that folder is the home itself), the other three the decisions file's own
-  texts (a number item's answer: its `recommended` as its grid point, a whole value without a point or an
-  exponent, any other as Python's shortest repr, then a space and the unit when it has one; with the range's
-  bounds of 1e15 and a 16-character unit it never reaches the cut). Each is one line (every control, format and line-separator character a space), cut to
-  `MAX_OFFER_TEXT`. Signoff adds no path, link or token of its own, and replaces the project's folder with its
-  name and the user's home with `~`, but does not filter the agent's text: a URL in it
-  stays, and so does the folder written through a link (the inbox knows only its real path). The inbox keeps an offer in memory only (its run, round,
-  item and the round's `rev`), at most `MAX_OFFERS`, for `OFFER_TTL` seconds; no log line or file holds its id.
-  `accept` uses it once: a second use, a late one or an unknown id gets `gone`. It saves through the run's own
-  writer the saved answers, with the item's `recommended` as its choice and `source: "notification"` (its
-  comment, marks, line notes and privacy kept), `accepted` and `done` true, at the offer's `rev`. Every save rule of the page
-  holds (`rev`, the file on disk, Done is final, the Done gate, the round lock), and each refusal is one word
-  (`changed`, `held`, `done`, `failed`) with nothing written (a `failed` write may leave a new Markdown copy, and
-  on an orphan round an answer request, as a failed save from the page does: the JSON goes last). `accept` and `open` with an offer look at the runs first, so a round
-  that left its group since the offer (its run ended and it is no orphan round, see the round-lock rule) makes it
-  `gone` (and `open`'s link the list's); an orphan round keeps its offer while its round file is unchanged. The client never sends a choice. `open` with an
-  offer gives a start link whose first use opens that run's page at that item in Focus (`#focus=<round>/<item>`);
-  with an unknown offer, the list's.
 - **The mod's panel list is numbers and one-line titles.** `rows` takes `project`, a project id (16 hex digits;
   anything else gets `{error}`), and answers `{rounds: [{run, round, title, item, items: [{item, title}]}], more,
   inbox}`: each
   open round of that project's live runs and orphan rounds (held ones too), oldest run first, `run` its number (`run/<n>/`),
   `round` its index in the run, `title` its `tab` or else its `title`, `item` the index its own row opens (its
   first item not yet decided, else its last, whose Focus shows the round's tail with its Accept and Done), and its
-  items not yet decided (as for `offer`) by their index in the round. Titles follow the `offer` rule: one line, cut to `MAX_OFFER_TEXT`, the
-  project's folder and the user's home replaced, the agent's text otherwise as written. At most `MAX_ROWS` rounds
+  items not yet decided by their index in the round (decided, `_decided`: a saved `choice` that is not null or an
+  empty list, with a `source` other than `recommended`; an empty list with `source` `user` on an item with
+  `recommended`, the recommendation the user unticked; a `source` of `elsewhere`; or an item with `settled` whose
+  saved choice (or, unsaved, its recommendation) equals `recommended`, a `many` list in any order). Titles are the
+  decisions file's own texts, each one line (every control, format and line-separator character a space), cut to
+  `MAX_PANEL_TEXT`. Signoff replaces the project's folder with its name and the user's home with `~`, but does
+  not filter the agent's text otherwise: a URL in it stays, and so does the folder written through a link (the
+  inbox knows only its real path). At most `MAX_ROWS` rounds
   and items in all, so the reply fits the 64 KiB line `inbox_request` reads (a test checks the worst case);
   `more` counts the rest. No path, link, token or item id of its own (a URL the agent wrote in a title stays).
   `signoff inbox rows <folder>` asks it for the project `project_root()` finds for that absolute folder (the
@@ -289,8 +268,7 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   none; each a whole number from 0 below 2^31, never a bool, and no `offer` beside them; else `{error}`) gives a
   start link whose first use opens `run/<run>/#focus=<round>/<item id>` when `inbox` is this inbox's number, that
   run is live or holds orphan rounds, that round is open in it (held too) and the item index exists; the server maps the index to the id.
-  Otherwise, the list's link, as an unknown offer gets. It waits for the inbox's look, as `open` with an offer
-  does; a plain one never does. `signoff inbox open --run <n> --focus <round>/<item> --inbox <k>` (with `--no-open` or not, each
+  Otherwise, the list's link, as a plain `open` gets. It waits for the inbox's look; a plain one never does. `signoff inbox open --run <n> --focus <round>/<item> --inbox <k>` (with `--no-open` or not, each
   once, in any order; plain decimal numbers) asks for it, starting an inbox as `open` does (a new one has another
   number, so its link is the list's). The mod runs it for a row:
   an item's row opens that item, a round's row its `item`, All projects the plain `open`. A rows reply that lists
@@ -487,7 +465,7 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   ended or died stays, as orphan, under its number, while it has an open round, each open round is an orphan
   round and no round file's time changed since the group read it; else it goes (its finished rounds to the sent
   list) and lets go, and a changed round is read again in a new group, also when a live run comes on its rounds,
-  so its offers are `gone` and its old tab's saves get 404. Orphan rounds in no group go into one
+  so its old tab's saves get 404. Orphan rounds in no group go into one
   group per newest gone run that lists them, locked and saved as a live run's, its Done gate over them; its row
   in Waiting on you has `orphan: true` and `since` that run's `started`, and its page's data `orphan: true`. The
   row's kind is `L.orphanKind` (a held round's stays Open elsewhere), the opened row and the round's page (its
@@ -701,7 +679,7 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   only, never moving `since`, the sort or the search. A round's row whose round has `context` gets it as
   `context` (as `rows` titles are: one line, cut to `MAX_CONTEXT`, the project's folder and the user's home
   replaced), shown after the tab on its short line (` · ` between them) and as a paragraph in its open row;
-  Answered rows, `rows`, `offer`, `state.json` and the app never get it. Its rows sit under one heading per project (a run outside any project under its folder's name), the
+  Answered rows, `rows`, `state.json` and the app never get it. Its rows sit under one heading per project (a run outside any project under its folder's name), the
   header's line saying how many wait in how many projects (a run outside any project counts in no project). Two buttons order the rows within each project: oldest
   first (the default), newest first; the choice is `sort` in `prefs.json` (a stored `project`, the old By project,
   reads as oldest first), the order only changes on screen (j and k follow it). To do shows each project's rows
@@ -881,8 +859,8 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   written, as such a file fails with the same errors. A run
   or the inbox takes a direct write
   in as any outside write (open tabs get 409 and reload); an op's write bumps the round's `rev` as a save does.
-  The item counts as decided (`_decided`): `rows` leaves it out of a round's items, as the page shows it decided,
-  and `offer` skips the round (see the notification rule). The page shows **Decided elsewhere** and the note
+  The item counts as decided (`_decided`): `rows` leaves it out of a round's items, as the page shows it decided.
+  The page shows **Decided elsewhere** and the note
   (`textContent`) above the item's options, sends the saved choice and note back with every save, Accept all
   neither sets nor undoes it, and the user's own pick, typed text, number or rectangle on it makes it `user` (the
   note goes).
@@ -905,8 +883,7 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   each `O_EXCL | O_NOFOLLOW`: for every older open round (no outcome file, no answers file that says done)
   `round-NN.outcome.json` `{log: "signoff plan", line: "replaced by round-MM", date}`, then `plan-MM.md` (the cut
   bytes) and `round-MM.json` (`plan_round`: every text a `PLAN_*` constant; one item `plan`, Approve and Ask for
-  changes, `blocking`, `comment`, `lines`, the plan attached with `open`, and no `recommended`, so `offer` never
-  names it). MM is the next number after every `round-NN.*` and `plan-NN.*` name there (answers files, Markdown
+  changes, `blocking`, `comment`, `lines`, the plan attached with `open`, and no `recommended`). MM is the next number after every `round-NN.*` and `plan-NN.*` name there (answers files, Markdown
   copies, outcome files and locks too), so a new round never meets an answers or outcome file left at its number,
   as `git clean -fd` keeps the ignored answers files. Without `--resume` it always writes a new round, so no
   approval is ever reused. With it, only the newest round is looked at, and reused only when its `round-NN.json`
@@ -1001,15 +978,11 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   anything else loads nothing. A link of the inbox's own for a new window opens in a window of the app. The badge
   and the count beside the menu bar item (the number and nothing else) come from `state.json`'s count only, read
   only while an inbox holds `inbox.lock` (looked at as `inbox_alive()` does, so a starting inbox is never kept
-  out). A rise of that count triggers a notification, and a saved Accept & send asks for the next offer. Its text is
-  the number, or the control socket's offer: project, round, question and recommended answer, one line each, and
-  nothing else (after an accept, only an offer; without one, nothing). Those texts are the agent's own as the inbox gives them (it replaces the project's folder and
-  the user's home, nothing more: a URL in them stays); the app adds no link, token, offer id or path of Signoff's
-  in the title, body, identifier (`offer-<k>`, its own counter) or user info (no `Data`). The offer id stays in the
-  app's memory, one at a time (a new offer's banner replaces the one before), for the inbox's `OFFER_TTL` at most,
-  and is used once. A response to any other identifier, or after a restart, only opens the window. Accept & send
-  is the control socket's `accept`; Other answer…, a tap on the banner or a refused accept loads the start link of
-  `open` with the offer into the main window (the item in Focus; the list when the inbox no longer has the offer).
+  out). A rise of that count triggers a notification whose text is the number and nothing else: no link, token
+  or path in its title, body or identifier (`waiting`), and no user info (no `Data`). It has no actions, and the
+  app registers no category. Any response to a banner only opens the window (a hidden one gets a fresh start link), also one to a
+  banner a 0.3.0 or 0.4.0 app left in Notification Center (`offer-<k>`, Accept & send, Other answer…): the app
+  never asks the inbox for `offer` or `accept`.
   When the app comes up (its start, and a reopen: a Dock click or `open -a` while it runs), and only then, the
   main window first asks a live inbox for `app_open`; a link (checked as any start link) loads into it, before
   the shown window's no-reload path, and none, an error reply or a failed ask leaves

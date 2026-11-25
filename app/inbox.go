@@ -26,7 +26,7 @@ import (
 var launcher = ""
 
 const (
-	maxReply  = 1 << 16          // a reply line: an offer's four texts, JSON-escaped, pass the inbox's 4 KiB request cap
+	maxReply  = 1 << 16          // a reply line, as the plugin's own client reads it: a start link is far shorter
 	maxJSON   = 1 << 20          // inbox.json and state.json are a few hundred bytes; anything this big is not ours
 	startWait = 15 * time.Second // as `signoff inbox open` waits for a fresh inbox
 )
@@ -215,9 +215,8 @@ func closeOnExec() {
 }
 
 // openInbox starts the inbox when no inbox holds its lock, then asks it for a start link, as `signoff inbox open`
-// does: with an offer id, to that offer's item (the inbox gives the list's for one it no longer has). It returns the
-// link and the inbox's port.
-func openInbox(launcher, home, offer string) (string, int, error) {
+// does. It returns the link and the inbox's port.
+func openInbox(launcher, home string) (string, int, error) {
 	if !inboxAlive(home) {
 		if err := startInbox(launcher, home); err != nil {
 			return "", 0, fmt.Errorf("cannot start the inbox (%v)", err)
@@ -225,7 +224,7 @@ func openInbox(launcher, home, offer string) (string, int, error) {
 	}
 	deadline := time.Now().Add(startWait)
 	for {
-		link, port, err := askInbox(home, offer)
+		link, port, err := askInbox(home)
 		if err == nil {
 			return link, port, nil
 		}
@@ -238,8 +237,8 @@ func openInbox(launcher, home, offer string) (string, int, error) {
 
 // askInbox checks the home and inbox.json before it asks the control socket for a start link, then checks the link.
 // A file written halfway through a restart fails the port check, and the caller asks again.
-func askInbox(home, offer string) (string, int, error) {
-	return checkedLink(home, func(sock string) (string, error) { return controlOpen(sock, offer) })
+func askInbox(home string) (string, int, error) {
+	return checkedLink(home, controlOpen)
 }
 
 // pendingLink asks the running inbox for the start link to the target `signoff inbox open --app` left for this app,
@@ -285,7 +284,7 @@ func ownFolder(home string) error {
 }
 
 // control sends one JSON line to the inbox's control socket and reads the one line back (AD-9). Its errors hold
-// neither the request nor the reply: an offer id or a link must not reach a message.
+// neither the request nor the reply: a link must not reach a message.
 func control(sock string, req map[string]string) ([]byte, error) {
 	conn, err := net.DialTimeout("unix", sock, controlWait)
 	if err != nil {
@@ -304,13 +303,9 @@ func control(sock string, req map[string]string) ([]byte, error) {
 	return line, nil
 }
 
-// controlOpen asks the inbox's control socket for a new start link; with an offer id, one to that offer's item.
-func controlOpen(sock, offer string) (string, error) {
-	req := map[string]string{"op": "open"}
-	if offer != "" {
-		req["offer"] = offer
-	}
-	line, err := control(sock, req)
+// controlOpen asks the inbox's control socket for a new start link.
+func controlOpen(sock string) (string, error) {
+	line, err := control(sock, map[string]string{"op": "open"})
 	if err != nil {
 		return "", err
 	}
@@ -345,52 +340,6 @@ func controlPending(sock string) (string, error) {
 		return "", errors.New("the inbox gave no link")
 	}
 	return link, nil
-}
-
-// offer is an item a notification may answer, as the inbox names it: its id and four texts, one line each.
-type offer struct {
-	ID       string `json:"id"`
-	Project  string `json:"project"`
-	Round    string `json:"round"`
-	Question string `json:"question"`
-	Answer   string `json:"answer"`
-}
-
-var offerID = regexp.MustCompile(`^[0-9a-f]{32}$`) // the inbox's OFFER_ID
-
-// controlOffer asks the inbox for an offer: nil when it has none or gives one this app does not know.
-func controlOffer(sock string) (*offer, error) {
-	line, err := control(sock, map[string]string{"op": "offer"})
-	if err != nil {
-		return nil, err
-	}
-	var reply struct {
-		Offer *offer `json:"offer"`
-	}
-	if err := json.Unmarshal(line, &reply); err != nil {
-		return nil, errors.New("the inbox gave no offer")
-	}
-	o := reply.Offer
-	if o == nil || !offerID.MatchString(o.ID) || o.Project == "" || o.Round == "" || o.Question == "" || o.Answer == "" {
-		return nil, nil
-	}
-	return o, nil
-}
-
-// controlAccept asks the inbox to save an offer's recommendation with Done. Any reply but {"ok": true} is a refusal
-// (gone, changed, held, done, failed): the caller opens the window on the item instead.
-func controlAccept(sock, id string) error {
-	line, err := control(sock, map[string]string{"op": "accept", "offer": id})
-	if err != nil {
-		return err
-	}
-	var reply struct {
-		OK bool `json:"ok"`
-	}
-	if json.Unmarshal(line, &reply) != nil || !reply.OK {
-		return errors.New("the inbox did not take the answer")
-	}
-	return nil
 }
 
 // inboxPort reads inbox.json and returns the inbox's port, once its schema is one this app knows.

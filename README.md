@@ -4,9 +4,7 @@
 
 **Stop answering your coding agent in a wall of terminal text. Signoff puts its decisions on one page, with
 mockups, costs and its pick preselected, and gathers every project's questions in one inbox. Accept the pick
-from a notification and the agent carries on. Nothing leaves your machine.**
-
-(A notification answer needs the optional macOS app; it ships as source, to build yourself.)
+and the agent carries on. Nothing leaves your machine.**
 
 [![test](https://github.com/lumi-collective/signoff/actions/workflows/test.yml/badge.svg)](https://github.com/lumi-collective/signoff/actions/workflows/test.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -177,7 +175,7 @@ line or turns it off. This needs a Claude Code that runs plugin mods.
 
 `app/` builds Signoff, an optional macOS app around the inbox. It is not part of the plugin. It shows the inbox in
 its own window and in a menu bar panel, the number waiting on you as a Dock badge, and a notification when that
-number goes up, which can answer a single question. Install it with Homebrew, which builds it on your Mac from this
+number goes up. Install it with Homebrew, which builds it on your Mac from this
 release's source and puts it in `/Applications` (a Signoff.app you copied there by hand: remove it first):
 
 ```bash

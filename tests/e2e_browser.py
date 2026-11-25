@@ -3470,22 +3470,21 @@ def run_live(work):
         end_inbox(inbox, script, env, home)
 
 
-def run_offer(work):
-    """An answer from a notification, as the app will ask for it on the control socket: offer names the round's one
-    undecided item; open with the offer gives a start link whose page opens that round's item in Focus; accept saves
-    the recommendation with Done, and the waiting run exits 0 with its answers path, the source "notification"."""
+def run_focus_link(work):
+    """A panel row's start link, as the mod asks for it on the control socket: open with the numbers rows gives
+    (run, round, item, inbox) opens that round's item in Focus, and a hash that names nothing on the page is
+    ignored."""
     sys.path.insert(0, str(ROOT / "plugin" / "signoff"))
     import signoff
-    home, topic = work / "offer-home", work / "offer-topic"
-    topic.mkdir()
+    home, root = work / "focus-home", work / "focus-project"
+    (root / ".git").mkdir(parents=True)
+    topic = root / ".signoff" / "2026-01-01-focus"
+    topic.mkdir(parents=True)
     data = json.loads((DEMO / "round-04.json").read_text(encoding="utf-8"))
     check(len(data["items"]) >= 2, "round-04.json should have two items or more")
     target = data["items"][1]
-    check("recommended" in target and not target.get("sensitive"), "the offered item needs a recommendation")
-    first = data["items"][0]
-    first_choice = first["options"][0]["id"]
     (topic / "round-01.json").write_text(json.dumps(data), encoding="utf-8")
-    # Every item but the target decided by the user, so the target is the one a tap may answer.
+    # Every item but the target decided by the user, so the target is the round's one open item.
     answers = {it["id"]: {"choice": [it["options"][0]["id"]] if it.get("select") == "many" else it["options"][0]["id"],
                           "comment": "", "source": "user"} for it in data["items"] if it is not target}
     (topic / "round-01.answers.json").write_text(json.dumps({
@@ -3504,18 +3503,22 @@ def run_offer(work):
             return signoff.inbox_request(home, op, **fields)
         except OSError:
             return None
-    wait_for("the inbox's control socket", lambda: ask("offer"))
+    project = signoff.project_id(root.resolve())
+    wait_for("the inbox's control socket", lambda: "rounds" in (ask("rows", project=project) or {}))
     waiter = spawn(script + [str(topic), "--no-open"], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                    universal_newlines=True, encoding="utf-8", errors="replace")
     for stream, sink in ((waiter.stdout, out), (waiter.stderr, err)):
         threading.Thread(target=pump, args=(stream, sink), daemon=True).start()
-    browser = Browser(str(work / "profile-offer"))
+    browser = Browser(str(work / "profile-focus"))
     try:
-        offer = wait_for("the waiting round's offer", lambda: (ask("offer") or {}).get("offer"))
-        check(offer["question"] == target["title"], "the offer should name the undecided item: %r" % offer)
+        rows = wait_for("the waiting round's row", lambda: (lambda r: r and r.get("rounds") and r)(
+            ask("rows", project=project)))
+        row = rows["rounds"][0]
+        check([i["title"] for i in row["items"]] == [target["title"]], "the row should name the open item: %r" % row)
         browser.call("Emulation.setDeviceMetricsOverride", width=1280, height=900, deviceScaleFactor=1, mobile=False)
         browser.call("Page.enable")
-        browser.call("Page.navigate", url=ask("open", offer=offer["id"])["link"])
+        browser.call("Page.navigate", url=ask("open", run=row["run"], round=row["round"], item=row["item"],
+                                              inbox=rows["inbox"])["link"])
         shown = wait_for("the item in Focus", lambda: browser.js(
             "(function () { var c = document.querySelector('.item.cur[data-item]'); return c && "
             "document.body.classList.contains('focusing') && !c.hidden && c.offsetParent !== null && "
@@ -3523,7 +3526,7 @@ def run_offer(work):
             " Array.prototype.map.call(document.querySelectorAll('[aria-current=true] .nl'), function (x) {"
             " return x.textContent; })]; })()"))
         check(shown == [target["id"], "#focus=0/" + target["id"], True, [target["title"]]],
-              "open with the offer should land on its item in Focus: %r" % shown)
+              "open with the row's target should land on its item in Focus: %r" % shown)
         # A hash that names nothing on the page is ignored: the page opens as usual, not in Focus.
         page = browser.js("location.href").split("#")[0]
         for bad in ("#focus=0/nope", "#focus=9/" + target["id"], "#focus=x/y", "#focus=0/<b>"):
@@ -3534,15 +3537,6 @@ def run_offer(work):
                 "!window.e2eOld && document.querySelector('.item[data-item]') ? [document.body.classList.contains("
                 "'focusing'), location.hash] : null"))
             check(ready[0] is False, "a hash naming nothing should not open Focus: %r %r" % (bad, ready))
-        check(ask("accept", offer=offer["id"]) == {"ok": True}, "accept should save the recommendation")
-        expected = [topic / "round-01.answers.json"]
-        saved = finished(waiter, out, err, expected)[0]
-        got = saved["answers"][target["id"]]
-        check(saved["done"] is True and saved["accepted"] is True and got["source"] == "notification"
-              and got["choice"] == target["recommended"], "the answers after accept: %r" % saved)
-        kept = saved["answers"][first["id"]]["choice"]
-        check(kept in (first_choice, [first_choice]), "the user's other answer should stay: %r" % kept)
-        check(ask("accept", offer=offer["id"]) == {"error": "gone"}, "a second accept should be refused")
     except E2EError:
         sys.stderr.write("--- inbox stderr ---\n" + "".join(inbox_err) + "--- run stderr ---\n" + "".join(err))
         raise
@@ -3585,7 +3579,8 @@ def run_plan(work):
             return signoff.inbox_request(home, op, **fields)
         except OSError:
             return None
-    wait_for("the inbox's control socket", lambda: ask("offer"))
+    # An op that stays, and a reply that only a live inbox that knows rows gives (an error would not pass).
+    wait_for("the inbox's control socket", lambda: "rounds" in (ask("rows", project="0" * 16) or {}))
     waiter = spawn(script + ["plan", "--topic", topic.name, "--folder", ".signoff"], cwd=str(root), env=env,
                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True,
                    encoding="utf-8", errors="replace")
@@ -3769,7 +3764,7 @@ def run():
         run_inbox(work)
         run_inbox_search(work)
         run_live(work)
-        run_offer(work)
+        run_focus_link(work)
         run_plan(work)
         run_round_age(work)
     topic = work / "2026-01-05-settings"
@@ -3957,8 +3952,7 @@ def main():
              "interactive one pointed to its terminal, an idle one dimmer in Idle and counted nowhere, a third "
              "session of another project reloads the page by itself under its own project's heading, the groups "
              "following the order; "
-             "an answer from a notification: the socket's offer, its start link opens the item in Focus (a hash naming "
-             "nothing is ignored), accept wakes the waiting run, exit 0, source notification; "
+             "a panel row's start link opens its item in Focus (a hash naming nothing is ignored); "
              "a plan round from signoff plan: two options, none preselected, the plan open, Approve and Done, exit 0, "
              "the answers the mod takes as an approval; "
              "a round asked 3 days ago: the 2-day pill on its row (from the file's time, the clock on the run's "

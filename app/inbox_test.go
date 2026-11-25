@@ -56,22 +56,11 @@ func fakeControl(t *testing.T, dir, reply string, got chan<- string) string {
 func TestControlOpenSendsOneLineAndReadsTheLink(t *testing.T) {
 	got := make(chan string, 1)
 	sock := fakeControl(t, shortDir(t), "{\"link\": \"http://127.0.0.1:5/b/abc/\"}\n", got)
-	link, err := controlOpen(sock, "")
+	link, err := controlOpen(sock)
 	if err != nil || link != "http://127.0.0.1:5/b/abc/" {
 		t.Fatalf("link %q, err %v", link, err)
 	}
 	if req := <-got; req != "{\"op\":\"open\"}\n" {
-		t.Fatalf("request %q", req)
-	}
-}
-
-func TestControlOpenWithAnOffer(t *testing.T) {
-	got := make(chan string, 1)
-	sock := fakeControl(t, shortDir(t), "{\"link\": \"http://127.0.0.1:5/b/abc/\"}\n", got)
-	if _, err := controlOpen(sock, strings.Repeat("a", 32)); err != nil {
-		t.Fatal(err)
-	}
-	if req := <-got; req != "{\"offer\":\""+strings.Repeat("a", 32)+"\",\"op\":\"open\"}\n" {
 		t.Fatalf("request %q", req)
 	}
 }
@@ -88,7 +77,7 @@ func TestControlOpenRefusesBadAnswers(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			sock := fakeControl(t, shortDir(t), reply, nil)
-			if link, err := controlOpen(sock, ""); err == nil {
+			if link, err := controlOpen(sock); err == nil {
 				t.Fatalf("no error, link %q", link)
 			}
 		})
@@ -101,7 +90,7 @@ func TestControlOpenTimesOut(t *testing.T) {
 	t.Cleanup(func() { controlWait = old })
 	sock := fakeControl(t, shortDir(t), "", nil)
 	began := time.Now()
-	if _, err := controlOpen(sock, ""); err == nil {
+	if _, err := controlOpen(sock); err == nil {
 		t.Fatal("no error from a silent inbox")
 	}
 	if took := time.Since(began); took > time.Second {
@@ -145,7 +134,7 @@ func TestControlPending(t *testing.T) {
 }
 
 func TestControlOpenWithoutInbox(t *testing.T) {
-	if _, err := controlOpen(filepath.Join(shortDir(t), "inbox.sock"), ""); err == nil {
+	if _, err := controlOpen(filepath.Join(shortDir(t), "inbox.sock")); err == nil {
 		t.Fatal("no error without a socket")
 	}
 }

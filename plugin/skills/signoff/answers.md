@@ -58,7 +58,8 @@ as `<folder>/round-02.answers.json`. Read every line, not only the last:
   `_skip`, or `null` when nothing was saved.
 - `source`: `user` when the user changed the item's options; `accept_all` when the user pressed **Accept all
   recommendations** and left the item; `recommended` when the preselected recommendation was never touched;
-  `notification` when the user accepted your recommendation from a notification, which also sent Done. Treat `accept_all` and
+  `notification` (only in files Signoff 0.3.0 and 0.4.0 wrote) when the user accepted your recommendation from a
+  notification, which also sent Done. Treat `accept_all` and
   `notification` as the user's accepted choice, and `recommended` after Done as accepted without a second look.
   `elsewhere`: you marked the item settled in chat (see below); `choice` is `null` (`[]` for `many`) and your
   note is `comment`. Act on what you and the user settled in chat.
