@@ -81,18 +81,13 @@ Instructions for coding agents working on Signoff. The README says what it does 
   `test_theme.py` fails while the page and its output differ, and measures its list of pairs on the page itself.
 - `tests/`: unittest suites. `support.py` makes a temporary topic folder (one file, or `round-NN.json`
   rounds) and runs a server on a thread. It points `SIGNOFF_INBOX_HOME` at a missing folder for every test and
-  child process, so a run is the plain run unless a test passes its own home; `XDG_CACHE_HOME` and
-  `XDG_CONFIG_HOME` likewise, so no test reads or writes the user's Uptick files. `osv_scanner.json` is a real
-  osv-scanner 2.7.1 output (`--all-packages`) on synthetic lockfiles: the results and package entries as 2.7.1
-  writes them (a `purl`, a dev dependency's `dependency_groups`), the advisories cut to the keys the inbox reads
-  (no summary, details or other free text), its paths a `{root}` the test fills in. `line_rule.json` pins how a
+  child process, so a run is the plain run unless a test passes its own home. `line_rule.json` pins how a
   line note counts an attachment's lines (`attachment_lines`), read by the server's tests; the page's count must match it. `test_contract_http.py` checks
   the security and run contract against the command line as a separate process, over HTTP, its exit code and
   stdout only; `SIGNOFF_CONTRACT_CMD` (POSIX shell words: forward slashes in a Windows path) swaps in another
   implementation. It must take the same arguments (`--no-open`, `--timeout`, `--history`, `--port`,
   `elsewhere <round file> <item id> [<note>]`, and `plan --topic <t> --folder <f>` with the plan on stdin), print its
-  `http://` start link on stderr, and honour `SIGNOFF_INBOX_HOME` and `SIGNOFF_PORT` (and `XDG_CACHE_HOME`,
-  `XDG_CONFIG_HOME` for Uptick's files). `support.py` also drops `SIGNOFF_PORT`, `SSH_CONNECTION` and `SSH_TTY`
+  `http://` start link on stderr, and honour `SIGNOFF_INBOX_HOME` and `SIGNOFF_PORT`. `support.py` also drops `SIGNOFF_PORT`, `SSH_CONNECTION` and `SSH_TTY`
   from the environment, so every run gets a random port and may open a browser unless a test says otherwise. Its inbox must touch `inbox.lock` at each look, as the mod reads that time. It must be the
   server process itself (a
   launcher that execs, as `plugin/bin/signoff` does): the suite stops it with kill, SIGINT, SIGTERM and SIGHUP. Its `Inbox` class
@@ -124,7 +119,7 @@ Instructions for coding agents working on Signoff. The README says what it does 
   between the looks); its `CliElsewhere` class covers `signoff elsewhere` in each of its writer's cases, the user's
   answer it never replaces, the note's checks and the hash before the rename. `test_inbox.py` covers the
   inbox in process: the `todo.md` reader and the `todo` key, the Markdown tree, routes, pairs, locks, the waiter it wakes, messages,
-  the OSV section, the theme it keeps, the answer from a notification, the panel's rows and their targets, the
+  the theme it keeps, the answer from a notification, the panel's rows and their targets, the
   `elsewhere` op (its refusals, any other error, offer and rows with a mark, a round lock the command held), and
   `inbox open --app` with its app opener (`APP_OPEN`) swapped for a stand-in and its app folders (`APP_DIRS`)
   for temporary ones: no test runs the real `open` or finds an installed app.
@@ -243,9 +238,8 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   all under a live page token with the same Host rule: `GET /<page>/` (the list), `GET /<page>/state` (the
   count as in `state.json`, JSON), `GET /<page>/run/<n>/` (a
   run's rounds on today's page), `GET /<page>/run/<n>/img/<k>`, `POST /<page>/run/<n>/save/<round>` (today's
-  save rules), `POST /<page>/request` (a message on a todo item or a finding handed over, today's save rules with
-  `MAX_REQUEST_BODY`; see the request rule), `POST /<page>/scan` (Scan this project, the same rules; see the OSV
-  rule), `POST /<page>/prefs` (the theme kept, the same rules with `MAX_PREFS_BODY`; see the theme rule), and each
+  save rules), `POST /<page>/request` (a message on a todo item or Later on one, today's save rules with
+  `MAX_REQUEST_BODY`; see the request rule), `POST /<page>/prefs` (the theme kept, the same rules with `MAX_PREFS_BODY`; see the theme rule), and each
   run's boards under that run's own board token. The list page asks for `state` every
   5 seconds, so an open tab keeps its page token alive; a closed one expires after `PAGE_IDLE`.
 - **An answer from a notification is its round's Done, asked for on the control socket.** `offer` names at most
@@ -264,7 +258,7 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   exponent, any other as Python's shortest repr, then a space and the unit when it has one; with the range's
   bounds of 1e15 and a 16-character unit it never reaches the cut). Each is one line (every control, format and line-separator character a space), cut to
   `MAX_OFFER_TEXT`. Signoff adds no path, link or token of its own, and replaces the project's folder with its
-  name and the user's home with `~` (as the OSV section does), but does not filter the agent's text: a URL in it
+  name and the user's home with `~`, but does not filter the agent's text: a URL in it
   stays, and so does the folder written through a link (the inbox knows only its real path). The inbox keeps an offer in memory only (its run, round,
   item and the round's `rev`), at most `MAX_OFFERS`, for `OFFER_TTL` seconds; no log line or file holds its id.
   `accept` uses it once: a second use, a late one or an unknown id gets `gone`. It saves through the run's own
@@ -547,32 +541,10 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   item open in its todo file now, a chain's step too (409 otherwise). An item's `ref` is its first line as written, after the waiting
   marker, trimmed and cut to `MAX_REF` characters: it survives edits to other lines and to the item's body, not to
   that line (the page then no longer shows the request on the item; the agent still has the text), and two open
-  items with the same first line share their requests. The same route takes exactly `{kind: "vuln", project,
-  ref}` for a finding: `ref` (`<name>@<version>`) must be a finding the list shows now (409 otherwise), and the
-  text is the server's own, built from the finding's level, advisory ids and fixed version (for one `fixable`
-  without a `fixed`, `FIX_EACH`), each checked against a plain pattern; no free text from Uptick's or osv-scanner's
-  file goes into it. It also takes exactly `{kind: "vuln", project, ref, ecosystem}`: `ecosystem` a string that
-  matches the ecosystem pattern (400 otherwise) and is the ecosystem of a finding the list shows now with that `ref`
-  (409 otherwise), as the page sends it for a finding with a plain one (`eco`), so a `ref` listed in two
-  ecosystems goes to its own; without it, the text is that of the first listing of the `ref` that keeps its `ref`
-  (see below). Two ecosystems are two different values as the file has them, plain or not, or one of them missing
-  (the key the merge uses). A text names the finding's ecosystem (", in its <ecosystem> package") only when the list
-  shows its `ref` with two ecosystems, and only a plain one: an ecosystem that fails the pattern never enters a text;
-  else it is the text above, unchanged. A finding whose `ref` the list shows with two ecosystems and whose own is not
-  plain (or missing) gets no `ref` (shown, never handed over), as no request could name it; so does one whose name
-  starts with `/` or `~` or matches `_PATHLIKE` (a scheme or `@` before `/` or `~`, as in `://`, `file:/`, `a@/`; a
-  drive letter; scp-style `git@host:`; a `..` step), so no URL or path reaches the agent (Maven's `group:artifact`
-  passes).
-  It takes exactly `{kind: "vulns", project,
-  count}` for all of a project's fixable findings (a finding the list shows now with a `ref`, and a `fixed` matching
-  the version pattern or `fixable`; the first listing of each `ref` and ecosystem counts; 409 with none), `count` a whole number, the number of
-  them the page showed (409, writing nothing, when the number now differs: a tab left open across a rescan): `ref`
-  the fixed `vulns`, the text the server's own, each such finding as `<ref> → <fixed>` (or `<ref> (<FIX_EACH>)`;
-  `<ref> (<ecosystem>)` for `<ref>` when the list shows the `ref` with two ecosystems) in the list's order, as many
-  as fit in `MAX_REQUEST_TEXT` with the frame, then how many more; and `refs`, the `ref` of each finding the text
-  names (a `ref` in two ecosystems twice), never one counted in "more" (those stay listed, to hand over again). It takes exactly `{kind: "later", project, ref}`
+  items with the same first line share their requests. The same route takes exactly `{kind: "later", project, ref}`
   for Later on a waiting row: `ref` must be an open item marked waiting now (409 otherwise), and the text is the
-  server's own `LATER_TEXT` (park the item: take its marker off, keep it open). The route takes no `kind:
+  server's own `LATER_TEXT` (park the item: take its marker off, keep it open). Any other shape gets 400, a
+  `kind` of `vuln` or `vulns` too. The route takes no `kind:
   "answer"` (400): the inbox alone writes one, once every round of an orphan group is done (by Done, `accept`, or
   an answers file another program wrote that it takes in), one per group; and at a look that lets go of a group
   that has every round done and handed over none yet (orphan or not), when the newest (by `started`) gone
@@ -592,67 +564,16 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   over, unless it stops first: then the let-go look above does). A Done save to
   a group looks at the runs first, as `accept` does, so a run that ended since the last look counts as gone; a
   group that look lets go refuses it with 404 (`gone` for `accept`), writing nothing. The inbox
-  writes `requests/<project>/<id>.json` (`schema, id, kind, ref, text, at`, `refs` on a `vulns` one, and
-  `ecosystem` on a `vuln` one that named it; `id` 16
-  hex digits, `kind` `todo`, `vuln`, `later`, `answer` or `vulns`; a `later` reaches the agent as a message on the
-  todo item, an `answer` as one on the Signoff rounds, a `vulns` as one on the vulnerability findings), atomically,
-  0600 in 0700 folders. A reader takes `refs` only as a list of at most `MAX_FINDINGS` refs that match the
-  patterns (a URL or path name, as above, does not), and `ecosystem` only on a `vuln` request, as
-  a string that matches its pattern (else it skips the file; a reader before 0.5.0
-  ignores the key), and skips a file of a kind it does not know (so a session on an older plugin drops a `vulns` or `answer`
+  writes `requests/<project>/<id>.json` (`schema, id, kind, ref, text, at`; `id` 16
+  hex digits, `kind` `todo`, `later` or `answer`; a `later` reaches the agent as a message on the
+  todo item, an `answer` as one on the Signoff rounds), atomically, 0600 in 0700 folders. A reader also takes
+  `vuln`, the kind 0.3.0 and 0.4.0 wrote for a vulnerability finding handed over, which reaches the agent as a
+  message on the vulnerability finding (the inbox writes none and shows none), and skips a file of a kind it does
+  not know (so a session on an older plugin drops an `answer`
   request, which reaches the project only through a session on a plugin that knows it (its mod, or before 0.5.0 its
-  monitor), running when it is written, or at a later SessionStart hand-over on such a plugin). The list page shows each item's, finding's and project's (`vulns`) recent
-  requests (text, time, done) and never an id, a path, `refs` or `ecosystem`; a finding's are those of its `ref`
-  and ecosystem, and those of its `ref` written without an `ecosystem` (older ones too). The agent marks one handled with
+  monitor), running when it is written, or at a later SessionStart hand-over on such a plugin). The list page shows each item's recent
+  requests (text, time, done) and never an id or a path. The agent marks one handled with
   `signoff inbox done <id>`, which writes an empty `<id>.done` beside it; nothing else writes there.
-- **The OSV section reads Uptick's files and osv-scanner's, and writes one only on a click.** Uptick's `vulns.json`
-  (`$XDG_CACHE_HOME`, else `~/.cache`, then `uptick/`; at most `MAX_VULNS` bytes) and `scan-repos.json`
-  (`$XDG_CONFIG_HOME`, else `~/.config`, then `uptick/`), found as Uptick finds them; a relative base counts as
-  absent. Without a readable `vulns.json` or `osv-scanner.json`, or for a project whose folder is gone, there is no
-  section; Scan this project shows only beside a readable `vulns.json` (`scan` in the page data), and a scan of a
-  project whose folder is gone gets 404. A project matches an entry and a list line by
-  `os.path.samefile`. Its window: twice Uptick's `interval.ok` (a positive integer of seconds, the entry's own before
-  the file's top-level one; at most `OSV_FRESH_MAX`), else `OSV_FRESH`. Its state: not on the list `off`; no entry
-  `stale`; an `error` tried within the window `error`; `at` (Unix seconds) older than the window, 0 or ahead of now
-  `stale`; `gaps` (a non-empty list) `partial`; a count `found`;
-  else `clean` (the page's "No known vulnerabilities"). osv-scanner's JSON is `<home>/osv-scanner.json` (at most
-  `MAX_VULNS`, a regular file, read again only when its mtime, size or inode changed; missing, unreadable or not
-  JSON with a `results` list, it is no source), fresh while its mtime is within `OSV_FRESH` and not ahead of now. A
-  project matches a `results[].source.path` (absolute) whose real path is inside its real root, the longest root
-  of the known projects winning; with none, that source is `off` for it, never `clean`. It fails closed: a result
-  without a `packages` list, or a package entry other than `{package}` (clean) or `{package, groups,
-  vulnerabilities}` (two non-empty lists of objects) with a string `name`, `version` and `ecosystem`, makes that
-  source `partial` for the project, never `clean`. The other keys 2.7.1 writes on an entry, `dependency_groups`
-  (a dev dependency), `licenses` and `license_violations`, are ignored; any other key is another shape. Its findings take
-  Uptick's shape (`name, version, ecosystem, level, ids, fixed`, and `fixable`), one per package with advisories:
-  `level` the worst of its groups' `max_severity` (a CVSS score as text: 9 or more critical, 7 high, 4 medium,
-  above 0 low), else of the GHSA words (`database_specific.severity`, `MODERATE` as medium) of the group's own
-  advisories, else `unknown`; `ids` the groups' `ids` and `aliases` that match the advisory pattern, the first 5
-  (collected only until there are five); `fixed` the one version that every advisory's `ECOSYSTEM` or `SEMVER`
-  ranges, in its `affected` entry for that very package (name and ecosystem), agree on, and `fixable` when each
-  advisory has such a version. An advisory has one only when in each of those ranges every `introduced` is
-  followed, in order, by a plain `fixed`, and no `last_affected` or `limit` is there (the inbox compares no
-  versions, so an open branch could be the installed one). They merge with Uptick's by `ref` and `ecosystem` (the
-  `ids` of both, at most 5; the higher `level`; Uptick's `fixed` when it has one), and each finding carries `from`
-  (`uptick`, `osv-scanner`) and `eco` (its ecosystem when that matches the ecosystem pattern, else null); the state is the most informative of the two (`found`, `partial`, `error`, `clean`,
-  `stale`, `off`), except that an osv-scanner file that is not fresh leaves `off` a project Uptick's file is there
-  for and its scan list leaves out (Not scanned, with Scan this project). Beside it, `by_source` lists each source
-  whose file is there, Uptick first, as `{source, status, at, count, level}`: `source` `uptick` or `osv-scanner`,
-  `status` that source's own state before the merge (osv-scanner's `stale` also where the merged state is that
-  `off`), `at` its scan time (Uptick's `at`; osv-scanner's file time when the file lists the project), null when
-  there is none or it is ahead of now; `count` and `level` its own findings before the `MAX_FINDINGS` cut (Uptick's:
-  the larger of a fresh entry's `count` and its findings, the worst of its `level` and theirs; osv-scanner's: the
-  findings it lists, merged or not, and their worst level), 0 and `unknown` with none. Closed values only. A project's own row (not Not scanned) shows a line per entry, and under a
-  `stale` one that source's own note: Uptick's for Uptick, osv-scanner's for osv-scanner. The row's count is the larger of a fresh Uptick `count` and the number of
-  findings, its time the newer scan. Findings (at most `MAX_FINDINGS`) only from a fresh source; with
-  osv-scanner's among them they are sorted worst first (stable, so Uptick's first within a level), else Uptick's
-  keep their order. Text from either file
-  reaches the page one line, capped, with the project's folder and the user's home replaced by names; `sources`
-  and a `source.path` never. Findings never count in Waiting on you or `state.json`. `POST /<page>/scan` takes
-  exactly `{project}`: it adds the project's real path to `scan-repos.json`, keeping every other entry and key,
-  and makes `uptick/` (0700) when absent; the file it writes is 0600, its JSON ASCII-escaped. It leaves the file
-  alone (409) when it is a link, not JSON with a `repos` list, or over `MAX_SCAN_LIST` bytes; it reads the file again just before the atomic replace and starts over when it changed
-  (409 after three tries). A project already listed is a 200 with no write.
 - **A request reaches the model as one line.** `signoff inbox requests` and the SessionStart hook build it with
   `request_line()`, and the mod sends it as the command printed it: a fixed frame, the ref and the text as JSON strings (cut to `MAX_REF` and `MAX_REQUEST_TEXT`,
   every control, format and line-separator character a space), and the id. Neither string can end its quotes,
@@ -760,7 +681,7 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   listbox for the palettes, each with its credit; the arrows preview on the page, Enter or Keep keeps, Esc,
   Cancel or a click outside goes back, and focus returns to where it was. Without `keep` it previews in that tab
   only and says so.
-- **The inbox list is one screen.** A sidebar (views: Waiting on you, To do, Vulnerabilities; then each project
+- **The inbox list is one screen.** A sidebar (views: Waiting on you, To do; then each project
   with a row) filters the list, a second click or Show all shows everything; the list's rows open in the pane
   beside it, each row's view built once and kept until a reload (typed text, statuses); a round's row is a link
   to its page. Under 1000 px the sidebar is a drawer, under 760 px the open row is a bottom sheet; while either
@@ -794,8 +715,7 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   is somewhere in its text, which is the project's name, the row's title, kind and short line (a round's tab
   and context), plus, per row, a
   round's item titles (`items` on a round's row: at most `MAX_ROW_ITEMS` of `MAX_ROW_TEXT` characters each, titles
-  only, never a file or folder name), a todo item's body and its requests' texts, a finding's package, version,
-  ecosystem, level, ids, fixed version and sources (`from`), and the project names behind the Not scanned row. The rows not matching are hidden,
+  only, never a file or folder name), and a todo item's body and its requests' texts. The rows not matching are hidden,
   the groups holding a match open (a toggle click does nothing meanwhile), a sidebar pick ends the search, an
   empty field gives the list back as it was. `aria-live` on the count (`N matches`, `No matches`) and a Clear
   button. `/` (not while typing in a field) and Cmd+K (Ctrl+K off a Mac; from a field too) focus it (typing in
@@ -859,8 +779,7 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   `state.json` (see the state rule), `inbox.sock`, `requests/<project>/<id>.json` (see the request rule),
   `prefs.json` (see the theme rule), and
   `logs/inbox.log` when `signoff inbox open` or the app starts it (the app makes the home and `logs/` for it,
-  0700, when absent); `signoff inbox done` writes `<id>.done`. Outside the
-  home, on the user's click only, the inbox writes Uptick's `scan-repos.json` (see the OSV rule). With `--notes`
+  0700, when absent); `signoff inbox done` writes `<id>.done`. With `--notes`
   (POSIX), a run that exits 0 creates one note per round open at its start in that folder (`write_notes`). The
   agent writes that argument: the skill takes it from the Notes folder setting, but nothing binds the two, so the
   checks keep a misled agent's note out of dot folders and the rounds' own project only (another project's folder

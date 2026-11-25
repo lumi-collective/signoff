@@ -1768,8 +1768,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._refuse(405, b"read only\n")
         target, rest = srv.rounds_at(rest)
         m = SAVE_ROUTE.fullmatch(rest) if target is not None else None
-        # The list page: a message on a todo item or a finding handed over; Scan this project; the theme kept.
-        message = srv.inbox and target is srv and rest in ("request", "scan", "prefs")
+        # The list page: a message on a todo item or Later on one; the theme kept.
+        message = srv.inbox and target is srv and rest in ("request", "prefs")
         if self.query is not None or not (m or message) or (m and int(m.group(1)) >= len(target.rounds)):
             return self._refuse(404, b"not found\n")
         index = int(m.group(1)) if m else None
@@ -1789,7 +1789,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if len(length) > 9 or int(length) > limit:  # 9 digits: int() stays cheap and in range
             return self._refuse(413, b"too large\n")
         if message:
-            add = {"request": srv.add_request, "scan": srv.add_scan, "prefs": srv.add_prefs}[rest]
+            add = {"request": srv.add_request, "prefs": srv.add_prefs}[rest]
             code, reply = add(self.rfile.read(int(length)))
             return self._send(code, reply, "application/json" if code == 200 else "text/plain; charset=utf-8")
         round_ = target.rounds[index]
@@ -2422,7 +2422,7 @@ MAX_SHOWN_REQUESTS = 200  # recent request files the list page reads per project
 MAX_HANDOVER_TEXT = 8000  # characters of request lines a SessionStart hands over, and `inbox requests` prints
 # An older plugin's read_request drops a kind it does not know: its sessions never print a new kind's request.
 REQUEST_KINDS = {"todo": "todo item", "vuln": "vulnerability finding", "later": "todo item",
-                 "answer": "Signoff rounds", "vulns": "vulnerability findings"}
+                 "answer": "Signoff rounds"}  # vuln: only 0.3.0 and 0.4.0 wrote one; it still reaches the agent
 LATER_TEXT = "The owner asks to park this item for later: remove its waiting marker and keep it open."
 # AD-28: the text the inbox hands over once an orphan group's rounds are done, or when it lets go of a group whose
 # newest run stopped before handing them over. It asks the agent to tell the user first, since the mod's line
@@ -2438,23 +2438,8 @@ HANDOVER_HEAD = ("Signoff inbox: the user left the messages below for this proje
                  "not handled yet. Tell the user about them in your first reply, and handle each once the user says "
                  "so.")
 HEX16 = re.compile(r"[0-9a-f]{16}")  # a project id, a request id
-OSV_FRESH = 2 * 86400  # Uptick's scan without its interval, and osv-scanner's file, count as recent this long
-OSV_FRESH_MAX = 30 * 86400  # at most this, however long Uptick's interval says
-MAX_VULNS = 16 * 1024 * 1024  # Uptick's vulns.json, with every scanned target's findings; osv-scanner's JSON too
-MAX_SCAN_LIST = 1024 * 1024  # Uptick's scan-repos.json
-MAX_FINDINGS = 50  # per project on the list page
 MAX_ROW_ITEMS = 60  # item titles a round's row carries for the list's search
 MAX_ROW_TEXT = 200  # characters of each
-VULN_LEVELS = ("unknown", "low", "medium", "high", "critical")
-# A finding is handed over only when its name and version are plain: no space or quote a model could misread.
-_PACKAGE = re.compile(r"[A-Za-z0-9@/._+~:-]{1,214}")
-_VERSION = re.compile(r"[A-Za-z0-9._+~:-]{1,64}")
-_ADVISORY = re.compile(r"[A-Za-z0-9._:-]{1,64}")
-_ECOSYSTEM = re.compile(r"[A-Za-z0-9._:-]{1,40}")  # npm, PyPI, crates.io, Debian:12; a request may name one
-# osv-scanner's advisory group score (max_severity, CVSS as text), and the GHSA words for a group without one.
-_CVSS = re.compile(r"[0-9]{1,2}(\.[0-9]{1,3})?")
-_GHSA_LEVELS = {"LOW": "low", "MODERATE": "medium", "HIGH": "high", "CRITICAL": "critical"}
-FIX_EACH = "a fixed version exists for each advisory"  # a finding whose advisories are fixed in different versions
 
 
 def _read_file(path, limit):
@@ -2465,9 +2450,9 @@ def _read_file(path, limit):
         return None
 
 
-def _json_object(raw, encoding="utf-8"):
+def _json_object(raw):
     try:
-        data = json.loads(raw.decode(encoding)) if raw is not None else None
+        data = json.loads(raw.decode("utf-8")) if raw is not None else None
     except (ValueError, RecursionError):
         return None
     return data if isinstance(data, dict) else None
@@ -2487,25 +2472,9 @@ def read_prefs(home):
             "density": density if density in DENSITIES else DENSITIES[0], "sort": sort if sort in SORTS else SORTS[0]}
 
 
-def uptick_file(var, folder, name):
-    """One of Uptick's files, found as Uptick finds it ($XDG_CACHE_HOME or ~/.cache, $XDG_CONFIG_HOME or ~/.config,
-    then uptick/), or None for a relative base: it would be read against whatever folder the inbox runs in."""
-    base = os.environ.get(var) or os.path.join(os.path.expanduser("~"), folder)
-    return Path(base, "uptick", name) if os.path.isabs(base) else None
-
-
-def _scan_list(raw):
-    """The folders in Uptick's scan-repos.json ({"repos": ["/abs/path", ...]}, read as Uptick reads it, a BOM too),
-    or None when Uptick could not read it either."""
-    data = _json_object(raw, "utf-8-sig")
-    repos = data.get("repos") if data else None
-    return [p for p in repos if isinstance(p, str) and os.path.isabs(p) and "\0" not in p] \
-        if isinstance(repos, list) else None
-
-
 def _same(paths, root):
-    """The first of paths that names root's folder, or None. Uptick keys by real path; samefile also meets a link
-    or a path in another case on a case-blind disk."""
+    """The first of paths that names root's folder, or None: samefile also meets a link or a path in another case
+    on a case-blind disk."""
     if root in paths:
         return root
     for p in paths:
@@ -2515,171 +2484,6 @@ def _same(paths, root):
         except (OSError, ValueError):  # gone, or a NUL in it
             pass
     return None
-
-
-def _seconds(v):
-    return v if isinstance(v, (int, float)) and not isinstance(v, bool) and 0 <= v < 1e13 else 0
-
-
-def _vuln_text(d, eco=None):
-    """What a vuln request says, from a finding's checked fields only: no free text from the file reaches a model.
-    eco: its plain ecosystem, named when another listed finding has the same ref in another one."""
-    level = d.get("level") if d.get("level") in VULN_LEVELS[1:] else None
-    ids = [i for i in d.get("ids") or () if isinstance(i, str) and _ADVISORY.fullmatch(i)][:5] \
-        if isinstance(d.get("ids"), list) else []
-    fixed = d.get("fixed") if isinstance(d.get("fixed"), str) and _VERSION.fullmatch(d["fixed"]) else None
-    return "Please fix this vulnerability in this project%s%s%s; %s." % (
-        ", in its %s package" % eco if eco else "",
-        ": %s severity" % level if level else "", " (%s)" % ", ".join(ids) if ids else "",
-        "fixed in %s" % fixed if fixed else FIX_EACH if d.get("fixable") is True else "no fixed version is known yet")
-
-
-def _vulns_text(fixable):
-    """What a vulns request says, and how many findings it names: each fixable finding's checked ref (with its
-    plain ecosystem as "<ref> (<ecosystem>)" when two listed findings share the ref) and fixed version (None:
-    FIX_EACH), in the list's order, as many as fit in MAX_REQUEST_TEXT, then how many more. One pair always fits:
-    it is at most 389 characters."""
-    for n in range(len(fixable), 0, -1):
-        rest = len(fixable) - n
-        text = "Please fix these vulnerabilities in this project, each by updating to its fixed version: %s%s." % (
-            ", ".join("%s → %s" % f[:2] if f[1] else "%s (%s)" % (f[0], FIX_EACH) for f in fixable[:n]),
-            ", and %d more" % rest if rest else "")
-        if len(text) <= MAX_REQUEST_TEXT:
-            return text, n
-
-
-def _dicts(d, key):
-    """The dicts in d[key] when that is a list: any level of osv-scanner's JSON may hold anything."""
-    v = d.get(key) if isinstance(d, dict) else None
-    return [x for x in v if isinstance(x, dict)] if isinstance(v, list) else []
-
-
-def _strs(d, key):
-    v = d.get(key) if isinstance(d, dict) else None
-    return [x for x in v if isinstance(x, str)] if isinstance(v, list) else []
-
-
-def _worst(levels):
-    return max((v for v in levels if v in VULN_LEVELS), key=VULN_LEVELS.index, default=None)
-
-
-def _real(path):
-    try:
-        os.fsencode(path)  # a lone surrogate no file system takes: 3.9's realpath lets it through
-        return os.path.realpath(path)
-    except (ValueError, OSError, RecursionError):  # that, a NUL, or a link chain 3.9's realpath recurses down
-        return None
-
-
-def _cvss_level(score):
-    """osv-scanner's max_severity, a CVSS score as text ("7.5"), as a level, or None for no usable score."""
-    x = float(score) if isinstance(score, str) and _CVSS.fullmatch(score) else 0
-    return None if not 0 < x <= 10 else "critical" if x >= 9 else "high" if x >= 7 else "medium" if x >= 4 else "low"
-
-
-def _osv_finding(e):
-    """One package of osv-scanner's JSON: (a finding in Uptick's shape, or None for one without advisories;
-    whether the entry is of another shape than osv-scanner 2.7.1 writes, which fails closed: a partial scan, never
-    clean). Its level is its worst group's (the CVSS score, else the GHSA words of the group's own advisories), its
-    ids the groups' ids and aliases (plain ones, at most 5). fixed is the one plain version every advisory's ranges
-    agree on, from its affected entry for this very package and a version range only (a GIT range's fixed is a
-    commit); fixable, that every advisory has such a version."""
-    if not isinstance(e, dict):
-        return None, True
-    pkg = e.get("package") if isinstance(e.get("package"), dict) else {}
-    name, version, eco = (pkg.get(k) for k in ("name", "version", "ecosystem"))
-    groups, vulns = _dicts(e, "groups"), _dicts(e, "vulnerabilities")
-    # 2.7.1 writes a clean package as {package} and one with advisories as {package, groups, vulnerabilities},
-    # beside keys the inbox does not read: dependency_groups (a dev dependency), licenses, license_violations.
-    keys = set(e) - {"dependency_groups", "licenses", "license_violations"}
-    bad = not (keys in ({"package"}, {"package", "groups", "vulnerabilities"})
-               and all(isinstance(v, str) for v in (name, version, eco))
-               and all(isinstance(e[k], list) and e[k] and len(_dicts(e, k)) == len(e[k])
-                       for k in keys & {"groups", "vulnerabilities"}))
-    if not groups and not vulns:
-        return None, bad  # a clean package, as --all-packages lists it
-
-    def word(v):
-        w = v.get("database_specific").get("severity") if isinstance(v.get("database_specific"), dict) else None
-        return _GHSA_LEVELS.get(w) if isinstance(w, str) else None
-    words = {v["id"]: word(v) for v in vulns if isinstance(v.get("id"), str)}
-    level = _worst([_cvss_level(g.get("max_severity")) or _worst(words.get(i) for i in _strs(g, "ids"))
-                    for g in groups] if groups else [word(v) for v in vulns]) or "unknown"
-    ids = []
-    for i in (i for g in groups for i in _strs(g, "ids") + _strs(g, "aliases")):
-        if len(ids) == 5:
-            break  # a list a million long costs no more than five
-        if _ADVISORY.fullmatch(i) and i not in ids:
-            ids.append(i)
-    mine = isinstance(name, str) and isinstance(eco, str)
-
-    def fixed_in(v):
-        # Without comparing versions the inbox cannot tell which range holds the installed one, so an advisory has
-        # a fix only when in each of its ranges every introduced is followed by a plain fixed (none left open, no
-        # last_affected or limit): else "fixed in" could name another branch's version, a downgrade.
-        ranges = [r for a in _dicts(v, "affected") if mine and isinstance(a.get("package"), dict)
-                  and a["package"].get("name") == name and a["package"].get("ecosystem") == eco
-                  for r in _dicts(a, "ranges") if r.get("type") in ("ECOSYSTEM", "SEMVER")]
-        found, closed = set(), bool(ranges)
-        for r in ranges:
-            opened = False
-            for ev in _dicts(r, "events"):
-                if "last_affected" in ev or "limit" in ev:
-                    closed = False
-                elif "introduced" in ev:
-                    opened = True
-                elif isinstance(ev.get("fixed"), str) and _VERSION.fullmatch(ev["fixed"]):
-                    found.add(ev["fixed"])
-                    opened = False
-            closed = closed and not opened
-        return found if closed else set()
-    fixes = [fixed_in(v) for v in vulns]
-    fixable, one = bool(fixes) and all(fixes), set().union(*fixes)
-    return {"name": name, "version": version, "ecosystem": eco, "level": level, "ids": ids,
-            "fixed": one.pop() if fixable and len(one) == 1 else None, "fixable": fixable,
-            "from": ["osv-scanner"]}, bad
-
-
-def _osv_scanner(raw):
-    """osv-scanner's JSON (scan source --format json --all-packages) as [(the real path of a lockfile it scanned,
-    that file's packages with advisories as findings, whether an entry of it is of another shape than 2.7.1's)], or
-    None when it is no such JSON (missing, cut short, too large). A path that is not absolute, or the file system
-    cannot take, matches no project."""
-    data = _json_object(raw)
-    if not data or not isinstance(data.get("results"), list):
-        return None
-    found = []
-    for r in _dicts(data, "results"):
-        path = r.get("source").get("path") if isinstance(r.get("source"), dict) else None
-        path = _real(path) if isinstance(path, str) and os.path.isabs(path) and "\0" not in path else None
-        if path:
-            packages = r.get("packages")
-            read = [_osv_finding(e) for e in packages] if isinstance(packages, list) else [(None, True)]
-            found.append((path, [f for f, _ in read if f], any(bad for _, bad in read)))
-    return found
-
-
-def _under(path, root):
-    """Whether a real path is root or under it, by whole names (/project-other is not under /project)."""
-    return os.path.commonpath([path, root]) == root
-
-
-# A URL or a local path in any spelling a lockfile may give: a scheme or `@` before a path (file:/, link:/, a@/, ://),
-# a drive letter, scp-style git@host:, or a `..` step. Maven's group:artifact passes.
-_PATHLIKE = re.compile(r"[:@][/~]|^[A-Za-z]:|^[\w.-]+@[\w.-]+:|(^|/)\.\.(/|$)")
-
-
-def _plain_name(name):
-    """A package name a request may carry: plain (_PACKAGE), and neither a URL (osv-scanner names a git dependency
-    by its URL) nor a local path, so neither reaches a model."""
-    return (isinstance(name, str) and _PACKAGE.fullmatch(name) is not None and not name.startswith(("/", "~"))
-            and _PATHLIKE.search(name) is None)
-
-
-def _finding_ref(v):
-    """True for a finding's ref as _osv makes it: <name>@<version>, each plain (_plain_name, _VERSION)."""
-    name, _, version = v.rpartition("@") if isinstance(v, str) else ("", "", "")
-    return bool(_plain_name(name) and _VERSION.fullmatch(version))
 
 
 def _recent(path, max_age):
@@ -2753,7 +2557,7 @@ def _one_line(text, limit):
 
 
 def _unpathed(g, text):
-    """A run's text as the OSV section shows Uptick's: the project's folder by its name, the user's home as ~. A run
+    """A run's text as the list shows it: the project's folder by its name, the user's home as ~. A run
     outside any project has its decisions folder's name (the list's name for it), which for a folder that is the home
     itself is the login name; the home is then only ~."""
     root, home = str(project_root(g.folder) or g.folder), os.path.expanduser("~")
@@ -2852,23 +2656,14 @@ def read_request(path):
     r = _read_json(path, 32768)
     ok = (r is not None and r.get("schema") == 1 and r.get("id") == path.stem and HEX16.fullmatch(path.stem)
           and r.get("kind") in REQUEST_KINDS and isinstance(r.get("ref"), str) and isinstance(r.get("text"), str)
-          and isinstance(r.get("at"), str) and SAVED_PATTERN.fullmatch(r["at"])
-          and ("refs" not in r or isinstance(r["refs"], list) and len(r["refs"]) <= MAX_FINDINGS
-               and all(_finding_ref(x) for x in r["refs"]))
-          and ("ecosystem" not in r or r["kind"] == "vuln" and isinstance(r["ecosystem"], str)
-               and _ECOSYSTEM.fullmatch(r["ecosystem"])))  # only a vuln request names one; else the file is skipped
+          and isinstance(r.get("at"), str) and SAVED_PATTERN.fullmatch(r["at"]))
     return r if ok else None
 
 
-def write_request(home, project, kind, ref, text, refs=None, ecosystem=None):
+def write_request(home, project, kind, ref, text):
     """requests/<project>/<id>.json in the home, atomically, 0600 in 0700 folders, for the project's sessions (their
-    mods, or the next SessionStart hook). refs (a vulns request's findings) and ecosystem (the one a vuln request
-    named) only when given. Returns the request; raises OSError when it cannot be written."""
+    mods, or the next SessionStart hook). Returns the request; raises OSError when it cannot be written."""
     r = {"schema": 1, "id": secrets.token_hex(8), "kind": kind, "ref": ref, "text": text, "at": utc_now()}
-    if refs is not None:
-        r["refs"] = refs
-    if ecosystem is not None:
-        r["ecosystem"] = ecosystem
     folder = home / "requests" / project
     folder.parent.mkdir(mode=0o700, exist_ok=True)
     folder.mkdir(mode=0o700, exist_ok=True)
@@ -3104,8 +2899,6 @@ class InboxServer(_Server):
             # gives this number with them and an open's target sends it back, so an old row opens the list.
             self.number = secrets.randbelow(MAX_NUMBER - 1) + 1
             self.app_target = None  # (a rows reply's numbers, monotonic time) the app's next app_open takes, once
-            self.uptick_cache = {}  # path -> (stat key, what it parsed to)
-            self.lockfiles = (None, [], {})  # osv-scanner's parsed file, the roots, the lockfiles by owner (_lockfiles)
             self.done_cache = {}  # answers path -> (stat key, whether it says done), for the orphan look
             self.round_locks = _RoundLocks()
             self.control = _control_socket(home / "inbox.sock")
@@ -3563,195 +3356,6 @@ class InboxServer(_Server):
             cached = self.todo_cache[path] = (key, read_todo_file(path))
         return cached[1]
 
-    def _uptick(self, path, limit, parse):
-        """One of Uptick's files or osv-scanner's, parsed, read again only when it changed (the inbox looks every
-        STATE_EVERY s)."""
-        try:
-            st = os.stat(str(path))
-        except OSError:
-            return parse(None)
-        key = (st.st_mtime_ns, st.st_size, st.st_ino)
-        cached = self.uptick_cache.get(path)
-        if not cached or cached[0] != key:
-            cached = self.uptick_cache[path] = (key, parse(_read_file(path, limit)))
-        return cached[1]
-
-    def _lockfiles(self, projects):
-        """osv-scanner's JSON in the home (None when there is none) and its lockfiles' findings by the real root of
-        the known project that holds each, the longest such root: a nested project's lockfile is never its parent's.
-        Worked out again only when the file or a project's real root changed, as the inbox looks every STATE_EVERY s."""
-        scanned = self._uptick(self.home / "osv-scanner.json", MAX_VULNS, _osv_scanner)
-        roots = sorted({r for r in map(_real, (q["root"] for q in projects.values())) if r}, key=len,
-                       reverse=True) if scanned else []
-        if self.lockfiles[0] is not scanned or self.lockfiles[1] != roots:
-            owned = {}
-            for path, fs, bad in scanned or ():
-                owner = next((r for r in roots if _under(path, r)), None)
-                if owner:
-                    owned.setdefault(owner, []).append((fs, bad))
-            self.lockfiles = (scanned, roots, owned)
-        return scanned, self.lockfiles[2]
-
-    def _osv(self, p, lockfiles):
-        """The project's vulnerability state from Uptick's files (AD-12) and osv-scanner's JSON in the home (AD-34),
-        read only, or None when neither is there: (the page's view, ref or (ref, ecosystem) -> the text a vuln
-        request carries, the fixable findings' (label, fixed or None, ref) a vulns request names, each ref and
-        ecosystem once). lockfiles: _lockfiles'."""
-        found = uptick_file("XDG_CACHE_HOME", ".cache", "vulns.json")
-        data = self._uptick(found, MAX_VULNS, _json_object) if found else None
-        repos = data.get("repos") if data else None
-        scanned, owned = lockfiles
-        if not isinstance(repos, dict) and scanned is None or not os.path.isdir(p["root"]):  # gone: nothing to scan
-            return None
-        listed = uptick_file("XDG_CONFIG_HOME", ".config", "scan-repos.json") if isinstance(repos, dict) else None
-        root, now, home = p["root"], time.time(), os.path.expanduser("~")
-
-        def shown(v, limit):  # one line, capped, and the project's and the user's folders by name only
-            if not isinstance(v, str):
-                return ""
-            v = v.replace(root, p["name"])
-            return _one_line(v.replace(home, "~") if len(home) > 1 else v, limit).strip()
-        on = _same(self._uptick(listed, MAX_SCAN_LIST, _scan_list) or [], root) is not None if listed else False
-        e = repos.get(_same(repos, root)) if on else None
-        e = e if isinstance(e, dict) else {}
-        at = _seconds(e.get("at"))
-        # Recent: within two of Uptick's runs (interval.ok, the target's own first), so one missed run is no gap.
-        ok = next((i["ok"] for i in (e.get("interval"), (data or {}).get("interval")) if isinstance(i, dict)
-                   and type(i.get("ok")) is int and i["ok"] > 0), None)
-        window = min(2 * ok, OSV_FRESH_MAX) if ok else OSV_FRESH
-        # A time ahead of now (a clock set back, milliseconds) is no recent scan either: never "no known" from it.
-        fresh, error = at > 0 and 0 <= now - at <= window, shown(e.get("error"), 200)
-        status = ("off" if not on else "stale" if not e
-                  else "error" if error and 0 <= now - _seconds(e.get("tried")) <= window
-                  else "stale" if not fresh
-                  else "partial" if e.get("gaps")
-                  else "found" if _seconds(e.get("count")) else "clean")
-        hits = owned.get(_real(root), [])
-        scanned_at = (_mtime(self.home / "osv-scanner.json") or 0) / 1e9 if hits else 0  # the JSON has no time
-        recent = scanned_at > 0 and 0 <= now - scanned_at <= OSV_FRESH
-        # A lockfile entry of another shape fails closed, as Uptick's gaps do: a partial scan, never clean.
-        theirs = ("off" if not hits else "stale" if not recent else "partial" if any(bad for _, bad in hits)
-                  else "found" if any(fs for fs, _ in hits) else "clean")
-        # Each source's own state and time, before they merge: closed values only, for the page's line per source.
-        by_source = [{"source": s, "status": st,
-                      "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t)) if 0 < t <= now else None}
-                     for s, st, t, there in (("uptick", status, at, isinstance(repos, dict)),
-                                             ("osv-scanner", theirs, scanned_at, scanned is not None)) if there]
-        # An old osv-scanner file leaves a project Uptick does not scan off, so it stays in Not scanned with its Scan
-        # button; the page's stale note, Uptick's words, then shows only where Uptick's own scan is old.
-        if theirs == "stale" and status == "off" and isinstance(repos, dict):
-            theirs = "off"
-        status = max(status, theirs, key=("off", "stale", "clean", "error", "partial", "found").index)  # most telling
-        # Uptick's findings as they are (a ref twice stays twice); osv-scanner's merge into the first of their ref and
-        # ecosystem (an npm fix never lands on a PyPI package of that name and version).
-        details = e.get("details") if fresh and isinstance(e.get("details"), list) else []
-        extra = [f for fs, _ in hits for f in fs] if recent else []
-        merged, first = [], {}
-        for d in [dict(d, fixable=False, **{"from": ["uptick"]}) for d in details if isinstance(d, dict)][
-                :MAX_FINDINGS] + extra:
-            name, version = d.get("name"), d.get("version")
-            ref = ("%s@%s" % (name, version) if isinstance(name, str) and isinstance(version, str)
-                   and _PACKAGE.fullmatch(name) and _VERSION.fullmatch(version) else None)
-            key = (ref, d.get("ecosystem") if isinstance(d.get("ecosystem"), str) else None)
-            m = first.get(key) if ref and d["from"] == ["osv-scanner"] else None
-            if m is None:
-                merged.append(dict(d, ref=ref))  # a copy: osv-scanner's findings are cached
-                first.setdefault(key, merged[-1])
-                continue
-            ids = _strs(m, "ids")
-            m.update(ids=(ids + [i for i in d["ids"] if i not in ids])[:5], level=_worst([m.get("level"), d["level"]]),
-                     fixable=m["fixable"] or d["fixable"], **{"from": m["from"] + [s for s in d["from"]
-                                                                                    if s not in m["from"]]})
-            if d["fixed"] and not (isinstance(m.get("fixed"), str) and _VERSION.fullmatch(m["fixed"])):
-                m["fixed"] = d["fixed"]  # Uptick's fixed version when it has one
-        if extra:  # osv-scanner's come in file order: worst first, so the cut never drops the worst (Uptick's are)
-            merged.sort(key=lambda d: -VULN_LEVELS.index(d["level"] if d.get("level") in VULN_LEVELS else "unknown"))
-        # Each source's own count and worst level, before the cut: Uptick's from its fresh entry, osv-scanner's from
-        # its own findings (a merged finding's level may be the other source's).
-        uptick = [d for d in details if isinstance(d, dict)]
-        own = {"uptick": (max(int(_seconds(e.get("count"))) if fresh else 0, len(uptick)),
-                          ([e.get("level")] if fresh else []) + [d.get("level") for d in uptick]),
-               "osv-scanner": (sum("osv-scanner" in d["from"] for d in merged), [f["level"] for f in extra])}
-        for b in by_source:
-            b.update(count=own[b["source"]][0], level=_worst(own[b["source"]][1]) or "unknown")
-        listed, ecos = merged[:MAX_FINDINGS], {}
-        for d in listed:  # the plain ecosystem a request may name, else None; and each ref's ecosystems as merged
-            d["eco"] = d.get("ecosystem") if isinstance(d.get("ecosystem"), str) and _ECOSYSTEM.fullmatch(
-                d["ecosystem"]) else None
-            ecos.setdefault(d["ref"], set()).add(d.get("ecosystem") if isinstance(d.get("ecosystem"), str) else None)
-        # texts: ref -> its first listing's text (a request without an ecosystem), (ref, eco) -> that listing's.
-        # A text names the ecosystem only where the ref is listed in two: else today's text, byte for byte.
-        findings, texts, fixable = [], {}, []
-        for d in listed:
-            # A name that is a URL or a path, or a ref in two ecosystems with this one not plain (no request could
-            # say which): shown only, never handed over.
-            if d["ref"] and (not _plain_name(d["name"]) or d["eco"] is None and len(ecos[d["ref"]]) > 1):
-                d["ref"] = None
-            fixed = d["fixed"] if isinstance(d.get("fixed"), str) and _VERSION.fullmatch(d["fixed"]) else None
-            d["fixable"] = bool(fixed) or d["fixable"]
-            if d["ref"] and (d["ref"], d["eco"]) not in texts:
-                named = d["eco"] if len(ecos[d["ref"]]) > 1 else None
-                texts[d["ref"], d["eco"]] = _vuln_text(d, named)
-                texts.setdefault(d["ref"], texts[d["ref"], d["eco"]])
-                if d["fixable"]:
-                    fixable.append(("%s (%s)" % (d["ref"], named) if named else d["ref"], fixed, d["ref"]))
-            findings.append({"ref": d["ref"], "name": shown(d.get("name"), 200), "version": shown(d.get("version"), 64),
-                             "ecosystem": shown(d.get("ecosystem"), 40),
-                             "level": d.get("level") if d.get("level") in VULN_LEVELS else "unknown",
-                             "ids": [shown(i, 64) for i in _strs(d, "ids")][:5],
-                             "fixed": shown(d.get("fixed"), 64), "fixable": d["fixable"], "from": d["from"],
-                             "eco": d["eco"]})
-        stamps = [t for t in (at, scanned_at) if 0 < t <= now]
-        return {"status": status,
-                "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(max(stamps))) if stamps else None,
-                "count": max(int(_seconds(e.get("count"))) if fresh else 0, len(merged)),
-                "level": _worst(([e.get("level")] if fresh else []) + [d.get("level") for d in merged]) or "",
-                "error": error, "hint": shown(e.get("hint"), 200), "findings": findings, "fixable": len(fixable),
-                # Scan this project adds to Uptick's list: only beside Uptick's file. from: the sources there.
-                "scan": isinstance(repos, dict),
-                "from": [s for s, there in (("uptick", isinstance(repos, dict)), ("osv-scanner", scanned is not None))
-                         if there], "by_source": by_source}, texts, fixable
-
-    def add_scan(self, raw):
-        """Scan this project: add its folder to Uptick's scan-repos.json on the user's click (round-08). Every other
-        entry and key stays; a list Uptick could not read, or a link, is left alone. The file is read again just
-        before it is replaced, and a change since starts over (agreed with Uptick). Returns (status, body)."""
-        try:
-            body = json.loads(raw.decode("utf-8"))
-        except (ValueError, RecursionError):
-            return 400, b"bad request: not JSON\n"
-        if not isinstance(body, dict) or list(body) != ["project"] or not isinstance(body["project"], str):
-            return 400, b'bad request: send {"project"} as a string\n'
-        with self.scan_lock:  # two tabs' clicks one after the other
-            p = self._projects().get(body["project"]) if HEX16.fullmatch(body["project"]) else None
-            if p is None or not os.path.isdir(p["root"]):
-                return 404, b"no such project\n"
-            path = uptick_file("XDG_CONFIG_HOME", ".config", "scan-repos.json")
-            if path is None:
-                return 409, b"Uptick's config folder is a relative path; add this project to its scan list by hand\n"
-            root = os.path.realpath(p["root"])
-            for _ in range(3):
-                if os.path.islink(str(path)):  # replacing it would cut a link the user made, such as to dotfiles
-                    return 409, b"Uptick's scan-repos.json is a link; add this project to it by hand\n"
-                before = _read_file(path, MAX_SCAN_LIST)
-                data = {"repos": []} if before is None and not os.path.lexists(str(path)) else _json_object(
-                    before, "utf-8-sig")
-                if data is None or not isinstance(data.get("repos"), list):
-                    return 409, b"Uptick's scan-repos.json is unreadable or too large; add this project by hand\n"
-                if _same(_scan_list(before) or [], root) is not None:
-                    return 200, b'{"ok": true}'
-                if _read_file(path, MAX_SCAN_LIST) != before:
-                    continue  # changed meanwhile: read it again
-                try:
-                    path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
-                    # ASCII escapes: a lone surrogate Uptick reads must not make the write fail.
-                    write_atomic(path, json.dumps(dict(data, repos=data["repos"] + [root]), indent=2) + "\n")
-                except OSError as e:
-                    return 500, ("could not write Uptick's scan list (%s)\n" % (e.strerror or type(e).__name__)
-                                 ).encode("utf-8")
-                return 200, b'{"ok": true}'
-        return 409, b"Uptick's scan-repos.json kept changing; try again\n"
-
     def add_prefs(self, raw):
         """The theme the user kept in the picker: prefs.json in the home, which every page reads. Every value comes
         from a closed list, so no text of the request reaches the file or a page. A body without density keeps the
@@ -3776,10 +3380,9 @@ class InboxServer(_Server):
         return 200, b'{"ok": true}'
 
     def _requests(self, project):
-        """(kind, ref) -> the project's recent requests on that todo item or finding, oldest first: text, at, and
-        done once the agent wrote <id>.done; (kind, ref, ecosystem) for a vuln request that named its finding's
-        ecosystem. shortcut: each look reads up to MAX_SHOWN_REQUESTS small files per
-        project; cache them by id (they never change) if a project gathers many."""
+        """(kind, ref) -> the project's recent requests on that todo item, oldest first: text, at, and done once the
+        agent wrote <id>.done. shortcut: each look reads up to MAX_SHOWN_REQUESTS small files per project; cache
+        them by id (they never change) if a project gathers many."""
         folder = self.home / "requests" / project
         ids, done = request_ids(folder)
         cutoff = (time.time() - RUNS_MAX_AGE) * 1e9
@@ -3788,68 +3391,41 @@ class InboxServer(_Server):
         for mtime, i in recent[:MAX_SHOWN_REQUESTS]:
             r = read_request(folder / (i + ".json")) if mtime >= cutoff else None
             if r:
-                found.setdefault((r["kind"], r["ref"]) + ((r["ecosystem"],) if "ecosystem" in r else ()), []).append(
-                    {"text": r["text"], "at": r["at"], "done": i in done})
+                found.setdefault((r["kind"], r["ref"]), []).append({"text": r["text"], "at": r["at"],
+                                                                    "done": i in done})
         for shown in found.values():
             shown.sort(key=lambda r: r["at"])
         return found
 
     def add_request(self, raw):
-        """A message on an open todo item, Later on one marked waiting, a finding handed over, or all of a project's
-        fixable findings, from the list page: requests/<project>/<id>.json in the home, for the project's session
-        (its mod, or the next SessionStart hook). The todo file is never written. The text of a finding, of the
-        fixable findings and of Later is the server's own, a finding's from its checked fields. Returns (status,
-        body)."""
+        """A message on an open todo item, or Later on one marked waiting, from the list page:
+        requests/<project>/<id>.json in the home, for the project's session (its mod, or the next SessionStart
+        hook). The todo file is never written. The text of Later is the server's own. Returns (status, body)."""
         try:
             body = json.loads(raw.decode("utf-8"))
         except (ValueError, RecursionError):
             return 400, b"bad request: not JSON\n"
-        # Every value a string, but count: the number of fixable findings the page showed, a whole number.
-        shape = sorted(body) if isinstance(body, dict) and all(
-            _whole(v) if k == "count" else isinstance(v, str) for k, v in body.items()) else None
-        kind = body["kind"] if shape == ["kind", "project", "ref"] and body["kind"] in ("vuln", "later") else "todo"
-        if shape == ["count", "kind", "project"] and body["kind"] == "vulns":
-            kind = "vulns"
-        if shape == ["ecosystem", "kind", "project", "ref"] and body["kind"] == "vuln":
-            kind = "vuln"  # one ref listed in two ecosystems: this one's
+        shape = sorted(body) if isinstance(body, dict) and all(isinstance(v, str) for v in body.values()) else None
+        kind = "later" if shape == ["kind", "project", "ref"] and body["kind"] == "later" else "todo"
         if kind == "todo" and shape != ["project", "ref", "text"]:
-            return 400, (b'bad request: send {"project", "ref", "text"}, or {"kind", "project", "ref"} with kind '
-                         b'"vuln" (and optionally "ecosystem") or "later", as strings; or {"kind": "vulns", '
-                         b'"project", "count"} with count the number of fixable findings shown\n')
-        if "ecosystem" in body and not _ECOSYSTEM.fullmatch(body["ecosystem"]):
-            return 400, b"bad request: an ecosystem is a plain name (letters, digits, . _ : -), at most 40\n"
+            return 400, (b'bad request: send {"project", "ref", "text"}, or {"kind": "later", "project", "ref"}, '
+                         b'as strings\n')
         text = body["text"].strip() if kind == "todo" else LATER_TEXT
         if kind == "todo" and (not text or len(text) > MAX_REQUEST_TEXT or not _typed_line(text)):
             return 400, b"bad request: a message is one line of 1 to 1000 characters\n"
-        with self.scan_lock:  # _projects, the todo cache and Uptick's files, as a look uses them
-            known = self._projects()
-            p = known.get(body["project"]) if HEX16.fullmatch(body["project"]) else None
+        with self.scan_lock:  # _projects and the todo cache, as a look uses them
+            p = self._projects().get(body["project"]) if HEX16.fullmatch(body["project"]) else None
             if p is None:
                 return 404, b"no such project\n"
-            ref, named = body.get("ref", "vulns"), None  # a vulns request names its findings in named
-            if kind == "vuln":
-                text = (self._osv(p, self._lockfiles(known)) or ({}, {}, []))[1].get(
-                    (body["ref"], body["ecosystem"]) if "ecosystem" in body else body["ref"])
-                if text is None:
-                    return 409, b"that finding is no longer listed; reload the page\n"
-            elif kind == "vulns":
-                fixable = (self._osv(p, self._lockfiles(known)) or ({}, {}, []))[2]
-                if not fixable:
-                    return 409, b"no fixable finding is listed; reload the page\n"
-                if len(fixable) != body["count"]:  # a tab left open across a rescan: not what the user saw
-                    return 409, b"the findings changed; reload the page\n"
-                text, n = _vulns_text(fixable)
-                named = [f[2] for f in fixable[:n]]  # handed over: only what the text names; the rest stay listed
-            else:
-                # Any open item of a chain takes a message, its steps too; Later only one marked waiting.
-                path = project_todo(p)[0]
-                key = "waits" if kind == "later" else "refs"
-                refs = {r for t in (self._todos(path)[0] if path else []) for r in t[key]}
-                if body["ref"] not in refs:
-                    return 409, (b"that todo item no longer waits on you; reload the page\n" if kind == "later"
-                                 else b"that todo item is no longer open; reload the page\n")
+            # Any open item of a chain takes a message, its steps too; Later only one marked waiting.
+            path = project_todo(p)[0]
+            key = "waits" if kind == "later" else "refs"
+            refs = {r for t in (self._todos(path)[0] if path else []) for r in t[key]}
+            if body["ref"] not in refs:
+                return 409, (b"that todo item no longer waits on you; reload the page\n" if kind == "later"
+                             else b"that todo item is no longer open; reload the page\n")
             try:
-                r = write_request(self.home, p["id"], kind, ref, text, named, body.get("ecosystem"))
+                r = write_request(self.home, p["id"], kind, body["ref"], text)
             except OSError as e:
                 return 500, ("could not write the request (%s)\n" % (e.strerror or type(e).__name__)).encode("utf-8")
         return 200, json.dumps({"ok": True, "id": r["id"], "at": r["at"]}).encode("utf-8")
@@ -3988,8 +3564,8 @@ class InboxServer(_Server):
 
     def view(self):
         """What the inbox page gets: the rows waiting on the user (open rounds, oldest first, then todo items marked
-        waiting), the rounds answered lately with what their session did since, and each project's open todo items
-        and vulnerability state (never counted as waiting). Names, never paths."""
+        waiting), the rounds answered lately with what their session did since, and each project's open todo items.
+        Names, never paths."""
         with self.scan_lock:
             projects = self._scan()
             found = self._sessions()
@@ -4012,10 +3588,9 @@ class InboxServer(_Server):
                         # What a todo item may name to link here: its topic folder and file, in its own project.
                         opened.setdefault((g.entry.get("project"), r.path.parent.name + "/" + r.path.name),
                                           "run/%d/" % n)
-            lockfiles = self._lockfiles(projects)
             for pid, p in sorted(projects.items(), key=lambda kv: kv[1]["name"].lower()):
-                (path, file, bad), osv = project_todo(p), self._osv(p, lockfiles)
-                if file is None and osv is None:
+                path, file, bad = project_todo(p)
+                if file is None:
                     continue
                 todos, error = self._todos(path) if path else ([], bad)
                 who, asked = _who(pid, p["name"]), self._requests(pid)
@@ -4034,12 +3609,6 @@ class InboxServer(_Server):
                 waiting += [dict(who, kind="todo", waiting=t["waiting"], since=changed, **row(t))
                             for t in todos if t["waiting"]]
                 listed.append(dict(who, id=pid, file=file, error=error, todos=[row(t) for t in todos if not t["waiting"]]))
-                if osv:
-                    for f in osv[0]["findings"]:
-                        # Its ref's and ecosystem's, and its ref's from before a request named the ecosystem.
-                        f["requests"] = sorted(asked.get(("vuln", f["ref"]), []) + asked.get(
-                            ("vuln", f["ref"], f["eco"]), []), key=lambda q: q["at"]) if f["ref"] else []
-                    listed[-1]["osv"] = dict(osv[0], requests=asked.get(("vulns", "vulns"), []))
             asking, idle = self._live(found, projects)
             waiting += asking
             sent = []

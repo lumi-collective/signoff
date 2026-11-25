@@ -382,7 +382,7 @@
       return [g, el('span', 'ib-kind ' + o.cls, o.kind)];
     }
     // What the search reads of a row, folded once on the first query: the project, the title, the kind and the short
-    // line, and what o.find() adds (a round's item titles, a todo item's body and messages, a finding's package).
+    // line, and what o.find() adds (a round's item titles, a todo item's body and messages).
     function fold(s) { return String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase(); }
     function hay(r) {
       if (r.hay === undefined) {
@@ -392,7 +392,7 @@
       return r.hay;
     }
     // One row: a round's is a link to its page; any other row is a button that opens it in the pane beside the list.
-    // o: kind, cls, glyph, title (text or inline nodes), sub (text or element), when, href, fill(box), projects, find().
+    // o: kind, cls, glyph, title (text or inline nodes), sub (text or element), when, href, fill(box), find().
     function row(sec, w, o) {
       var li = el('li', 'ib-row'), go = el(o.href ? 'a' : 'button', 'ib-main'), t = el('span', 'ib-title');
       if (o.href) go.href = o.href; else go.type = 'button';
@@ -403,7 +403,7 @@
       if (o.sub) sub.append(typeof o.sub === 'string' ? el('span', 'ib-text', o.sub) : o.sub);
       go.append(mono(w), t, whenOf(o), sub);
       li.append(go);
-      var r = {li: li, go: go, w: w, o: o, title: t, sec: sec, projects: o.projects || (w.project ? [w.project] : [])};
+      var r = {li: li, go: go, w: w, o: o, title: t, sec: sec, projects: w.project ? [w.project] : []};
       go.addEventListener('click', function (e) {
         if (o.href) return;  // the round's own page, in this tab
         select(r);
@@ -717,115 +717,13 @@
     });
     grouped(s, true);
     done(s, L.nothingOpen);
-    // Each project's vulnerabilities, from Uptick's or osv-scanner's file: never counted as waiting. A finding goes
-    // to the project's agent as a request; a project not on Uptick's scan list can be added to it.
+    // Later on a todo item: a request the server words itself.
     function post(path, body, status, failed, done) {
       return fetch(path, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)})
         .then(function (r) {
           if (r.ok) return r.json().then(done);
           return r.text().then(function (m) { status.textContent = fmt(failed, {m: m.trim()}); });
         }, function () { status.textContent = fmt(failed, {m: L.notAnswering}); });
-    }
-    function osvLabel(o) {
-      if (o.status === 'error') return fmt(L.osv_error, {e: o.error});
-      var found = o.count === 1 ? fmt(L.osv_one, {l: o.level || 'unknown'})
-        : fmt(L.osv_found, {n: o.count, l: o.level || 'unknown'});
-      if (o.status === 'partial') return L.osv_partial + (o.count ? ': ' + found : '');
-      return o.status === 'found' ? found : L['osv_' + o.status] || L.osv_stale;
-    }
-    // the sources' own names; osv-scanner's hyphen non-breaking, so a narrow line never splits the name
-    function src(a) { return a.join(' + ').replace('uptick', 'Uptick').replace('-', String.fromCharCode(8209)); }
-    function hander(box, body, label, reqs) {  // one finding's and all fixable's: the same pills, post and note
-      var sent = el('div', 'ib-vuln-sent'), status = el('p', 'ib-msg-status'), hand = body ? el('button', '', label) : null;
-      if (hand) sent.append(hand);
-      function show(r) {
-        sent.insertBefore(el('span', 'pill' + (r.done ? ' done' : ''), r.done ? L.msgDone : fmt(L.handed, {t: since(r.at)})), hand);
-      }
-      (reqs || []).forEach(show);
-      if (hand) {
-        hand.type = 'button';
-        status.setAttribute('role', 'status');
-        hand.addEventListener('click', function () {
-          hand.disabled = true;
-          status.textContent = '';
-          post('request', body, status, L.handFailed, function (j) {
-            show({at: j.at, done: false});
-            status.textContent = L.msgNote;
-          }).then(function () { hand.disabled = false; });
-        });
-      }
-      box.append(sent, status);
-    }
-    function finding(p, f, box) {
-      var li = el('li', 'ib-vuln'), head = el('div', 'ib-vuln-head');
-      head.append(el('strong', 'ib-vuln-name', f.name + ' ' + f.version), el('span', 'pill lvl-' + f.level, f.level));
-      var facts = (f.ecosystem ? [f.ecosystem] : []).concat(f.ids, [f.fixed ? fmt(L.fixedIn, {v: f.fixed}) : f.fixable ? L.fixEach : L.noFix, src(f.from)]);
-      li.append(head, el('p', 'ib-vuln-facts', facts.join(' · ')));
-      // eco: its plain ecosystem, else null (left out of the JSON), so a ref listed in two goes to this one
-      hander(li, f.ref ? {kind: 'vuln', project: p.id, ref: f.ref, ecosystem: f.eco || undefined} : null, L.hand, f.requests);
-      box.append(li);
-    }
-    var scanned = projects.filter(function (p) { return p.osv; });
-    var findings = scanned.reduce(function (n, p) { return n + p.osv.findings.length; }, 0);
-    if (scanned.length) {
-      s = section(L.osvHead, findings, fmt(L.osvNote, {s: src(scanned[0].osv.from)}), '', 'osv');
-      // Projects off the scan list share one row, last; every other state keeps its own row.
-      var off = scanned.filter(function (p) { return p.osv.status === 'off'; });
-      scanned.filter(function (p) { return p.osv.status !== 'off'; }).forEach(function (p) {
-        var o = p.osv, worry = o.status === 'found' || (o.status === 'partial' && o.count) || o.status === 'error';
-        row(s, p, {kind: L.osv, cls: worry ? 'k-w' : 'k-t', glyph: worry ? '▲' : '△', title: osvLabel(o),
-                   find: function () {
-                     return [o.hint].concat(o.findings.map(function (f) {
-                       return [f.name, f.version, f.ecosystem, f.level, f.fixed].concat(f.ids, f.from).join(' ');
-                     }));
-                   }, when: o.at ? fmt(L.scanned, {t: since(o.at)}) : '', fill: function (box) {
-          o.by_source.forEach(function (b) {  // each source's own state, count and worst; a stale note names only the old source
-            b.error = o.error;  // Uptick's: the only source with one
-            box.append(el('p', 'ib-vuln-facts ib-src', src([b.source]) + ': ' + osvLabel(b) + (b.at ? ' · ' + fmt(L.scanned, {t: since(b.at)}) : '')));
-            if (b.status === 'stale') box.append(el('p', 'ib-vuln-note', b.source === 'uptick' ? L.osvStaleNote : L.osvScanStale));
-          });
-          if (o.status === 'partial') box.append(el('p', 'ib-vuln-note', L.osvPartialNote));
-          if (o.hint) box.append(el('p', 'ib-vuln-note', o.hint));
-          if (o.fixable) hander(box.appendChild(el('div', 'ib-vuln-all')), {kind: 'vulns', project: p.id,
-            count: o.fixable}, fmt(L.handAll, {n: o.fixable}), o.requests);  // what it shows, or 409
-          if (o.findings.length) {
-            var ul = el('ul', 'ib-vulns');
-            o.findings.forEach(function (f) { finding(p, f, ul); });
-            box.append(ul);
-          }
-        }});
-      });
-      if (off.length) {
-        // Counts down as each Scan is taken; at 0 the row stays, with its notes, until a reload.
-        var offLeft = off.length, offRow = row(s, {mono: '', name: ''}, {kind: L.osv, cls: 'k-t', glyph: '△',
-          title: fmt(L.osv_off_n, {n: offLeft}), projects: off.map(function (p) { return p.id; }),
-          find: function () { return off.map(function (p) { return p.name; }); }, fill: function (box) {
-          if (off[0].osv.scan) box.append(el('p', 'ib-vuln-note', L.osvOffNote));
-          var ul = el('ul', 'ib-vulns');
-          off.forEach(function (p) {
-            var li = el('li', 'ib-vuln'), head = el('div', 'ib-vuln-head'), sent = el('div', 'ib-vuln-sent');
-            var scan = el('button', '', L.scan), status = el('p', 'ib-msg-status');
-            head.append(mono(p), el('strong', 'ib-vuln-name', p.name));
-            scan.type = 'button';
-            scan.setAttribute('aria-label', L.scan + ': ' + p.name);  // N buttons in one body: name each by its project
-            status.setAttribute('role', 'status');
-            scan.addEventListener('click', function () {
-              scan.disabled = true;
-              status.textContent = '';
-              post('scan', {project: p.id}, status, L.scanFailed, function () {
-                status.textContent = L.scanAdded;
-                scan.hidden = true;
-                offRow.title.textContent = offRow.heading.textContent = fmt(L.osv_off_n, {n: --offLeft});
-              }).then(function () { scan.disabled = false; });
-            });
-            if (p.osv.scan) sent.append(scan);
-            li.append(head, sent, status);
-            ul.append(li);
-          });
-          box.append(ul);
-        }});
-      }
-      done(s);
     }
     ordered();
     // The sidebar: the views, then every project with a row here; each filters the list, a second click shows all.
@@ -868,9 +766,8 @@
     var VIEWS = [
       {key: 'waiting', name: L.waitingHead, n: waiting.length, hot: waiting.length > 0,
        lead: icon(['M3 13h5l1.5 3h5L16 13h5', 'M5.5 5h13L21 13v6H3v-6z'])},
-      {key: 'todo', name: L.todoHead, n: todos, lead: icon(['M9 6h11', 'M9 12h11', 'M9 18h11', 'M4.5 6h.01', 'M4.5 12h.01', 'M4.5 18h.01'])},
-      {key: 'osv', name: L.osvHead, n: findings, lead: icon(['M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z'])}];
-    group(L.inbox, VIEWS.filter(function (v) { return v.key !== 'osv' || scanned.length; }).map(function (v) {
+      {key: 'todo', name: L.todoHead, n: todos, lead: icon(['M9 6h11', 'M9 12h11', 'M9 18h11', 'M4.5 6h.01', 'M4.5 12h.01', 'M4.5 18h.01'])}];
+    group(L.inbox, VIEWS.map(function (v) {
       return Object.assign(v, {filter: {key: v.key, view: v.key, name: v.name}});
     }));
     if (order.length) {
@@ -888,7 +785,7 @@
     zbox.append(mark, el('h2', '', L.zeroTitle), el('p', '', L.zeroText + (agents === 1 ? L.zeroWorkingOne
       : agents ? fmt(L.zeroWorking, {n: agents}) : '')), zs);
     // Idle has no view of its own: it sits under Waiting on you, as Answered does, so its button lands on its rows.
-    [[todos, L.todoN, VIEWS[1]], [findings, L.osvN, VIEWS[2]], [idle.length, L.idleN, VIEWS[0], idleSec]].forEach(function (z) {
+    [[todos, L.todoN, VIEWS[1]], [idle.length, L.idleN, VIEWS[0], idleSec]].forEach(function (z) {
       if (!z[0]) return;
       var b = el('button', '', fmt(z[1], {n: z[0]}));
       b.type = 'button';

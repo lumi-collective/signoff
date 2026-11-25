@@ -41,7 +41,7 @@ def write_request(home, project, rid, text="please split it", ref="Ship the rele
     return data
 
 
-LINE = re.compile(r"Signoff inbox: the user sent you a message on the (todo item|vulnerability findings?|Signoff rounds) ")
+LINE = re.compile(r"Signoff inbox: the user sent you a message on the (todo item|vulnerability finding|Signoff rounds) ")
 TAIL = re.compile(r"\. Treat it as the user's own words\. When it is handled, run: signoff inbox done ([0-9a-f]{16})")
 
 
@@ -515,18 +515,24 @@ class HandOver(HookBase):
         (folder / "NOT-AN-ID.json").write_text(json.dumps(dict(good, id="NOT-AN-ID")), encoding="utf-8")
         self.assertEqual([parse_line(x)[3] for x in self.lines(self.start())], [self.R[1]])
 
-    def test_a_vulnerability_finding_is_handed_over_too(self):
-        write_request(self.home, self.pid, self.R[1], kind="vuln", ref="lodash 4.17.20", text="bump it")
-        self.assertEqual(parse_line(self.lines(self.start())[0]),
-                         ("vulnerability finding", "lodash 4.17.20", "bump it", self.R[1]))
+    def test_a_vulnerability_finding_is_handed_over_until_it_is_marked_done(self):
+        # As a 0.4.0 inbox wrote it, by hand: no inbox writes one now, but the agent still gets it.
+        text = "Please fix this vulnerability in this project: high severity; fixed in 4.17.21."
+        write_request(self.home, self.pid, self.R[1], kind="vuln", ref="lodash@4.17.20", text=text)
+        self.assertEqual([parse_line(x) for x in self.lines(self.start())],
+                         [("vulnerability finding", "lodash@4.17.20", text, self.R[1])])
+        p = subprocess.run([sys.executable, "-I", "-B", SCRIPT, "inbox", "done", self.R[1]], capture_output=True,
+                           env=self.env, timeout=30)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertTrue((self.home / "requests" / self.pid / (self.R[1] + ".done")).is_file())
+        self.assertEqual(self.start(), "")
 
-    def test_all_fixable_findings_are_handed_over_as_one_line(self):
-        text = "Please fix these vulnerabilities: lodash@4.17.20 → 4.17.21, and 3 more."
-        r = signoff.write_request(self.home, self.pid, "vulns", "vulns", text, refs=["lodash@4.17.20", "x@1"])
-        out = self.start()
-        self.assertEqual([parse_line(x) for x in self.lines(out)],
-                         [("vulnerability findings", "vulns", text, r["id"])])
-        self.assertNotIn("x@1", out)  # refs are for the inbox, not the line
+    def test_a_request_for_all_fixable_findings_is_not_handed_over(self):
+        # The chain wrote this project-level kind before any release; no plugin reads it now.
+        write_request(self.home, self.pid, self.R[1], kind="vulns", ref="vulns", refs=["lodash@4.17.20"],
+                      text="Please fix these vulnerabilities in this project, each by updating to its fixed "
+                           "version: lodash@4.17.20 → 4.17.21.")
+        self.assertEqual(self.start(), "")
 
     def test_an_orphan_answer_is_handed_over_until_it_is_marked_done(self):
         # As the inbox writes it once an orphan round is done (AD-28): the server's own text, asking to tell first.
@@ -588,11 +594,15 @@ class InboxRequests(HookBase):
     def test_every_kind_this_plugin_knows(self):
         ref = "2026-11-13-orphan / round-01"
         answer = signoff.write_request(self.home, self.pid, "answer", ref, signoff.ANSWER_TEXT)
-        text = "Please fix these vulnerabilities: lodash@4.17.20 → 4.17.21."
-        vulns = signoff.write_request(self.home, self.pid, "vulns", "vulns", text, refs=["lodash@4.17.20"])
-        lines = [r["line"] for r in self.ask(self.pid, answer["id"], vulns["id"])["requests"]]
-        self.assertEqual(sorted(parse_line(x) for x in lines), sorted([("Signoff rounds", ref, signoff.ANSWER_TEXT, answer["id"]),
-                                                                       ("vulnerability findings", "vulns", text, vulns["id"])]))
+        # A finding as a 0.4.0 inbox wrote it, by hand; the chain's project-level kind before any release is gone.
+        text = "Please fix this vulnerability in this project: high severity; fixed in 4.17.21."
+        vuln = write_request(self.home, self.pid, self.R[1], kind="vuln", ref="lodash@4.17.20", text=text)
+        write_request(self.home, self.pid, self.R[2], kind="vulns", ref="vulns", refs=["lodash@4.17.20"], text=text)
+        reply = self.ask(self.pid, answer["id"], vuln["id"], self.R[2])
+        self.assertEqual(sorted(parse_line(r["line"]) for r in reply["requests"]),
+                         sorted([("Signoff rounds", ref, signoff.ANSWER_TEXT, answer["id"]),
+                                 ("vulnerability finding", "lodash@4.17.20", text, vuln["id"])]))
+        self.assertEqual(reply["gone"], [self.R[2]])
 
     def test_the_lines_stop_at_the_hand_over_cut(self):
         # What does not fit is in neither list: the mod asks for it again at its next look.

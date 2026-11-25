@@ -18,9 +18,6 @@ sys.path.insert(0, str(ROOT / "plugin" / "signoff"))
 # inbox set up, and never touches the user's real home or meets a real inbox. A test that needs a home makes one.
 _NO_HOME = tempfile.TemporaryDirectory()
 os.environ["SIGNOFF_INBOX_HOME"] = str(Path(_NO_HOME.name) / "home")
-# The same for Uptick's files (vulns.json, scan-repos.json): never the user's real ones.
-os.environ["XDG_CACHE_HOME"] = str(Path(_NO_HOME.name) / "cache")
-os.environ["XDG_CONFIG_HOME"] = str(Path(_NO_HOME.name) / "config")
 # A fixed port, an SSH session or a BROWSER in the shell that runs the tests would change every run: a test that
 # wants one says so.
 for _name in ("SIGNOFF_PORT", "SSH_CONNECTION", "SSH_TTY", "BROWSER"):

@@ -847,23 +847,11 @@ class Inbox(unittest.TestCase):
         os.makedirs(os.path.join(cls.home, "projects"), mode=0o700)
         with open(os.path.join(cls.home, "projects", cls.pid + ".json"), "w", encoding="utf-8") as f:
             json.dump({"schema": 1, "id": cls.pid, "root": cls.project, "name": "project"}, f)
-        # Uptick's files: a fresh scan of the project with one finding, and a scan list without it yet.
-        cls.cache, cls.config = (os.path.join(os.path.realpath(cls._tmp.name), d) for d in ("cache", "config"))
-        os.makedirs(os.path.join(cls.cache, "uptick"))
-        os.makedirs(os.path.join(cls.config, "uptick"))
-        with open(os.path.join(cls.cache, "uptick", "vulns.json"), "w", encoding="utf-8") as f:
-            json.dump({"schema": 1, "targets": {}, "repos": {cls.project: {
-                "at": time.time(), "tried": time.time(), "count": 1, "max": "7.5", "level": "high", "gaps": [],
-                "error": "", "hint": "", "prev": None, "details": [{
-                    "name": "lodash", "version": "4.17.20", "ecosystem": "npm", "ids": ["GHSA-aaaa-bbbb-cccc"],
-                    "advisories": 1, "severity": "7.5", "level": "high", "fixed": "4.17.21",
-                    "sources": ["package-lock.json"]}]}}}, f)
-        cls.scan_file = os.path.join(cls.config, "uptick", "scan-repos.json")
-        with open(cls.scan_file, "w", encoding="utf-8") as f:
-            json.dump({"repos": ["/elsewhere"], "kept": True}, f)
+        # Throwaway XDG folders: an older implementation's scan route reads and writes Uptick's files there.
+        xdg = {k: os.path.join(os.path.realpath(cls._tmp.name), d)
+               for k, d in (("XDG_CACHE_HOME", "cache"), ("XDG_CONFIG_HOME", "config"))}
         cls.proc = subprocess.Popen(COMMAND + ["inbox", "serve"], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                    env=dict(os.environ, SIGNOFF_INBOX_HOME=cls.home, XDG_CACHE_HOME=cls.cache,
-                                             XDG_CONFIG_HOME=cls.config))
+                                    env=dict(os.environ, SIGNOFF_INBOX_HOME=cls.home, **xdg))
 
         def stop():
             if cls.proc.poll() is None:
@@ -1127,150 +1115,21 @@ class Inbox(unittest.TestCase):
         before = self.requests()
         refused(404)  # a closed pair writes nothing more
 
-    def test_hand_over_a_finding_only_osv_scanner_lists(self):
-        """osv-scanner's JSON in the home: its finding goes to the agent as Uptick's do, under today's rules."""
-        path = os.path.join(self.home, "osv-scanner.json")
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump({"results": [{"source": {"path": os.path.join(self.project, "requirements.txt")}, "packages": [{
-                "package": {"name": "jinja2", "version": "2.10.0", "ecosystem": "PyPI"},
-                "groups": [{"ids": ["GHSA-462w-v97r-4m45"], "aliases": ["CVE-2019-10906"], "max_severity": "8.6"}],
-                "vulnerabilities": [{"id": "GHSA-462w-v97r-4m45", "affected": [{
-                    "package": {"name": "jinja2", "ecosystem": "PyPI"},
-                    "ranges": [{"type": "ECOSYSTEM", "events": [{"introduced": "0"}, {"fixed": "2.10.1"}]}]}]}]}]}]}, f)
-
-        def half_written():  # no source again for the other tests: a file cut short counts as none
-            with open(path, "w", encoding="utf-8") as f:
-                f.write('{"results": [')
-        self.addCleanup(half_written)
+    def test_no_scan_route_and_no_finding_shape(self):
+        """Scan this project and a finding handed over are gone: /scan gets what any unknown route gets, and a vuln
+        or vulns request what any unknown shape gets. Nothing is written."""
         start, page = self.open()
-        vuln = {"kind": "vuln", "project": self.pid, "ref": "jinja2@2.10.0"}
-        for status, headers in ((403, {"Host": "evil.example"}), (403, {"Origin": "http://evil.example"}),
-                                (403, {"Sec-Fetch-Site": "cross-site"}), (415, {"Content-Type": "text/plain"})):
-            before = self.requests()
-            resp, data = self.save(page, vuln, headers, "request")
-            self.assertEqual((resp.status, self.requests()), (status, before), (headers, data))
-        resp, data = self.save(page, dict(vuln, ref="jinja2@2.10.1"), path="request")
-        self.assertEqual(resp.status, 409, data)
-        resp, data = self.save(page, vuln, path="request")
-        self.assertEqual(resp.status, 200, data)
-        with open(os.path.join(self.home, "requests", self.pid, json.loads(data)["id"] + ".json"),
-                  encoding="utf-8") as f:
-            saved = json.load(f)
-        self.assertEqual((saved["kind"], saved["ref"], saved["text"]), (
-            "vuln", "jinja2@2.10.0", "Please fix this vulnerability in this project: high severity "
-            "(GHSA-462w-v97r-4m45, CVE-2019-10906); fixed in 2.10.1."))
-
-    def test_hand_over_a_ref_in_two_ecosystems_by_its_own(self):
-        """foo@1.0.0 of PyPI and of npm: a vuln request may name the ecosystem, a plain string of a listed finding
-        of that ref; its text then names it. Without it, the first listing's. (Named to run after the todo test,
-        which counts every request file in the shared home.)"""
-        path = os.path.join(self.home, "osv-scanner.json")
-
-        def package(eco, vid, fixed):
-            return {"package": {"name": "foo", "version": "1.0.0", "ecosystem": eco},
-                    "groups": [{"ids": [vid], "aliases": [], "max_severity": "8.6"}],
-                    "vulnerabilities": [{"id": vid, "affected": [{"package": {"name": "foo", "ecosystem": eco},
-                                                                  "ranges": [{"type": "ECOSYSTEM", "events": [
-                                                                      {"introduced": "0"}, {"fixed": fixed}]}]}]}]}
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump({"results": [{"source": {"path": os.path.join(self.project, "requirements.txt")}, "packages": [
-                package("PyPI", "PYSEC-1", "1.0.1"), package("npm", "GHSA-n", "2.0.0")]}]}, f)
-
-        def half_written():
-            with open(path, "w", encoding="utf-8") as f:
-                f.write('{"results": [')
-        self.addCleanup(half_written)
-        start, page = self.open()
-        vuln = {"kind": "vuln", "project": self.pid, "ref": "foo@1.0.0"}
-        for status, body in ((400, dict(vuln, ecosystem=7)), (400, dict(vuln, ecosystem=["npm"])),
-                             (400, dict(vuln, ecosystem="n pm")), (400, dict(vuln, ecosystem="")),
-                             (409, dict(vuln, ecosystem="Go")), (403, dict(vuln, ecosystem="npm"))):
-            before = self.requests()
-            headers = {"Origin": "http://evil.example"} if status == 403 else None
-            resp, data = self.save(page, body, headers, "request")
-            self.assertEqual((resp.status, self.requests()), (status, before), (body, data))
-        texts = {}
-        for eco in ("npm", "PyPI", None):
-            resp, data = self.save(page, dict(vuln, ecosystem=eco) if eco else vuln, path="request")
-            self.assertEqual(resp.status, 200, data)
-            with open(os.path.join(self.home, "requests", self.pid, json.loads(data)["id"] + ".json"),
-                      encoding="utf-8") as f:
-                saved = json.load(f)
-            self.assertEqual(saved.get("ecosystem"), eco)
-            texts[eco] = saved["text"]
-        self.assertEqual(texts, {
-            "npm": "Please fix this vulnerability in this project, in its npm package: high severity (GHSA-n); "
-                   "fixed in 2.0.0.",
-            "PyPI": "Please fix this vulnerability in this project, in its PyPI package: high severity (PYSEC-1); "
-                    "fixed in 1.0.1.",
-            None: "Please fix this vulnerability in this project, in its PyPI package: high severity (PYSEC-1); "
-                  "fixed in 1.0.1."})
-
-    def scan_list(self):
-        with open(self.scan_file, "rb") as f:
-            return f.read()
-
-    def test_scan_this_project_and_hand_a_finding_over_keep_todays_rules(self):
-        start, page = self.open()
-        scan, vuln = {"project": self.pid}, {"kind": "vuln", "project": self.pid, "ref": "lodash@4.17.20"}
-        # Every fixable finding of the project in one request, with the count the page showed.
-        vulns = {"kind": "vulns", "project": self.pid, "count": 1}
-        board = re.search(r'"board":\s*"(/[^"]+)"', self.request("GET", page + "run/0/")[1].decode("utf-8")).group(1)
-
-        def refused(status, body, path, headers=None):
-            before, asked = self.scan_list(), self.requests()
-            resp, data = self.save(page, body, headers, path)
-            self.assertEqual(resp.status, status, (body, headers, path, data))
-            self.assertEqual((self.scan_list(), self.requests()), (before, asked))
-
-        for body, path in ((scan, "scan"), (vuln, "request"), (vulns, "request")):
-            for host in ("localhost.example:%d" % self.port, "127.0.0.1", "evil.example", "[::1]:%d" % self.port,
-                         "", None):
-                refused(403, body, path, {"Host": host})
-            for origin in ("http://evil.example", "null", "http://localhost:%d" % self.port, self.origin + "/", None):
-                refused(403, body, path, {"Origin": origin})
-            for site in ("cross-site", "same-site", "none"):
-                refused(403, body, path, {"Sec-Fetch-Site": site})
-            for ctype in ("text/plain", "application/x-www-form-urlencoded", None):
-                refused(415, body, path, {"Content-Type": ctype})
-            refused(411, json.dumps(body).encode(), path, {"Content-Length": None})
-            refused(413, b"{}", path, {"Content-Length": "41943040"})
-            for bad in (b"{x", b"[]", dict(body, extra=1)):
-                refused(400, bad, path)
-            refused(404, dict(body, project="f" * 16), path)
-            for other in (path + "/", path + "?theme=dark", "run/0/" + path):
-                refused(404, body, other)
-            resp, _ = self.request("POST", "/%s/%s" % (board.split("/")[1], path), body, {
-                "Content-Type": "application/json", "Origin": self.origin, "Sec-Fetch-Site": "same-origin"})
-            self.assertEqual(resp.status, 404)
-            self.assertEqual(self.request("GET", page + path)[0].status, 404)
-        refused(409, vuln, "request")  # not on Uptick's list yet: its old data offers nothing to hand over
-        refused(409, vulns, "request")
-        for bad in (dict(vulns, ref="vulns"), {"kind": "vuln", "project": self.pid}, dict(vulns, project=7),
-                    {"kind": "vulns", "project": self.pid}, dict(vulns, count="1"), dict(vulns, count=True),
-                    dict(vulns, count=1.5), dict(vulns, count=-1)):
-            refused(400, bad, "request")
-        resp, data = self.save(page, scan, path="scan")
-        self.assertEqual(resp.status, 200, data)
-        self.assertEqual(json.loads(self.scan_list()), {"repos": ["/elsewhere", self.project], "kept": True})
-        refused(409, dict(vuln, ref="lodash@4.17.21"), "request")
-        resp, data = self.save(page, vuln, path="request")
-        self.assertEqual(resp.status, 200, data)
-        rid = json.loads(data)["id"]
-        with open(os.path.join(self.home, "requests", self.pid, rid + ".json"), encoding="utf-8") as f:
-            saved = json.load(f)
-        self.assertEqual((saved["kind"], saved["ref"]), ("vuln", "lodash@4.17.20"))
-        for count in (0, 2):  # not the count the page showed: the list changed since
-            refused(409, dict(vulns, count=count), "request")
-        resp, data = self.save(page, vulns, path="request")
-        self.assertEqual(resp.status, 200, data)
-        with open(os.path.join(self.home, "requests", self.pid, json.loads(data)["id"] + ".json"),
-                  encoding="utf-8") as f:
-            saved = json.load(f)
-        self.assertEqual((saved["kind"], saved["ref"], saved["refs"]), ("vulns", "vulns", ["lodash@4.17.20"]))
-        self.assertIn("lodash@4.17.20 → 4.17.21", saved["text"])
-        self.assertEqual(self.request("GET", start)[0].status, 410)
-        refused(404, scan, "scan")  # a closed pair writes nothing more
+        before = self.requests()
+        for path in ("scan", "scan/", "run/0/scan"):
+            resp, data = self.save(page, {"project": self.pid}, path=path)
+            self.assertEqual(resp.status, 404, (path, data))
+        self.assertEqual(self.request("GET", page + "scan")[0].status, 404)
+        for body in ({"kind": "vuln", "project": self.pid, "ref": "lodash@4.17.20"},
+                     {"kind": "vuln", "project": self.pid, "ref": "jinja2@2.10.0", "ecosystem": "PyPI"},
+                     {"kind": "vulns", "project": self.pid, "count": 1}):
+            resp, data = self.save(page, body, path="request")
+            self.assertEqual(resp.status, 400, (body, data))
+        self.assertEqual(self.requests(), before)
 
     def prefs(self):
         try:

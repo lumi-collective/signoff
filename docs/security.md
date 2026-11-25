@@ -108,17 +108,6 @@ that both look at one home, not a limit on what runs). It serves
 nothing, and every three seconds it reads the inbox's `state.json` and takes `inbox.lock` for a moment to see that
 the inbox still runs.
 
-For its Vulnerabilities section the inbox reads Uptick's `vulns.json` and scan list, and `osv-scanner.json` in the
-Signoff home: the output of an osv-scanner scan you ran yourself ([how](inbox.md#the-inbox)). It never runs a
-scan and sends nothing anywhere. Text from those files reaches the page as one line each, capped, with the
-project's folder and your home shown by name, and never a lockfile's path. A finding you hand over reaches the
-project's agent only as its package and version, level, advisory ids and fixed version, and its ecosystem when the
-list shows the same package and version in two, each checked against a plain pattern (or the inbox's own words
-that a fixed version exists for each advisory); never an advisory's
-summary, details or any other free text from either file. A package named by a URL or a local path is shown and
-never handed over. Whoever can write the Signoff home can put findings
-there, as they can put requests.
-
 **Leaves your machine:** nothing from Signoff. The server listens on `127.0.0.1` only. The page loads no fonts,
 scripts or styles from anywhere, and neither can a board; their Content-Security-Policies block it. A board's own
 script could still send data out over WebRTC, which no page policy blocks, so boards hold synthetic data only.
@@ -130,7 +119,7 @@ created new and never through a link, and an outcome file for each round of the 
 inbox is older than the plugin);
 once the inbox has run, also the round locks, the run notes and the hooks' project and session notes and
 `waiting.flag` described under [the exit codes](running.md#running-it-yourself), and the inbox's own files and requests described in [the inbox's page](inbox.md#the-inbox), with the `.done`
-marks agents write; with the macOS app installed, the hooks' `launcher` link in the home; on your click, Uptick's scan list; with `--notes` (the Notes folder setting), a note per round done in that run, created in your notes folder and never written over ([the checks](running.md#notes-folder)). A folder another app syncs sends the notes where that app sends them. The mod and `signoff inbox requests` write nothing. The
+marks agents write; with the macOS app installed, the hooks' `launcher` link in the home; with `--notes` (the Notes folder setting), a note per round done in that run, created in your notes folder and never written over ([the checks](running.md#notes-folder)). A folder another app syncs sends the notes where that app sends them. The mod and `signoff inbox requests` write nothing. The
 past-decisions page writes nothing. Nothing is deleted, with one narrow exception: a starting inbox removes the socket a stopped inbox left in the Signoff home, and only that.
 The `launcher` link, when it points elsewhere, is replaced by renaming a new link over it.
 

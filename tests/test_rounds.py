@@ -821,15 +821,6 @@ class Page(unittest.TestCase):
         self.assertTrue(used and used <= en, used - en)
         self.assertEqual(used - hu, set())
 
-    def test_each_osv_state_a_source_line_names_has_a_label(self):
-        # osvLabel builds L['osv_' + status] at run time, which the test above does not see. A project's row passes
-        # it its merged state, a source's line its own (off too); found, partial and error it words itself.
-        labels = self.page[self.page.index("var LABELS = {"):self.page.index("var data = JSON.parse")]
-        en = labels[:labels.index("hu: {")]
-        self.assertIn("L['osv_' + o.status]", self.page)
-        for state in ("off", "stale", "clean"):
-            self.assertRegex(en, r"\bosv_%s: '" % state)
-
     def test_the_round_age_helpers_and_labels_are_shared_by_both_pages(self):
         # lasted() and OLD_ROUND serve the round's page and the inbox, so they sit above the inbox's part, and the
         # round's page labels they use exist in both languages (the test above then covers lasted's).

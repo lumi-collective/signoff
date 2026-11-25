@@ -50,15 +50,9 @@ before that; one left open comes back at a later session start. The user's Later
 "The owner asks to park this item for later: remove its waiting marker and keep it open.": take the
 `(waiting on you: ...)` marker off that item, leave its checkbox open, and mark the message done.
 
-A vulnerability finding the user hands over from the inbox's Vulnerabilities section comes the same way, on the
-vulnerability finding `"<package>@<version>"`, with a line the inbox wrote from the finding (level, advisory ids,
-fixed version; "in its npm package", or `(npm)` after the package, when the project has it in two ecosystems: fix
-that one). Find the package in the project's lockfiles, check the advisories, and propose or make the fix
-as you would for the same request typed here; mark it done the same way. Hand all fixable over comes on the
-vulnerability findings `"vulns"`, naming each `<package>@<version> → <fixed version>` (or, when its advisories
-are fixed in different versions, "a fixed version exists for each advisory": check each one): fix the named ones, as
-one request, and mark it done once. When it ends "and N more", tell the user that N were left out; they stay
-listed in the inbox, to hand over again after the next scan.
+A message on the vulnerability finding `"<package>@<version>"`, handed over from an older inbox, comes the same
+way: find the package in the project's lockfiles, propose or make the fix as for the same request typed here, and
+mark it done the same way.
 
 A round the user answered in the inbox after its Signoff run had ended (Ctrl+C, the idle timeout, or a session
 that ended) comes the same way, on the Signoff rounds `"<topic folder> / round-01, round-02"`, with a fixed text

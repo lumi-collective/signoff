@@ -2590,9 +2590,7 @@ def run_inbox(work):
     """The inbox: first nothing waits, so the empty state shows, and its To do button and the sidebar filter the list.
     Then a waiting run's round and a todo item marked waiting on you. The item opens beside the list to its Markdown: the
     agent's HTML is text, only the https link is a link, and Copy puts the block's text on the clipboard exactly. A
-    message typed on it becomes a request file for the project's session, and shows as sent. The round opens from the list in the same tab, and Done there wakes the waiting run (exit 0, its answers path). Then the OSV
-    section: Scan this project adds the project to Uptick's scan list, and a finding goes to the agent as a request;
-    with osv-scanner's JSON alone, the section names it and its finding has a row.
+    message typed on it becomes a request file for the project's session, and shows as sent. The round opens from the list in the same tab, and Done there wakes the waiting run (exit 0, its answers path).
     Waiting on you is grouped by project under a summary line, the other open items closed behind a count row per
     project; a chain is one row with its steps, Later and Open round."""
     sys.path.insert(0, str(ROOT / "plugin" / "signoff"))
@@ -2608,25 +2606,13 @@ def run_inbox(work):
     (home / "projects").mkdir(parents=True, mode=0o700)
     (home / "projects" / (pid + ".json")).write_text(json.dumps(
         {"schema": 1, "id": pid, "root": str(root.resolve()), "name": "inbox-project"}), encoding="utf-8")
-    # Uptick's files, never the user's: a fresh scan of the project with one finding, and a scan list without it.
-    cache, config = work / "xdg-cache", work / "xdg-config"
-    (cache / "uptick").mkdir(parents=True)
-    (config / "uptick").mkdir(parents=True)
-    (cache / "uptick" / "vulns.json").write_text(json.dumps({"schema": 1, "targets": {}, "repos": {str(root.resolve()): {
-        "at": time.time(), "tried": time.time(), "count": 1, "max": "7.5", "level": "high", "gaps": [], "error": "",
-        "hint": "", "prev": None, "details": [{
-            "name": "lodash", "version": "4.17.20", "ecosystem": "npm", "ids": ["GHSA-35jh-r3h4-6jhm"], "advisories": 1,
-            "severity": "7.2", "level": "high", "fixed": "4.17.21", "sources": ["package-lock.json"]}]}}}),
-        encoding="utf-8")
-    other = work / "inbox-other"  # a second project, never scanned, with one todo item
+    other = work / "inbox-other"  # a second project, with one todo item
     (other / "_bmad-output").mkdir(parents=True)
     (other / "_bmad-output" / "todo.md").write_text("- [ ] An item of the other project\n", encoding="utf-8")
     other_id = signoff.project_id(other.resolve())
     (home / "projects" / (other_id + ".json")).write_text(json.dumps(
         {"schema": 1, "id": other_id, "root": str(other.resolve()), "name": "inbox-other"}), encoding="utf-8")
-    scan_list = config / "uptick" / "scan-repos.json"
-    scan_list.write_text(json.dumps({"repos": ["/elsewhere"], "kept": True}), encoding="utf-8")
-    env = dict(os.environ, SIGNOFF_INBOX_HOME=str(home), XDG_CACHE_HOME=str(cache), XDG_CONFIG_HOME=str(config))
+    env = dict(os.environ, SIGNOFF_INBOX_HOME=str(home))
     script = [sys.executable, "-I", "-B", str(ROOT / "plugin" / "signoff" / "signoff.py")]
     inbox_err = []
     inbox = spawn(script + ["inbox", "serve"], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
@@ -2655,17 +2641,11 @@ def run_inbox(work):
             " document.getElementById('panels').hidden, document.title]; })()"))
         check(zero == ["Nothing waits on you", ["To do (3)"], True, "Inbox"],
               "the empty state when nothing waits: %r" % zero)
-        # Focus walks only the rows shown: the To do rows wait behind closed count rows, so from the empty state it
-        # opens on the Vulnerabilities row, and the bar counts it alone; Esc goes back with focus on the Focus button.
+        # Focus walks only the rows shown: the To do rows wait behind closed count rows, so from the empty state f
+        # finds no row and stays out of Focus (run_live walks an Idle row from the empty state).
         press(browser, "f", "KeyF", 70, text="f")
-        walk = browser.js("[document.body.classList.contains('focusing'), document.activeElement.tagName,"
-                          " document.querySelector('#ib-detail h2').textContent, document.querySelector('.ib-fbar span')"
-                          ".textContent]")
-        check(walk == [True, "H2", "Not scanned (2)", "1 of 1"], "f should walk only the rows shown: %r" % walk)
-        press(browser, "Escape", "Escape", 27)
-        check(browser.js("!document.querySelector('.ib-zero').hidden && document.activeElement.classList.contains('tb-btn')"
-                         " && document.activeElement.getAttribute('aria-pressed') === 'false'"),
-              "Esc should go back to the empty state, focus on the Focus button")
+        check(browser.js("!document.body.classList.contains('focusing') && !document.querySelector('.ib-zero').hidden"),
+              "f should walk only the rows shown, and none is")
         browser.click(".ib-zero button")
         shown = browser.js("(function () { var s = Array.prototype.filter.call(document.querySelectorAll('#panels section'),"
                            " function (x) { return !x.hidden; }); return [s.length, s[0].querySelector('h2').textContent,"
@@ -2717,13 +2697,13 @@ def run_inbox(work):
                              " document.querySelectorAll('section.ib')[0].querySelector('button.ib-main .ib-text').textContent]")
         check(summary == ["2 waiting on you in 1 project", ["inbox-project"], "run the backup · 1 of 2 steps done"],
               "the grouped view and its summary: %r" % summary)
-        # The sidebar filters by project: the other project's item, and the Not scanned row that names it.
+        # The sidebar filters by project: the other project's item.
         browser.js("Array.prototype.filter.call(document.querySelectorAll('.nav'), function (b) {"
                    " return b.querySelector('.nl').textContent === 'inbox-other'; })[0].setAttribute('data-e2e', 'other')")
         browser.click(".nav[data-e2e=other]")
         titles = browser.js("Array.prototype.filter.call(document.querySelectorAll('.ib-row'), function (r) {"
                             " return r.offsetParent; }).map(function (r) { return r.querySelector('.ib-title').textContent; })")
-        check(titles == ["An item of the other project", "Not scanned (2)"], "the project filter: %r" % titles)
+        check(titles == ["An item of the other project"], "the project filter: %r" % titles)
         browser.click(".nav[data-e2e=other]")  # a second click shows everything again
         check(browser.js("Array.prototype.every.call(document.querySelectorAll('#panels section'), function (s) {"
                          " return !s.hidden; }) && document.querySelector('.tb-btn').hidden"), "every row again")
@@ -3078,159 +3058,22 @@ def run_inbox(work):
         check(browser.js(answered)[1:] == ["true", 1, True], "back on the project, Answered open: %r" % browser.js(answered))
         browser.click(".nav[data-e2e=inbox-project]")  # a second click shows everything again
         check(browser.js(answered)[1:] == ["false", 1, False], "no filter, Answered closed again: %r" % browser.js(answered))
-        # The OSV section: projects off Uptick's scan list share one collapsed row, each with its own Scan button;
-        # a click adds that project to the list.
-        osv = "section.ib:last-of-type "
-        rows = browser.js("document.querySelectorAll('%s.ib-row').length" % osv)
-        label = browser.js("document.querySelector('%s.ib-title').textContent" % osv)
-        check(rows == 1 and label == "Not scanned (2)", "one row for both unscanned projects: %r %r" % (rows, label))
-        check(not browser.js("document.querySelector('%sbutton.ib-main').hasAttribute('aria-current')" % osv),
-              "the Not scanned row starts closed")
-        # Keyboard: Enter on the focused row opens it, like the other rows.
-        browser.js("document.querySelector('%sbutton.ib-main').focus()" % osv)
-        browser.call("Input.dispatchKeyEvent", type="keyDown", key="Enter", code="Enter", text="\r")
-        browser.call("Input.dispatchKeyEvent", type="keyUp", key="Enter", code="Enter")
+        # Keyboard: Enter on a focused row that is not open opens it, as a click does.
+        browser.click(".nav[data-e2e=inbox-project]")  # its To do group open: rows that are not open yet
+        title = browser.js("(function () { var b = Array.prototype.filter.call(document.querySelectorAll("
+                           "'#panels button.ib-main'), function (x) { return x.offsetParent && "
+                           "x.getAttribute('aria-current') !== 'true'; })[0];"
+                           " b.setAttribute('data-e2e', 'enter'); return b.querySelector('.ib-title').textContent; })()")
+        browser.js("document.querySelector('[data-e2e=enter]').focus()")
+        press(browser, "Enter", "Enter", 13, text="\r")
         wait_for("Enter to open the row", lambda: browser.js(
-            "!!document.querySelector('#ib-detail .ib-vuln-name') && "
-            "document.querySelector('%sbutton.ib-main').getAttribute('aria-current') === 'true'" % osv))
-        names = browser.js("Array.prototype.map.call(document.querySelectorAll('#ib-detail .ib-vuln-name'), "
-                           "function (n) { return n.textContent; })")
-        check(sorted(names) == ["inbox-other", "inbox-project"], "the unscanned projects, by name: %r" % names)
-        item = "#ib-detail .ib-vulns li:nth-of-type(%d) " % (1 + names.index("inbox-project"))
-        browser.click(item + "button")
-        wait_for("the project added to Uptick's scan list", lambda: browser.js(
-            "document.querySelector('%s.ib-msg-status').textContent" % item).startswith("Added"))
-        check(json.loads(scan_list.read_text(encoding="utf-8")) == {
-            "repos": ["/elsewhere", str(root.resolve())], "kept": True}, "the scan list: %r" % scan_list.read_text())
-        label = browser.js("document.querySelector('%s.ib-title').textContent" % osv)
-        check(label == "Not scanned (1)", "the count should drop without a reload: %r" % label)
-        # Listed now, the fresh finding shows; Hand to agent writes a vuln request. Findings never count as waiting.
-        browser.call("Page.navigate", url=browser.js("location.href"))
-        label = wait_for("the finding's row", lambda: browser.js(
-            "(function () { var t = document.querySelector('%s.ib-title'); return t && !/^Not scanned/.test(t.textContent) "
-            "&& t.textContent; })()" % osv))
-        check(label == "1 known vulnerability, high", "the row should count the finding: %r" % label)
-        last = browser.js("var t = document.querySelectorAll('%s.ib-title'); t[t.length - 1].textContent" % osv)
-        check(last == "Not scanned (1)", "the other project stays in the Not scanned row, last: %r" % last)
-        browser.click(osv + "button.ib-main")
-        browser.click("#ib-detail .ib-vulns .ib-vuln-sent button")
-        handed = wait_for("the finding handed over", lambda: browser.js(
-            "(function () { var p = document.querySelector('#ib-detail .ib-vulns .ib-vuln-sent .pill'); "
-            "return p && p.textContent; })()"))
-        check(handed.startswith("handed over"), "the finding should show as handed over: %r" % handed)
-        # Hand all fixable over: one request for the project, its pill beside the button.
-        label = browser.js("document.querySelector('#ib-detail .ib-vuln-all button').textContent")
-        check(label == "Hand all fixable over (1)", "the hand-all button: %r" % label)
-        check(not browser.js("!!document.querySelector('#ib-detail .ib-vuln-all .pill')"), "no hand-all sent yet")
-        browser.click("#ib-detail .ib-vuln-all button")
-        handed = wait_for("all fixable handed over", lambda: browser.js(
-            "(function () { var p = document.querySelector('#ib-detail .ib-vuln-all .pill'); return p && p.textContent; })()"))
-        check(handed.startswith("handed over"), "the project should show as handed over: %r" % handed)
+            "document.querySelector('[data-e2e=enter]').getAttribute('aria-current') === 'true' && "
+            "document.querySelector('#ib-detail h2').textContent === %s" % json.dumps(title)))
+        browser.click(".nav[data-e2e=inbox-project]")  # a second click shows everything again
         files = [json.loads(p.read_text(encoding="utf-8")) for p in (home / "requests" / pid).glob("*.json")]
         check(sorted((f["kind"], f["ref"]) for f in files) == [
-            ("later", "Sign the release"), ("todo", "Check <b>the backup</b> before the release"),
-            ("vuln", "lodash@4.17.20"), ("vulns", "vulns")], "requests: %r" % files)
-        check(browser.js("document.title") == "(2) Inbox", "a finding must not count as waiting")
-        # The last unscanned project: at 0 the row stays open with its note until a reload.
-        off = "%s.ib-row:last-of-type " % osv
-        browser.click(off + "button.ib-main")
-        browser.click("#ib-detail .ib-vuln-sent button")
-        wait_for("the other project added", lambda: browser.js(
-            "document.querySelector('#ib-detail .ib-msg-status').textContent").startswith("Added"))
-        label = browser.js("document.querySelector('%s.ib-title').textContent + '|' + "
-                           "document.querySelector('#ib-detail h2').textContent + '|' + "
-                           "document.querySelector('%sbutton.ib-main').getAttribute('aria-current')" % (off, off))
-        check(label == "Not scanned (0)|Not scanned (0)|true", "the row should stay open at 0: %r" % label)
-        # Both sources on the project: osv-scanner lists lodash too and finds minimist. The open row has a line per
-        # source, each finding says where it came from, and Hand to agent names the finding's ecosystem.
-        def advisory(vid, score):
-            return {"vulnerabilities": [{"id": vid}], "groups": [{"ids": [vid], "aliases": [], "max_severity": score}]}
-        both = home / "osv-scanner.json"
-        both.write_text(json.dumps({"results": [{"source": {"path": str(root.resolve() / "package-lock.json")},
-                                                 "packages": [
-            dict(advisory("GHSA-35jh-r3h4-6jhm", "7.2"), package={"name": "lodash", "version": "4.17.20", "ecosystem": "npm"}),
-            dict(advisory("GHSA-xvch-5gv4-984h", "5.6"), package={"name": "minimist", "version": "1.2.5", "ecosystem": "npm"})]}]}),
-            encoding="utf-8")
-        row_of = ("(function () { return 1 + Array.prototype.findIndex.call(document.querySelectorAll('%sli.ib-row'), "
-                  "function (l) { return /known/.test(l.querySelector('.ib-title').textContent); }); })()" % osv)
-        lines = ("(function () { return [Array.prototype.map.call(document.querySelectorAll('#ib-detail .ib-src'), "
-                 "function (p) { return p.textContent; }), Array.prototype.map.call(document.querySelectorAll("
-                 "'#ib-detail .ib-vulns .ib-vuln-facts'), function (p) { return p.textContent; }), "
-                 "Array.prototype.map.call(document.querySelectorAll('#ib-detail .ib-vuln-note'), "
-                 "function (p) { return p.textContent; })]; })()")
-        browser.call("Page.navigate", url=browser.js("location.href"))
-        at = wait_for("the row of both sources", lambda: browser.js(row_of))
-        browser.click("%sli.ib-row:nth-of-type(%d) button.ib-main" % (osv, at))
-        shown = wait_for("its source lines", lambda: (lambda v: len(v[0]) == 2 and v)(browser.js(lines)))
-        when = r" · scanned \S.*$"  # the time as the row's own shows it
-        osvs = "osv" + chr(8209) + "scanner"  # a non-breaking hyphen (U+2011), so a phone's line never splits it
-        check(re.match(r"Uptick: 1 known vulnerability, high" + when, shown[0][0])
-              and re.match(osvs + r": 2 known vulnerabilities, worst high" + when, shown[0][1])
-              and shown[1:] == [["npm · GHSA-35jh-r3h4-6jhm · fixed in 4.17.21 · Uptick + " + osvs,
-                                 "npm · GHSA-xvch-5gv4-984h · no fix yet · " + osvs], []],
-              "a line per source and each finding's sources: %r" % shown)
-        browser.click("#ib-detail .ib-vulns li:nth-of-type(2) .ib-vuln-sent button")
-        wait_for("minimist handed over", lambda: browser.js(
-            "!!document.querySelector('#ib-detail .ib-vulns li:nth-of-type(2) .ib-vuln-sent .pill')"))
-        files = [json.loads(p.read_text(encoding="utf-8")) for p in (home / "requests" / pid).glob("*.json")]
-        check([(f["kind"], f.get("ecosystem")) for f in files if f["ref"] == "minimist@1.2.5"] == [("vuln", "npm")],
-              "Hand to agent names the finding's ecosystem: %r" % files)
-        # An old osv-scanner file: the row is Uptick's, and the note under osv-scanner's line blames osv-scanner only.
-        old = time.time() - 3 * 86400
-        os.utime(str(both), (old, old))
-        browser.call("Page.navigate", url=browser.js("location.href"))
-        at = wait_for("the row again", lambda: browser.js(row_of))
-        browser.click("%sli.ib-row:nth-of-type(%d) button.ib-main" % (osv, at))
-        shown = wait_for("its source lines", lambda: (lambda v: len(v[0]) == 2 and v)(browser.js(lines)))
-        check(re.match(r"Uptick: 1 known vulnerability, high" + when, shown[0][0])
-              and re.match(osvs + r": No recent data" + when, shown[0][1])
-              and shown[1:] == [["npm · GHSA-35jh-r3h4-6jhm · fixed in 4.17.21 · Uptick"], [
-                  "osv-scanner's file is more than two days old (or dated ahead of now): its findings are left out "
-                  "until it is written again."]], "the old source's own note: %r" % shown)
-        # The other way round: an old Uptick entry beside a fresh osv-scanner file. Uptick's own note, and only it.
-        (cache / "uptick" / "vulns.json").write_text(json.dumps({"schema": 1, "targets": {}, "repos": {
-            str(root.resolve()): {"at": old, "tried": old, "count": 0, "max": "", "level": "", "gaps": [], "error": "",
-                                  "hint": "", "prev": None, "details": []}}}), encoding="utf-8")
-        os.utime(str(both), None)
-        browser.call("Page.navigate", url=browser.js("location.href"))
-        at = wait_for("the row once more", lambda: browser.js(row_of))
-        browser.click("%sli.ib-row:nth-of-type(%d) button.ib-main" % (osv, at))
-        shown = wait_for("its source lines", lambda: (lambda v: len(v[0]) == 2 and v)(browser.js(lines)))
-        check(re.match(r"Uptick: No recent data" + when, shown[0][0])
-              and re.match(osvs + r": 2 known vulnerabilities, worst high" + when, shown[0][1])
-              and shown[2] == ["Uptick has no recent scan of this project (within two of its runs; two days for an "
-                               "older Uptick): its vulnerability scan is off, or has not run since."],
-              "Uptick's own note under its line: %r" % shown)
-        # osv-scanner's JSON alone (Uptick's file cut short now): the section names it, the other project's finding
-        # has its own row, and the project it does not list is not scanned, with no Scan button (that is Uptick's).
-        (cache / "uptick" / "vulns.json").write_text("{", encoding="utf-8")
-        advisories = [{"id": vid, "affected": [{"package": {"name": "jinja2", "ecosystem": "PyPI"}, "ranges": [
-            {"type": "ECOSYSTEM", "events": [{"introduced": "0"}, {"fixed": fixed}]}]}]}
-            for vid, fixed in (("GHSA-462w-v97r-4m45", "2.10.1"), ("GHSA-g3rq-g295-4j3m", "2.11.3"))]
-        (home / "osv-scanner.json").write_text(json.dumps({"results": [{
-            "source": {"path": str(other.resolve() / "requirements.txt")}, "packages": [{
-                "package": {"name": "jinja2", "version": "2.10.0", "ecosystem": "PyPI"}, "vulnerabilities": advisories,
-                "groups": [{"ids": [a["id"]], "aliases": [], "max_severity": s}
-                           for a, s in zip(advisories, ("8.6", "6.9"))]}]}]}), encoding="utf-8")
-        browser.call("Page.navigate", url=browser.js("location.href"))
-        titles = wait_for("osv-scanner's row", lambda: browser.js(
-            "(function () { var t = Array.prototype.map.call(document.querySelectorAll('%s.ib-title'), "
-            "function (n) { return n.textContent; }); return t.length === 2 && t; })()" % osv))
-        note = browser.js("document.querySelector('%sh2 .ib-note').textContent" % osv)
-        check([note] + titles == ["from " + osvs, "1 known vulnerability, high", "Not scanned (1)"],
-              "the section from osv-scanner alone: %r %r" % (note, titles))
-        browser.click(osv + "button.ib-main")
-        facts = wait_for("the osv-scanner finding", lambda: browser.js(
-            "(function () { var f = document.querySelector('#ib-detail .ib-vulns .ib-vuln-facts'); "
-            "return f && f.textContent; })()"))
-        check(facts == "PyPI · GHSA-462w-v97r-4m45 · GHSA-g3rq-g295-4j3m · a fix for each advisory · " + osvs,
-              "a finding fixed in a version per advisory: %r" % facts)
-        browser.click(off + "button.ib-main")
-        unscanned = wait_for("the unscanned project", lambda: browser.js(
-            "(function () { var n = document.querySelector('#ib-detail .ib-vuln-name'); return n && [n.textContent, "
-            "document.querySelectorAll('#ib-detail .ib-vulns button').length, "
-            "document.querySelectorAll('#ib-detail .ib-vuln-note').length]; })()"))
-        check(unscanned == ["inbox-project", 0, 0], "no Scan this project and no Uptick note: %r" % unscanned)
+            ("later", "Sign the release"), ("todo", "Check <b>the backup</b> before the release")],
+              "requests: %r" % files)
         # A phone: a row opens as a bottom sheet with the rest inert, Esc closes it and focus goes back to the row;
         # the sidebar is a drawer, Esc closes it and focus goes back to its button.
         browser.call("Emulation.setDeviceMetricsOverride", width=390, height=844, deviceScaleFactor=1, mobile=True)
@@ -3294,7 +3137,7 @@ SEARCH_ROWS = """(function () {
 
 def search_fixture(work):
     """A synthetic Signoff home for the list's search: project ops (a waiting todo item that names a file in a code
-    span, two more open items, a request on one, a finding, a waiting run in a topic whose round has accented
+    span, two more open items, a request on one, a waiting run in a topic whose round has accented
     titles) and project docs (two open items). Returns what a test needs to start the inbox and the run."""
     sys.path.insert(0, str(ROOT / "plugin" / "signoff"))
     import signoff
@@ -3322,23 +3165,7 @@ def search_fixture(work):
     (asked / ("0123456789abcdef.json")).write_text(json.dumps({
         "schema": 1, "id": "0123456789abcdef", "kind": "todo", "ref": "Rendezd át a régi ágakat",
         "text": "Kérlek előbb a stabil ágat", "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}), encoding="utf-8")
-    cache, config = work / "search-cache", work / "search-config"
-    (cache / "uptick").mkdir(parents=True)
-    (config / "uptick").mkdir(parents=True)
-    (cache / "uptick" / "vulns.json").write_text(json.dumps({"schema": 1, "targets": {}, "repos": {str(ops.resolve()): {
-        "at": time.time(), "tried": time.time(), "count": 1, "max": "7.5", "level": "high", "gaps": [], "error": "",
-        "hint": "", "prev": None, "details": [{
-            "name": "lodash", "version": "4.17.20", "ecosystem": "npm", "ids": ["GHSA-35jh-r3h4-6jhm"], "advisories": 1,
-            "severity": "7.2", "level": "high", "fixed": "4.17.21", "sources": ["package-lock.json"]}]}}}),
-        encoding="utf-8")
-    (config / "uptick" / "scan-repos.json").write_text(json.dumps({"repos": [str(ops.resolve())]}), encoding="utf-8")
-    # osv-scanner lists the same finding, so it comes from both sources and the search finds it by either name.
-    (home / "osv-scanner.json").write_text(json.dumps({"results": [{
-        "source": {"path": str(ops.resolve() / "package-lock.json")}, "packages": [{
-            "package": {"name": "lodash", "version": "4.17.20", "ecosystem": "npm"},
-            "vulnerabilities": [{"id": "GHSA-35jh-r3h4-6jhm"}],
-            "groups": [{"ids": ["GHSA-35jh-r3h4-6jhm"], "aliases": [], "max_severity": "7.2"}]}]}]}), encoding="utf-8")
-    env = dict(os.environ, SIGNOFF_INBOX_HOME=str(home), XDG_CACHE_HOME=str(cache), XDG_CONFIG_HOME=str(config))
+    env = dict(os.environ, SIGNOFF_INBOX_HOME=str(home))
     script = [sys.executable, "-I", "-B", str(ROOT / "plugin" / "signoff" / "signoff.py")]
     return {"home": home, "env": env, "script": script, "topic": topic, "ops": ops, "ids": ids}
 
@@ -3381,7 +3208,7 @@ def run_inbox_search(work):
         wait_for("the list", lambda: browser.js("document.querySelectorAll('#panels li.ib-row').length > 3"))
         base = browser.js(LIST_STATE)
         parts = json.loads(base)
-        check(parts[0][:2] == ["Repo-higiénia: ikonok", "Hagyd jóvá a kiadási jegyzetet"] and len(parts[0]) == 4
+        check(parts[0] == ["Repo-higiénia: ikonok", "Hagyd jóvá a kiadási jegyzetet"]
               and parts[1] == ["false", "false"], "the list before any search: %r" % parts)
         # A search form with a name, a labelled field and a count a screen reader hears.
         shape = browser.js("(function () { var f = document.querySelector('form[role=search]'), i = " + field + ", c = "
@@ -3418,10 +3245,7 @@ def run_inbox_search(work):
                             "'#panels .ib-ghead'), function (h) { return h.checkVisibility(); }).length]")
         check(opened[0][1] == "true" and opened[1] == 1, "the matching project's group opens, the others stay out: %r" % opened)
         check(found("kerlek elobb") == ["Rendezd át a régi ágakat"], "the text of a request on an item")
-        check(found("lodash") == ["1 known vulnerability, high"], "a vulnerability's package name: %r" % browser.js(SEARCH_ROWS))
-        check(found("ghsa-35jh") == ["1 known vulnerability, high"], "a vulnerability's advisory id")
-        check(found("osv-scanner") == ["1 known vulnerability, high"], "a finding by its source: %r" % browser.js(SEARCH_ROWS))
-        check(sorted(found("docs")) == ["Frissítsd a bevezetőt", "Not scanned (1)", "Rename the glossary"],
+        check(sorted(found("docs")) == ["Frissítsd a bevezetőt", "Rename the glossary"],
               "a project name matches its rows: %r" % browser.js(SEARCH_ROWS))
         check(found("zzzz") == [] and browser.js("document.getElementById('ib-search-count').textContent") == "No matches"
               and browser.js("document.querySelector('.ib-nomatch').hidden") is False,
@@ -3624,6 +3448,17 @@ def run_live(work):
             "(function () { var z = document.querySelector('.ib-zero'); return z && !z.hidden && [document.title,"
             " Array.prototype.map.call(z.querySelectorAll('button'), function (b) { return b.textContent; })]; })()"))
         check(zero == ["Inbox", ["Idle (1)"]], "nothing waiting: the empty state, with a button to Idle: %r" % zero)
+        # Focus walks only the rows shown: from the empty state it opens on the Idle row, and the bar counts it
+        # alone; Esc goes back with focus on the Focus button.
+        press(browser, "f", "KeyF", 70, text="f")
+        walk = browser.js("[document.body.classList.contains('focusing'), document.activeElement.tagName,"
+                          " document.querySelector('#ib-detail h2').textContent === document.querySelector("
+                          "'section.idle .ib-title').textContent, document.querySelector('.ib-fbar span').textContent]")
+        check(walk == [True, "H2", True, "1 of 1"], "f should walk only the rows shown: %r" % walk)
+        press(browser, "Escape", "Escape", 27)
+        check(browser.js("!document.querySelector('.ib-zero').hidden && document.activeElement.classList.contains('tb-btn')"
+                         " && document.activeElement.getAttribute('aria-pressed') === 'false'"),
+              "Esc should go back to the empty state, focus on the Focus button")
         browser.click(".ib-zero button")
         landed = browser.js("[document.querySelector('.ib-zero').hidden, !!document.activeElement.closest('section.idle')]")
         check(landed == [True, True], "the Idle button should show the list, focus on the idle row: %r" % landed)
@@ -3906,7 +3741,6 @@ def run():
     WORK.append(work)
     # A Signoff home that does not exist: page runs as with no inbox, even when the user's own inbox is open.
     os.environ["SIGNOFF_INBOX_HOME"] = str(work / "no-home")
-    os.environ["XDG_CACHE_HOME"], os.environ["XDG_CONFIG_HOME"] = str(work / "no-cache"), str(work / "no-config")
     for name in ("SIGNOFF_PORT", "SSH_CONNECTION", "SSH_TTY", "BROWSER"):  # as on a plain local run
         os.environ.pop(name, None)
     (work / ".git").mkdir()  # the project root, so the header can name it
@@ -4118,8 +3952,7 @@ def main():
              "j/k and Enter, Focus with f and Esc; at 390 px the sheet and the drawer, Esc and focus back; "
              "the round answered from the inbox wakes the waiting "
              "run, exit 0, then shows as sent in Answered, closed behind its count row (out of j, k and Focus), "
-             "opened by a click, a match inside or its project's filter, kept open by the page's own reload; Scan this project adds it to Uptick's list and counts Not scanned down "
-             "to 0 without a reload, a finding handed to the agent is a vuln request and not counted; "
+             "opened by a click, a match inside or its project's filter, kept open by the page's own reload; "
              "live sessions: two waiting ones counted, the background one's claude attach copied exactly, the "
              "interactive one pointed to its terminal, an idle one dimmer in Idle and counted nowhere, a third "
              "session of another project reloads the page by itself under its own project's heading, the groups "

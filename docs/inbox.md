@@ -48,7 +48,7 @@ the row's second line, and in its open row; the search finds it too. The two but
 heading order the rows oldest first or newest first, within each project, and the projects by their first row, so
 the oldest (or newest) row is always at the top; the choice is kept in `prefs.json`.
 
-The list sits between a sidebar and the open row. The sidebar's views (Waiting on you, To do, Vulnerabilities)
+The list sits between a sidebar and the open row. The sidebar's views (Waiting on you, To do)
 and projects each show only their rows; a second click, or Show all, shows everything. A click on a row opens it
 in the pane beside the list (on a phone, in a sheet from the bottom); a round's row opens the round's page. On a
 narrow window the sidebar button opens the sidebar as a drawer. With nothing waiting on you, a calm empty state
@@ -56,8 +56,7 @@ stands in for the list, with a button to the To do rows.
 
 **Search** is the field in the header (on a phone, a line below it). It filters as you type, over every view at once,
 ignoring case and accents (`ikonja` finds `Ikonjá`): a row matches when each word you typed is somewhere in its project
-name, title, short line, a round's item titles, a todo item's text and the messages on it, or a vulnerability's
-package, version, advisory ids and the sources that list it (`osv-scanner`, `uptick`). Only the matching rows show, under their project headings, and a closed To do
+name, title, short line, a round's item titles, or a todo item's text and the messages on it. Only the matching rows show, under their project headings, and a closed To do
 group opens when it holds one. The count beside the field says `3 matches`; Clear, or an empty field, gives the list
 back as it was. The search survives the page's own reload.
 
@@ -105,7 +104,7 @@ EOF
 
 Add the key beside the others, for example `"todo": "docs/tasks.md"`, then check the file is still JSON with
 `python3 -m json.tool <that file>`: one slip, such as a trailing comma, makes the inbox skip the project whole (its
-todo items, its sessions, its vulnerabilities and its count). To start over, delete the file; the next session in
+todo items, its sessions and its count). To start over, delete the file; the next session in
 the project writes a fresh one, without the key. With the key, that file alone is read: when it is not a file
 inside the root (a link is followed and must stay inside too), the inbox shows "the todo path in its project file
 not read: it names no file inside the project" and reads none of the three names.
@@ -146,7 +145,8 @@ that starts there gets the messages not yet handled, at most ten, when it starts
 agent is asked to tell you about them first and act once you say so. `signoff inbox done <id>`
 writes an empty `<id>.done` beside the request; a request without one comes back at a later session start. The
 `ref` follows the item through edits to other lines; if you change the item's first line, the request no longer
-shows on it, and the agent still has the text it was sent on.
+shows on it, and the agent still has the text it was sent on. A vulnerability finding handed over from the
+inbox of 0.3.0 or 0.4.0 and not yet marked done reaches the agent the same way.
 
 When the last open round of a run that had ended is finished (Done on its page, Accept & send from a
 notification, or an answers file another program wrote with Done), the inbox writes one more request, of kind
@@ -159,86 +159,13 @@ after your Done, say), or another program finishes its rounds just after it stop
 writes the same request at its next look, once. A run whose start link was used twice gets none: it tells its
 agent to check the answers first. The request route takes no `answer` from a page.
 
-**Vulnerabilities** shows each project's state from [Uptick](https://github.com/lumi-collective/uptick)'s
-vulnerability scan, when Uptick keeps its scan file (`${XDG_CACHE_HOME:-~/.cache}/uptick/vulns.json`, written once
-`vulns` is in its kinds), and from osv-scanner's output you keep in the Signoff home (below); without either file
-the section is not there. The inbox only reads it, and a project
-matches its entry by its real path. A row says *N known vulnerabilities* with the worst level, *No known
-vulnerabilities*, *Partial scan* (lockfiles left out), *Scan failed* with Uptick's reason, or *No recent data*
-when a source scans the project but none has a recent scan of it: Uptick lists it but has not scanned it within
-two of its runs (its `interval`, from Uptick 0.4.0; at most 30 days) or, from an older Uptick, in two days; or,
-without Uptick's file, osv-scanner's file (below) lists it but is older than two days.
-Findings never count as waiting on you. An open row starts with a line per source whose file is there, each
-with that source's own state and scan time (*Uptick: No known vulnerabilities · scanned …*, *osv-scanner:
-No recent data · scanned …*), so you see which said what; a source's count is all it found, also past the 50
-findings the row lists. Under a source with no recent scan is a note
-in its own words, also when the row's state comes from the other source. A project in *Not scanned* (below) has
-no such lines or notes. The row then lists
-each finding (package, version, level, advisory ids, the fixed version, and the sources that list it) with **Hand to agent**, which sends the
-project's agent a request as above, its `ref` the package and version (`lodash@4.17.20`) and its text written by
-the inbox from those fields. The request also names the finding's ecosystem (`npm`), when it is a plain word:
-when the list shows the same package and version in two ecosystems, each button sends its own finding, and the
-text says which ecosystem's package to fix. A finding there whose ecosystem is not a plain word (a space in it,
-say) or is missing has no button, as no request could say which one it is; with two such ecosystems, neither has
-one. Nor does a finding whose name is a URL or a local path (osv-scanner names a git dependency by its URL), so
-neither reaches the agent. Above the list, **Hand all fixable over (N)** sends one request for the N findings
-with a fixed version: its `ref` is `vulns`, its text names each as `lodash@4.17.20 → 4.17.21` (or, for one whose
-advisories are fixed in different versions, `jinja2@2.10.0 (a fixed version exists for each advisory)`; for a
-package and version listed in two ecosystems, `foo@1.0.0 (npm) → 2.0.0`, each once) in the list's order,
-as many as fit in 1,000 characters, then how many more, and the file lists the named ones in `refs`. Only those
-are handed over: the rest stay listed, to hand over after the next scan. The click sends the count the page showed,
-and when the list has changed since (a tab left open across a rescan) the inbox refuses it and asks for a reload.
-A session still on
-an older plugin skips a request of this kind; the page shows it all the same, and a new session of the project
-gets it at its start when no other session of the project is open, as above. A project that no source scans
-goes into one collapsed row, *Not scanned (N)*: one not on Uptick's scan list
-(`${XDG_CONFIG_HOME:-~/.config}/uptick/scan-repos.json`) that osv-scanner's file does not list, or lists in a file
-older than two days while Uptick's file is there. The row lists those projects; while Uptick's
-scan file is there, each has **Scan this project**: a
-click adds the project's folder to that list and keeps everything else in it. Uptick's next check then sends the
-package names and versions in the project's lockfiles to osv.dev. The inbox does not touch a list that is a link, is not a JSON `repos` list, or is over 1 MiB.
-
-**osv-scanner** is a second source, for when you run [osv-scanner](https://github.com/google/osv-scanner) yourself:
-keep its JSON as `osv-scanner.json` in the Signoff home, the folder `signoff inbox home` prints. Scan with
-`--all-packages`, which also lists a lockfile with nothing found; without it such a project looks unscanned.
-Write into a temporary file and rename it when osv-scanner exits 0 (nothing found) or 1 (findings), so the inbox
-never reads a file cut short, and a failed scan leaves the last one in place:
-
-```bash
-home=$(signoff inbox home) || exit
-osv-scanner scan source -r ~/projects --format json --all-packages --output-file "$home/osv-scanner.json.tmp"
-[ $? -le 1 ] && mv "$home/osv-scanner.json.tmp" "$home/osv-scanner.json"
-```
-
-`signoff` is the plugin's command, on the path of a Claude Code session's shell. Elsewhere, as in a cron job, set
-`home` to the folder itself: on macOS `$HOME/Library/Application Support/signoff`, on Linux
-`${XDG_STATE_HOME:-$HOME/.local/state}/signoff`.
-
-Signoff never runs it. What osv-scanner sends is its own: among other things the package names and versions it
-finds go to osv.dev, and for a manifest such as `requirements.txt` it also looks up the dependencies, by default
-at deps.dev (its help names `--data-source` and `--no-resolve`, which turns that off); its documentation has the
-rest. The inbox reads the file again only when it changed, and takes it as recent for two days from the file's
-time. A project gets the lockfiles inside its folder (by real path; a project inside another one keeps its own),
-and with none it is *Not scanned* for this source, never *No known vulnerabilities*. A file that is missing, cut
-short, not osv-scanner's JSON or over 16 MiB counts as no source. A package entry of another shape than
-osv-scanner 2.7.1 writes (a key it does not know, from another version, say) makes the project a *Partial scan*,
-never *No known vulnerabilities*; the keys 2.7.1 adds beside the package (a dev dependency's group, licenses) are
-fine. Tried offline with 2.7.1 on npm, `requirements.txt`, `poetry.lock` and `pom.xml` files, a git dependency,
-and a git repository (with `--include-git-root`), whose package has only a commit, no name or version: such a
-finding shows, and is never handed over. Its findings join Uptick's by package, version and ecosystem (the advisory ids of both, the
-higher level, Uptick's fixed version when it has one), the row lists them worst first, and it shows the most
-telling state of the two, with each source's own line inside. A finding whose advisories are fixed in different versions says *a fix for each
-advisory*, and so does its request; **Hand all fixable over** takes it too. An advisory with a version range left
-open (a branch with no fixed version yet) counts as having no fix, as the inbox does not compare versions to see
-which branch is installed. **Scan this project** stays Uptick's: it shows only when Uptick's file is there.
-
 The inbox listens on `127.0.0.1` with the same rules as a run. Start links come only from its control socket,
 `inbox.sock` in the home (readable by you only): each works once, within two minutes, and opens its own page,
 which closes after 12 hours without use (an open tab asks for the count, so it stays open). Opening one a second time closes that page only. The socket also names the one item a notification may answer (the only undecided item of a run's last open round, with a recommendation, not sensitive) and saves that recommendation with Done on request, through the same checks as the page; it never takes an answer from the client. A round with an item the agent marked [decided elsewhere](running.md#an-item-settled-in-chat) is never offered, as a tap's Done would send a mark you have not seen. For `signoff elsewhere` it marks one item of a round it holds (`elsewhere`: the round's path, matched against its own rounds and never opened, the item id and the note), through the same checks as a save, and answers `ok` or one word: `gone`, `done`, `held`, `answered`, `changed` or `failed`. For the plugin's mod it lists a project's open rounds and their undecided questions (`rows`: run and item numbers and one-line titles, at most 24 in all, no path, link or token of its own; a URL the agent wrote in a title stays). `signoff inbox rows <folder>` prints that list as one JSON line for the project the folder belongs to, and never starts an inbox. A row opens through `signoff inbox open --run <n> --focus <round>/<item> --inbox <k>`, with those numbers and the inbox's own (new at each start). Its start link opens that question in Focus on its round's page. It opens the list instead when the round is gone or done, or the numbers came from an inbox before a restart. With no inbox running, `open` starts one, and the list opens. On macOS, `signoff inbox open --app` with the same numbers finds the app where the mod looks: the first `Signoff.app` in `/Applications`, then `~/Applications`, that is a real folder of yours or root's whose `Info.plist` has the app's bundle id. It keeps the numbers in the inbox's memory as the app's target (`app_target`: one, the last wins, for a minute of awake time) and runs `open -a` with that app's path. The app takes the target once as it comes up (`app_open`), and gets none when none waits. When the app does not open, the command takes the target back. The inbox writes `inbox.lock` (empty, its time touched every two seconds while the inbox lives), `inbox.json` (its port and
 socket, no token), `state.json` (how many rows wait on you, in all and per project, with each project's id and
 two letters; no text), `prefs.json` (the palette, light or dark, the density and the order of Waiting on you you kept; see [Light, dark, phone,
 language](page.md#light-dark-phone-language)), the socket and the requests in the home, and the answers files and round locks a run would
-write; on your click only, Uptick's `scan-repos.json`.
+write.
 
 ## The macOS app
 

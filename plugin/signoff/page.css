@@ -466,15 +466,8 @@ body.focusing #ib-detail{padding:18px max(28px,calc(50% - 400px)) 40px}
 .pill.done{background:var(--oksoft);color:var(--ok)}
 .ib-msg-status{margin:6px 0 0;font-size:13px;color:var(--quiet)}
 .ib-msg-status:empty{display:none}
-.ib-vulns{list-style:none;margin:8px 0 0;padding:0;border:1px solid var(--line);border-radius:12px;background:var(--panel)}
-.ib-vuln{padding:11px 14px;min-width:0}
-.ib-vuln+.ib-vuln{border-top:1px solid var(--line)}
-.ib-vuln-head{display:flex;gap:8px;align-items:center;flex-wrap:wrap;min-width:0}
-.ib-vuln-name{overflow-wrap:anywhere}
-.ib-vuln-facts{margin:2px 0 6px;font-size:12.5px;color:var(--quiet);overflow-wrap:anywhere}
-.ib-vuln-sent{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .ib-vuln-note{margin:0 0 12px;color:var(--soft);overflow-wrap:anywhere}
-.pill.lvl-high,.pill.lvl-critical,.pill.old{background:var(--boxsoft);color:var(--boxtext)}
+.pill.old{background:var(--boxsoft);color:var(--boxtext)}
 .ib-fbar,.ib-close{display:none}
 body.focusing .ib-fbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 18px;padding:0 0 12px;border-bottom:1px solid var(--line);
   font-size:13px;color:var(--quiet)}

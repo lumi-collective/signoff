@@ -26,8 +26,6 @@ func TestRealInbox(t *testing.T) {
 	dir := shortDir(t)
 	home := filepath.Join(dir, "home")
 	t.Setenv("SIGNOFF_INBOX_HOME", home)
-	t.Setenv("XDG_CACHE_HOME", filepath.Join(dir, "cache")) // no Uptick files of the user's
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "config"))
 
 	got, err := signoffHome(launcher)
 	if err != nil || got != home {

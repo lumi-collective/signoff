@@ -150,10 +150,7 @@ not run on Windows yet. It never runs a command from a todo file; it only offers
 you can type a message to the project's agent; the agent gets it as your words. On one waiting on you, Later asks
 the agent, in a fixed line the inbox writes, to take its waiting mark off and keep it open. An item and the items
 indented under it show as one row with its steps counted, and an item that names a decisions round open in the
-inbox links to it. When Uptick's vulnerability
-scan is on, or you keep osv-scanner's output in the inbox's folder, the inbox also shows each project's known
-vulnerabilities from those files and can hand a finding to the project's agent; beside Uptick's scan file it
-offers Scan this project for a project Uptick does not scan yet.
+inbox links to it.
 
 ## What it reads and writes
 
@@ -181,14 +178,10 @@ _bmad-output/todo.md, TODO.md and todo.md, or a file inside the project that you
 never writes it. It writes the answers you give there the way a
 run does, and in its folder a lock file, a note of its port and socket (no token), a count of what waits on you (numbers and two-letter project marks,
 no text), the palette, light or dark, density and list order you kept, the socket itself and a log. Each message you send on a todo item is a small file there (the item's
-first line, your text, the time); the agent marks it handled with an empty file beside it. A finding you hand
-over is the same kind of file (the package and version, and a line the inbox writes from the finding), and so is
-Later (the item's first line and the inbox's fixed line), and so is the note the inbox writes once every round of a
-run that had ended, or that stopped before it handed the answers over, is finished (the topic folder, the round names and the inbox's fixed text, none of your answers). The inbox
-reads Uptick's scan file (vulns.json in Uptick's cache folder) and Uptick's scan list (scan-repos.json in
-Uptick's config folder), and osv-scanner.json in its own folder, the JSON of an osv-scanner scan you ran there
-yourself. Only when you click Scan this project does it write that list: it adds the project's
-folder path and keeps everything else in it. The mod writes nothing.
+first line, your text, the time); the agent marks it handled with an empty file beside it. Later is the same
+kind of file as a message (the item's first line and the inbox's fixed line), and so is the note the inbox writes once every round of a
+run that had ended, or that stopped before it handed the answers over, is finished (the topic folder, the round names and the inbox's fixed text, none of your answers). The mod writes
+nothing.
 Signoff deletes nothing, except a socket file a stopped inbox left in that folder.
 
 ## What leaves your machine
@@ -196,8 +189,5 @@ Signoff deletes nothing, except a socket file a stopped inbox left in that folde
 Nothing from Signoff itself. The page loads nothing from the internet, Signoff sends no telemetry, and
 the server answers only on 127.0.0.1. A live mockup is the agent's own HTML in a sandboxed frame; its
 script could still send data out over WebRTC, so the skill tells the agent to put nothing secret in one.
-A project you add with Scan this project is scanned by Uptick, not Signoff: Uptick's next check sends the package
-names and versions in its lockfiles to osv.dev. Signoff never runs osv-scanner either; the scan you run sends
-what osv-scanner sends.
 
 Full documentation, the file format and source: https://github.com/lumi-collective/signoff
