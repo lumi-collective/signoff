@@ -21,7 +21,7 @@ import time
 import unittest
 from pathlib import Path
 
-from support import ROOT, Folder, Rounds, free_port, png_bytes, sample_decisions
+from support import ROOT, Folder, Rounds, capitals, free_port, png_bytes, sample_decisions
 from test_extras import BOARD, HistoryRoot, board_folder
 
 # shortcut: shlex splits like a POSIX shell, so a Windows path needs forward slashes or quotes; split it by hand
@@ -1288,7 +1288,7 @@ class InboxPastAndParked(unittest.TestCase):
             self.assertEqual(self.request("GET", hist, headers={"Host": host})[0].status, 403, host)
         token = page.strip("/")
         for bad in ("/%s/history/%s/" % ("A" * len(token), self.pid), page + "history/%s/" % ("f" * 16),
-                    page + "history/%s" % self.pid, page + "history/%s/" % self.pid.upper(),
+                    page + "history/%s" % self.pid, page + "history/%s/" % capitals(self.pid),
                     hist + "?theme=dark", hist + "state", page + "run/0/history/%s/" % self.pid):
             self.assertEqual(self.request("GET", bad)[0].status, 404, bad)
         for path in (hist, hist + "save/0", hist + "prefs", hist + "park", page + "history/%s/" % ("f" * 16)):
@@ -1794,7 +1794,7 @@ class InboxRequests(unittest.TestCase):
     def test_refusals_print_nothing_on_stdout(self):
         self.write(self.R[0], "2026-11-07T10:00:00Z")
         for args in ((), (self.project,), (self.project,) + tuple(self.R[:11]), (self.project, self.R[0], self.R[0]),
-                     (self.project.upper(), self.R[0]), (self.project[1:], self.R[0]), (self.project, self.R[0] + "0")):
+                     (capitals(self.project), self.R[0]), (self.project[1:], self.R[0]), (self.project, self.R[0] + "0")):
             got = self.cli(*args)
             self.assertEqual((got.returncode, got.stdout), (1, b""), args)
         got = self.cli(self.project, self.R[0], env=dict(self.env, SIGNOFF_INBOX_HOME="relative/home"))

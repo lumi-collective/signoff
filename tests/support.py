@@ -26,6 +26,12 @@ for _name in ("SIGNOFF_PORT", "SSH_CONNECTION", "SSH_TTY", "BROWSER"):
 import signoff  # noqa: E402
 
 
+def capitals(hex_id):
+    """A hex id with a capital letter in it, for the checks that ids are lower case: the id in capitals, or, when it
+    has no letter (about one id in 1800), its last digit made an A."""
+    return hex_id.upper() if hex_id.upper() != hex_id else hex_id[:-1] + "A"
+
+
 def free_port():
     """A port nothing listens on just now (another process may take it before the test does)."""
     with socket.socket() as s:

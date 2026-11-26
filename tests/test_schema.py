@@ -1363,7 +1363,7 @@ class SchemaFile(unittest.TestCase):
         # signoff plan's fixed round (AD-29): the texts the user saw in the preview, one Approve, no recommendation.
         import tempfile
         with tempfile.TemporaryDirectory() as tmp:
-            with open(os.path.join(tmp, "plan-07.md"), "w", encoding="utf-8") as f:
+            with open(os.path.join(tmp, "plan-07.md"), "w", encoding="utf-8", newline="") as f:  # \n on Windows too
                 f.write("# The plan\n")
             data = signoff.plan_round(7)
             with open(os.path.join(tmp, "round-07.json"), "w", encoding="utf-8") as f:

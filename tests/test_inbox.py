@@ -19,7 +19,7 @@ import webbrowser
 from pathlib import Path
 from unittest import mock
 
-from support import (ROOT, Folder, Rounds, Running, done_record, free_port, png_bytes, sample_decisions,
+from support import (ROOT, Folder, Rounds, Running, capitals, done_record, free_port, png_bytes, sample_decisions,
                      write_outside)
 from test_extras import BOARD, HistoryRoot, with_board
 
@@ -938,7 +938,7 @@ class InboxRequests(InboxTest):
                      dict(good, text="a\u2028b"), b'{"project": "%s", "ref": "x", "text": "\\ud800"}' % self.pid.encode(),
                      dict(good, kind="vuln")):
             self.assertEqual(self.send(page, body)[0].status, 400, body)
-        for project in ("f" * 16, "../" + self.pid, self.pid.upper(), ""):
+        for project in ("f" * 16, "../" + self.pid, capitals(self.pid), ""):
             self.assertEqual(self.send(page, dict(good, project=project))[0].status, 404, project)
         for ref in ("done", "Plain todo", self.PLAIN_REF + " ", "", "x" * 400):
             self.assertEqual(self.send(page, dict(good, ref=ref))[0].status, 409, ref)
@@ -3255,7 +3255,7 @@ class InboxHistory(InboxTest):
             self.assertEqual(self.request("GET", path, headers={"Host": host})[0].status, 403, host)
         token = page.strip("/")
         for bad in ("/%s/history/%s/" % ("A" * len(token), self.pid), page + "history/%s/" % ("f" * 16),
-                    page + "history/%s" % self.pid, page + "history/%s/" % self.pid.upper(), page + "history/x/",
+                    page + "history/%s" % self.pid, page + "history/%s/" % capitals(self.pid), page + "history/x/",
                     page + "history/", page + "history/%s/?theme=dark" % self.pid, page + "history/%s/state" % self.pid,
                     page + "run/0/history/%s/" % self.pid):
             self.assertEqual(self.request("GET", bad)[0].status, 404, bad)

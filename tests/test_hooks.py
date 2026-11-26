@@ -14,7 +14,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from support import ROOT, signoff
+from support import ROOT, capitals, signoff
 
 SCRIPT = str(ROOT / "plugin" / "signoff" / "signoff.py")
 HOOK_SH = ROOT / "plugin" / "hooks" / "hook.sh"
@@ -671,7 +671,7 @@ class InboxRequests(HookBase):
         write_request(self.home, self.pid, self.R[1])
         before = files_under(self.home)
         for args in ((), (self.pid,), (self.pid,) + tuple(self.R[:signoff.MAX_HANDOVER + 1]), (self.pid, self.R[1], self.R[1]),
-                     (self.pid.upper(), self.R[1]), (self.pid[1:], self.R[1]), ("../" + self.pid[3:], self.R[1]),
+                     (capitals(self.pid), self.R[1]), (self.pid[1:], self.R[1]), ("../" + self.pid[3:], self.R[1]),
                      (self.pid, self.R[1] + "0"), (self.pid, self.R[1] + ".json"), (self.pid, "")):
             self.ask(*args, code=1)
         self.ask(self.pid, self.R[1], env=dict(self.env, SIGNOFF_INBOX_HOME="rel"), code=1)

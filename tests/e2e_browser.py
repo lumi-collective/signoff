@@ -999,11 +999,15 @@ def run_history(work):
         browser.click("#appearance-open")
         x, y = browser.center("#ap-title")  # a real wheel over the popover's head, outside the palette list
         browser.call("Input.dispatchMouseEvent", type="mouseWheel", x=x, y=y, deltaX=0, deltaY=1000)
-        time.sleep(0.3)
-        reach = browser.js("(function () { var d = document.getElementById('appearance'); "
-                           "var k = document.getElementById('ap-keep').getBoundingClientRect(); "
-                           "return k.bottom <= Math.min(innerHeight, d.getBoundingClientRect().bottom) && k.top >= 0; })()")
-        check(reach, "in an 844x390 window Keep should scroll into view")
+        reach = ("(function () { var d = document.getElementById('appearance'); "
+                 "var k = document.getElementById('ap-keep').getBoundingClientRect(); "
+                 "return k.bottom <= Math.min(innerHeight, d.getBoundingClientRect().bottom) && k.top >= 0; })()")
+        try:  # the scroll can take longer than a fixed wait on a slow runner (CI, 11-26)
+            wait_for("Keep in view", lambda: browser.js(reach), timeout=5)
+        except E2EError as e:
+            if not str(e).startswith("timed out"):  # a failed page script is its own error, not a missed scroll
+                raise
+            check(False, "in an 844x390 window Keep should scroll into view")
         press(browser, "Escape", "Escape", 27)
         browser.call("Emulation.setDeviceMetricsOverride", width=1280, height=900, deviceScaleFactor=1, mobile=False)
         # Once Signoff has stopped (idle, Ctrl+C), a picture that fails to load says so instead of a silent gap.
