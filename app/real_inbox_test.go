@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -47,8 +48,8 @@ func TestRealInbox(t *testing.T) {
 	if id := inboxServer(home); len(id) != 32 {
 		t.Fatalf("server_id %q", id)
 	}
-	if n, err := waiting(home); err != nil || n != 0 {
-		t.Fatalf("waiting %d, err %v", n, err)
+	if n, backs, err := waiting(home); err != nil || n != 0 || backs != 0 {
+		t.Fatalf("waiting %d, backs %d, err %v", n, backs, err)
 	}
 	again, port2, err := openInbox(launcher, home) // finds it running
 	if err != nil || port2 != port || again == link {
@@ -104,9 +105,64 @@ func oldAppOps(t *testing.T, launcher, home, dir string) {
 			t.Fatalf("%s: %q", strings.TrimSpace(line), reply)
 		}
 	}
-	plain, _, err := openInbox(launcher, home)
-	if err != nil || strings.Contains(landing(t, plain), "/run/") {
+	plain, port, err := openInbox(launcher, home)
+	if err != nil {
 		t.Fatalf("the plain open: %v", err)
+	}
+	page := landing(t, plain)
+	if strings.Contains(page, "/run/") {
+		t.Fatalf("the plain open lands on %q", page)
+	}
+	backNotifiesNothing(t, home, project, port, page, rows.Rounds[0].Run, rows.Rounds[0].Round)
+}
+
+// backNotifiesNothing parks the waiter's round and puts it back through the inbox's own route, as the list page
+// does: the Back raises state.json's count, and the app's rise, read before and after, does not notify.
+func backNotifiesNothing(t *testing.T, home, project string, port int, page string, run, round int) {
+	t.Helper()
+	// A round is parked only inside a project the hooks noted (projects/<id>.json); no session ran here.
+	root, err := filepath.EvalSymlinks(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := fmt.Sprintf("%x", sha256.Sum256([]byte(root)))[:16]
+	if err := os.MkdirAll(filepath.Join(home, "projects"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(home, "projects", id+".json"),
+		fmt.Sprintf(`{"schema": 1, "id": %q, "root": %q, "name": "project"}`, id, root))
+	origin := fmt.Sprintf("http://127.0.0.1:%d", port)
+	park := func(on bool) {
+		body := fmt.Sprintf(`{"run": %d, "round": %d, "park": %v}`, run, round, on)
+		req, err := http.NewRequest("POST", origin+page+"park", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Origin", origin)
+		req.Header.Set("Sec-Fetch-Site", "same-origin")
+		resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("park %v: %d", on, resp.StatusCode)
+		}
+	}
+	var seen rise
+	park(true)
+	n, backs, err := waiting(home)
+	if err != nil || seen.next(n, backs, true) {
+		t.Fatalf("after Park: n %d, backs %d, err %v", n, backs, err)
+	}
+	park(false)
+	up, backs2, err := waiting(home)
+	if err != nil || up != n+1 || backs2 != backs+1 {
+		t.Fatalf("after Back: n %d -> %d, backs %d -> %d, err %v", n, up, backs, backs2, err)
+	}
+	if seen.next(up, backs2, true) {
+		t.Fatal("the user's own Back notified")
 	}
 }
 

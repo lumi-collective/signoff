@@ -139,7 +139,9 @@ not run on Windows yet. It never runs a command from a todo file; it only offers
 you can type a message to the project's agent; the agent gets it as your words. On one waiting on you, Later asks
 the agent, in a fixed line the inbox writes, to take its waiting mark off and keep it open. An item and the items
 indented under it show as one row with its steps counted, and an item that names a decisions round open in the
-inbox links to it.
+inbox links to it. Park takes a round out of the count into a Parked list until you put it back; the inbox keeps
+only the round file's path and the time, in its own folder, and leaves the round's files and its run as they
+were. Each project links to its past decisions, read only, as the history command shows them.
 
 ## What it reads and writes
 
@@ -162,7 +164,7 @@ the transcript. The inbox reads each project's todo file (the first of
 _bmad-output/todo.md, TODO.md and todo.md, or a file inside the project that you name in that project's file) and
 never writes it. It writes the answers you give there the way a
 run does, and in its folder a lock file, a note of its port and socket (no token), a count of what waits on you (numbers and two-letter project marks,
-no text), the palette, light or dark, density and list order you kept, the socket itself and a log. Each message you send on a todo item is a small file there (the item's
+no text), the palette, light or dark, density and list order you kept, the rounds you parked (each round file's path, when you parked it and when you put it back), the socket itself and a log. Each message you send on a todo item is a small file there (the item's
 first line, your text, the time); the agent marks it handled with an empty file beside it. Later is the same
 kind of file as a message (the item's first line and the inbox's fixed line), and so is the note the inbox writes once every round of a
 run that had ended, or that stopped before it handed the answers over, is finished (the topic folder, the round names and the inbox's fixed text, none of your answers). The mod writes

@@ -1615,14 +1615,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if html is None:
                 return self._send(404, b"not found\n")
             return self._send(200, html, "text/html; charset=utf-8", [("Content-Security-Policy", BOARD_CSP)])
+        if self.query is not None:  # only a board takes one; checked first, so no page is built for it
+            return self._send(404, b"not found\n")
         target, rest = srv.rounds_at(rest)
-        if self.query is not None or target is None:
+        if target is None:
             return self._send(404, b"not found\n")
         if rest == "":
             nonce = secrets.token_urlsafe(18)
             view = target.view()
-            # Every page opens in the kept theme; only the inbox can keep a new one (POST prefs).
-            view["prefs"] = dict(read_prefs(srv.home if srv.inbox else inbox_home()), keep=srv.inbox)
+            # Every page opens in the kept theme; only the inbox can keep a new one (POST prefs), and not from its
+            # past-decisions page, where no POST answers.
+            view["prefs"] = dict(read_prefs(srv.home if srv.inbox else inbox_home()),
+                                 keep=srv.inbox and view["mode"] != "history")
             name = view.get("project") if view.get("mode") == "rounds" else view.get("root")
             if name and view.get("mode") in ("rounds", "history"):  # the header's monogram, as the inbox shows it
                 who = _who(None, name)
@@ -1650,16 +1654,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
         srv = self.server
         if self.board_request:
             return self._refuse(404, b"not found\n")
-        if srv.read_only:
+        if srv.read_only or srv.inbox and HISTORY_ROUTE.fullmatch(rest):  # past decisions, here or in the inbox
             return self._refuse(405, b"read only\n")
         target, rest = srv.rounds_at(rest)
         m = SAVE_ROUTE.fullmatch(rest) if target is not None else None
-        # The list page: a message on a todo item or Later on one; the theme kept.
-        message = srv.inbox and target is srv and rest in ("request", "prefs")
+        # The list page: a message on a todo item or Later on one; the theme kept; a round parked or put back.
+        message = srv.inbox and target is srv and rest in ("request", "prefs", "park")
         if self.query is not None or not (m or message) or (m and int(m.group(1)) >= len(target.rounds)):
             return self._refuse(404, b"not found\n")
         index = int(m.group(1)) if m else None
-        limit = target.rounds[index].max_body if m else MAX_PREFS_BODY if rest == "prefs" else MAX_REQUEST_BODY
+        limit = target.rounds[index].max_body if m else {"prefs": MAX_PREFS_BODY, "park": MAX_PARK_BODY}.get(
+            rest, MAX_REQUEST_BODY)
         # The page's own origin is the name it was loaded by, which _route took as one of this server's.
         if self.headers.get("Origin") != "http://" + self._host():
             return self._refuse(403, b"wrong origin\n")
@@ -1675,7 +1680,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if len(length) > 9 or int(length) > limit:  # 9 digits: int() stays cheap and in range
             return self._refuse(413, b"too large\n")
         if message:
-            add = {"request": srv.add_request, "prefs": srv.add_prefs}[rest]
+            add = {"request": srv.add_request, "prefs": srv.add_prefs, "park": srv.park}[rest]
             code, reply = add(self.rfile.read(int(length)))
             return self._send(code, reply, "application/json" if code == 200 else "text/plain; charset=utf-8")
         round_ = target.rounds[index]
@@ -2100,47 +2105,75 @@ class SignoffServer(_Rounds, _Server):
         self._listen(port)
 
 
-class HistoryServer(_Server):
-    """A read-only page of every round in a project's decisions folder (a topic folder per subfolder). Nothing is
-    written. Broken files are listed with their error; pictures and boards are read when the page asks for them."""
-    read_only = True
+OVER_TEXT_BUDGET = "over the text budget for this page; narrow the list with --since"
 
-    def __init__(self, root, since=None, budget=HISTORY_BUDGET, timeout=None, folder=DEFAULT_FOLDER, port=0):
-        root = Path(root).resolve()
-        if not root.is_dir():
-            raise DecisionsError("%s: not a folder" % root)
-        self.root, self.timeout = root, timeout
-        self.board_token = secrets.token_urlsafe(32)
+
+def _files_size(path):
+    """The bytes of a round's decisions, answers and outcome files on disk, by stat alone (0 for one not there)."""
+    total = 0
+    for p in (path, answers_path_for(path), path.with_name(path.stem + ".outcome.json")):
+        try:
+            total += p.stat().st_size
+        except OSError:
+            pass
+    return total
+
+
+class _History:
+    """The past-decisions listing: every round in the topic folders of the given decisions folders, newest first.
+    Nothing is written. Broken files are listed with their error; pictures and boards are read when the page asks for
+    them. `--history` lists one folder; the inbox lists a project's (see InboxServer.history)."""
+    read_only = True
+    inbox = False  # the inbox's copy drops its entries once the page has them: it lives on
+
+    def _list(self, name, bases, since=None, budget=HISTORY_BUDGET):
+        self.name = name
+        self.board_token = getattr(self, "board_token", None) or secrets.token_urlsafe(32)
         self.rounds = []
-        self.pictures, self.boards, used = [], [], [0]
-        topics = []
-        base = root / folder
-        real_base = base.resolve()
-        for topic in (base.iterdir() if base.is_dir() else ()):
-            try:
-                real = topic.resolve()
-            except RuntimeError:  # a link loop, on Python before 3.13 (later ones fail is_dir below)
-                continue
-            if topic.is_dir() and real_base in real.parents:  # a link out of the decisions folder is skipped
-                m = DATE_PATTERN.match(topic.name)
-                date = m.group(0) if m else datetime.date.fromtimestamp(topic.stat().st_mtime).isoformat()
-                if since is None or date >= since:
-                    topics.append((date, topic.name, real))
-        entries = []
-        for date, name, folder in sorted(topics, reverse=True):
-            files = []
-            for p in folder.iterdir():
-                if p.suffix == ".json" and not p.name.endswith((".answers.json", ".outcome.json")) and p.is_file():
-                    m = ROUND_FILE.fullmatch(p.name)
-                    files.append((int(m.group(1)) if m else 0, p.name, p))
-            for _, _, p in sorted(files):
-                entries.append(self._entry(name, date, p))
+        used = [0]
+        if not self.inbox:  # the inbox's lists outlive a build: a number names one file while the inbox lives
+            self.pictures, self.boards = [], []
+        topics, seen = [], set()
+        for base in bases:
+            real_base, here = base.resolve(), set()
+            for topic in (base.iterdir() if base.is_dir() else ()):
+                try:
+                    real = topic.resolve()
+                except RuntimeError:  # a link loop, on Python before 3.13 (later ones fail is_dir below)
+                    continue
+                # A link out of the decisions folder is skipped. One folder lists a topic under each of its names; a
+                # topic an earlier folder listed is not listed again (only the inbox passes more than one folder).
+                if topic.is_dir() and real_base in real.parents and real not in seen:
+                    here.add(real)
+                    m = DATE_PATTERN.match(topic.name)
+                    date = m.group(0) if m else datetime.date.fromtimestamp(topic.stat().st_mtime).isoformat()
+                    if since is None or date >= since:
+                        topics.append((date, topic.name, real))
+            seen |= here
+
+        def rounds():
+            for date, name, folder in sorted(topics, reverse=True):
+                files = []
+                for p in folder.iterdir():
+                    if p.suffix == ".json" and not p.name.endswith((".answers.json", ".outcome.json")) and p.is_file():
+                        m = ROUND_FILE.fullmatch(p.name)
+                        files.append((int(m.group(1)) if m else 0, p.name, p))
+                for _, _, p in sorted(files):
+                    yield name, date, p
 
         def admit(path, kind):
             size = path.stat().st_size
             if used[0] + size > budget:
                 return "over the image budget; narrow the list with --since"
             used[0] += size
+            if self.inbox:  # an older tab's numbers keep naming the same files after a new build
+                got = self.boards[0] if kind == "board" else self.pictures
+                n = self.numbers.setdefault((kind, str(path)), len(got))
+                if n == len(got):
+                    got.append(path)
+                if n > 9999:  # shortcut: past what IMG_ROUTE and BOARD_ROUTE take; a restart numbers anew
+                    return "not shown: restart the inbox"
+                return "/%s/0/%d" % (self.board_token, n) if kind == "board" else "img/%d" % n
             if kind == "board":
                 self.boards[-1].append(path)
                 return "/%s/%d/%d" % (self.board_token, len(self.boards) - 1, len(self.boards[-1]) - 1)
@@ -2149,8 +2182,20 @@ class HistoryServer(_Server):
 
         text_used, text_budget = 0, HISTORY_TEXT_BUDGET
         data_used = 0
-        for e in entries:
-            self.boards.append([])
+        entries = []
+        # Each round is read, then held to the budgets at once, so one over them is let go before the next is read.
+        for topic, date, p in rounds():
+            # The inbox lives on and keeps what a build took from the OS, so it reads no round whose files would
+            # pass the budget: by their sizes, half again for the page's escaping and keys (1.0 to 1.5 measured on
+            # the examples). Text heavy in "<", ">" or "&", or long lists of small numbers, can take 6 times its size
+            # or more: such a round is read and then dropped by the exact check below, one at a time, so memory stays bounded; later, smaller rounds still
+            # show. An item's attachments are known only once its file is read; one round's are capped
+            # (MAX_ATTACHMENTS).
+            fits = not self.inbox or data_used + _files_size(p) * 3 // 2 <= HISTORY_DATA_BUDGET
+            e = self._entry(topic, date, p, read=fits)
+            entries.append(e)
+            if not self.inbox:
+                self.boards.append([])
             media = e.pop("media")
             # Newest topic first, so the newest topics fit; attachments are left out here, they have their own budget.
             items = e["decisions"]["items"] if e["decisions"] is not None else []
@@ -2159,8 +2204,8 @@ class HistoryServer(_Server):
             for att, text in texts:
                 att["text"] = text
             if data_used + size > HISTORY_DATA_BUDGET:
-                e.update(status="error", error="over the text budget for this page; narrow the list with --since",
-                         title=None, tab=None, decisions=None, answers=None, saved=None, outcome=None, warning=None)
+                e.update(status="error", error=OVER_TEXT_BUDGET, title=None, tab=None, decisions=None, answers=None,
+                         saved=None, outcome=None, warning=None)
                 continue
             data_used += size
             if e["decisions"] is not None:
@@ -2180,12 +2225,14 @@ class HistoryServer(_Server):
                             else:
                                 text_used += size
         self.entries = entries
-        self._listen(port)
 
-    def _entry(self, topic, date, path):
+    def _entry(self, topic, date, path, read=True):
         e = {"topic": topic, "file": path.name, "date": date, "title": None, "tab": None, "status": "new",
              "error": None, "warning": None, "outcome": None, "readonly": True, "decisions": None, "answers": None,
              "saved": None, "media": []}
+        if not read:
+            e.update(status="error", error=OVER_TEXT_BUDGET)
+            return e
         if path.resolve().parent != path.parent.resolve():
             e.update(status="error", error="%s: a link to a file outside this folder" % path.name)
             return e
@@ -2248,7 +2295,23 @@ class HistoryServer(_Server):
             return None
 
     def view(self):
-        return {"mode": "history", "root": self.root.name, "timeout": self.timeout, "entries": self.entries}
+        entries = self.entries
+        if self.inbox:
+            self.entries = None  # held only while one page is built: pictures and boards stay listed by number
+            return {"mode": "history", "root": self.name, "timeout": None, "entries": entries, "inbox": True}
+        return {"mode": "history", "root": self.name, "timeout": self.timeout, "entries": entries}
+
+
+class HistoryServer(_History, _Server):
+    """`--history`: the past-decisions page of one decisions folder, on a server of its own."""
+
+    def __init__(self, root, since=None, budget=HISTORY_BUDGET, timeout=None, folder=DEFAULT_FOLDER, port=0):
+        root = Path(root).resolve()
+        if not root.is_dir():
+            raise DecisionsError("%s: not a folder" % root)
+        self.root, self.timeout = root, timeout
+        self._list(root.name, [root / folder], since, budget)
+        self._listen(port)
 
 
 # ---- The inbox: one page for the open rounds of every run and the todo items of every project ----
@@ -2261,6 +2324,11 @@ SENT_MAX_AGE = 86400  # how long an answered round stays listed as sent
 STATE_EVERY = 2.0  # seconds between the inbox's own looks at runs, answers and todo files, for state.json
 # Group numbers are never reused (an old tab must not save into another run's round), so they only grow.
 RUN_ROUTE = re.compile(r"^run/(0|[1-9][0-9]{0,8})/(.*)$", re.S)
+HISTORY_ROUTE = re.compile(r"^history/([0-9a-f]{16})/(.*)$", re.S)
+MAX_HISTORY_RUNS = 1000  # newest runs/ files a project's past-decisions page reads for its decisions folders
+MAX_PARK_BODY = 256  # {"run", "round", "park"} as the page sends it
+MAX_PARKED = 200  # rounds in parked.json
+MAX_PARKED_FILE = 256 * 1024
 MAX_SOCKET_PATH = 100  # macOS takes 104 bytes for a Unix socket's path, Linux 108
 MAX_CONTROL = 4096
 MAX_PANEL_TEXT = 200  # characters in each title of a rows reply (the mod's MAX_TEXT)
@@ -2424,6 +2492,16 @@ def _none_picked(answer, item):
     """Whether the user unticked a many item's recommendation: an empty choice that is an answer, "none of these".
     The page saves an untouched item without a recommendation as an empty or null choice from the user too."""
     return answer.get("choice") == [] and answer.get("source") == "user" and item.get("recommended") is not None
+
+
+def _roots(projects):
+    """The known projects' real roots with their ids, a nested root before the one that holds it."""
+    return sorted(((os.path.realpath(q["root"]), q["id"]) for q in projects.values()), reverse=True)
+
+
+def _project_in(path, roots):
+    """The id of the project whose root holds the real path (the innermost), or None."""
+    return next((i for r, i in roots if path.startswith(r + os.sep)), None)
 
 
 def _decided(answer, item):
@@ -2666,6 +2744,7 @@ class InboxServer(_Server):
         self.home, self.held, self.control = home, None, None
         self.scan_lock, self.closed = threading.RLock(), threading.Event()
         self.state = self.written = self.state_failed = None  # the count now, and the one state.json last got
+        self.backs = 0  # rises of the count the user's own Back made, in state.json: a reader does not notify them
         # Before inbox.lock is made: it turns runs and hooks to the inbox's ways for good, and no inbox would run.
         if port and port_in_use(port):
             raise taken_port(port)
@@ -2685,6 +2764,9 @@ class InboxServer(_Server):
             # gives this number with them and an open's target sends it back, so an old row opens the list.
             self.number = secrets.randbelow(MAX_NUMBER - 1) + 1
             self.done_cache = {}  # answers path -> (stat key, whether it says done), for the orphan look
+            self.parked = {}  # parked.json's rounds as of the last look: real path -> parked at
+            # Each project's last past-decisions page, for its pictures and boards by number; one built at a time.
+            self.histories, self.history_lock = {}, threading.Lock()
             self.round_locks = _RoundLocks()
             self.control = _control_socket(home / "inbox.sock")
             self._listen(port)
@@ -2698,10 +2780,11 @@ class InboxServer(_Server):
         self.refresh_state()
         threading.Thread(target=self._watch_state, daemon=True).start()
 
-    def refresh_state(self):
+    def refresh_state(self, back=False):
         """Count the rows of Waiting on you, as the list page shows them, and write state.json when the count
         changed: the one number for the tab title and later the shell, the push and the phone. Numbers, project ids
-        and monograms only: no title, path, todo text or token."""
+        and monograms only: no title, path, todo text or token. With back (a Back just written), a rise of the count
+        adds one to backs in the same write."""
         doing = "count what waits"
         try:
             with self.scan_lock:  # view() takes it too; close() waits for it. After close() no count is made, and
@@ -2720,7 +2803,9 @@ class InboxServer(_Server):
                     p = projects.setdefault((w["project"], w["mono"]), {"id": w["project"], "monogram": w["mono"],
                                                                         "waiting": 0})
                     p["waiting"] += 1
-                counted = {"schema": 1, "waiting": len(rows), "projects": list(projects.values())}
+                if back and self.state and len(rows) > self.state["waiting"]:
+                    self.backs += 1
+                counted = {"schema": 1, "waiting": len(rows), "projects": list(projects.values()), "backs": self.backs}
                 if not self.state or dict(self.state, at=None) != dict(counted, at=None):
                     self.state = dict(counted, at=utc_now())  # the route serves it even when the write fails
                 if self.state is self.written:
@@ -2795,7 +2880,7 @@ class InboxServer(_Server):
                     continue
                 with g.lock:
                     for ri, r in enumerate(g.rounds):
-                        if r.finished:
+                        if r.finished or str(r.path) in self.parked:  # the panel lists what waits
                             continue
                         saved = (r.saved or {}).get("answers", {})
                         items = [(k, it["title"]) for k, it in enumerate(r.decisions["items"])
@@ -2849,17 +2934,63 @@ class InboxServer(_Server):
         return False
 
     def board_for(self, given):
-        for g in list(self.groups):
+        for g in list(self.groups) + list(self.histories.values()):
             if g and secrets.compare_digest(given, g.board_token.encode()):
                 return g
         return None
 
     def rounds_at(self, rest):
+        h = HISTORY_ROUTE.fullmatch(rest)
+        if h:  # the page is built anew on each load; its pictures come from the last one built
+            return (self.history(h.group(1)) if h.group(2) == "" else self.histories.get(h.group(1))), h.group(2)
         m = RUN_ROUTE.fullmatch(rest)
         if not m:
             return self, rest
         n = int(m.group(1))
         return (self.groups[n] if n < len(self.groups) else None), m.group(2)
+
+    def history(self, pid):
+        """A project's past-decisions page: every round under each decisions folder its runs used, and the default
+        one. A decisions folder is the parent of a runs/ entry's topic folder, strictly inside the project's root;
+        the newest MAX_HISTORY_RUNS files of runs/ are read, of any age. None for a project the hooks did not note."""
+        p = self._projects().get(pid)
+        if p is None:
+            return None
+        root = os.path.realpath(p["root"])
+        folders, found = [os.path.join(root, DEFAULT_FOLDER)], []
+        try:
+            for e in os.scandir(str(self.home / "runs")):
+                if e.name.endswith(".json") and not e.name.startswith("."):
+                    found.append((_mtime(Path(e.path)) or 0, e.path))
+        except OSError:
+            pass
+        for _, path in sorted(found, reverse=True)[:MAX_HISTORY_RUNS]:
+            e = _read_json(Path(path))
+            if _entry_ok(e) and e["project"] == pid:
+                folders.append(os.path.dirname(e["folder"]))
+        # Each folder resolved once, kept only strictly inside the root (the default one too: it may be a link), and
+        # listed by path, so the folder that lists a topic two of them reach is always the same one.
+        bases = sorted({Path(b) for b in map(os.path.realpath, folders) if b.startswith(root + os.sep)})
+        with self.history_lock:  # one listing built at a time, however many tabs load it
+            h, old = _History(), self.histories.get(pid)
+            h.inbox = True
+            # The project's board token and numbers stay, so an older tab's pictures and boards still load as they
+            # were listed; a file gone or changed since is read as it is now, with the same checks.
+            h.board_token, h.pictures, h.boards, h.numbers = ((old.board_token, old.pictures, old.boards, old.numbers)
+                                                             if old else (None, [], [[]], {}))
+            try:
+                for b in bases:  # a link loop fails here on every Python (resolve() raises RuntimeError before 3.13)
+                    if os.path.lexists(str(b)):
+                        os.stat(str(b))
+                h._list(p["name"], bases)
+            except (OSError, RuntimeError) as e:  # a folder it may not read: the page is not there, the inbox goes on
+                # RuntimeError: a link loop swapped in after the stat above still reaches resolve() (before 3.13).
+                why = "a link loop" if isinstance(e, RuntimeError) else e.strerror or e
+                print("signoff inbox: cannot list the past decisions of %s (%s)" % (p["name"], why),
+                      file=sys.stderr, flush=True)
+                return None
+            self.histories[pid] = h
+        return h
 
     def picture(self, n):
         return None
@@ -3048,6 +3179,97 @@ class InboxServer(_Server):
                 return 500, ("could not write the request (%s)\n" % (e.strerror or type(e).__name__)).encode("utf-8")
         return 200, json.dumps({"ok": True, "id": r["id"], "at": r["at"]}).encode("utf-8")
 
+    def _parked_file(self):
+        """parked.json as the inbox writes it ({schema: 1, rounds: [{path, at, back?}]}), {} when absent, None when it
+        is anything else: a link, not that JSON, or over MAX_PARKED_FILE bytes."""
+        try:
+            data = _json_object(read_regular(self.home / "parked.json", MAX_PARKED_FILE, nofollow=True))
+        except FileNotFoundError:
+            return {}
+        except OSError:  # a link (ELOOP), a folder, a FIFO, too large
+            return None
+        rounds = data.get("rounds") if data else None
+        ok = (data is not None and data.get("schema") == 1 and isinstance(rounds, list) and all(
+            isinstance(e, dict) and isinstance(e.get("path"), str) and isinstance(e.get("at"), str)
+            and isinstance(e.get("back", ""), str) for e in rounds))
+        return data if ok else None
+
+    def _read_parked(self, projects):
+        """The rounds parked.json names that may be parked: an absolute real path with no control character, a round
+        file's name (not an answers or outcome file), inside a known project's root, each as (at, back, project id);
+        back is None while it is parked. Whether the file is there, the user's own and still open is the orphan
+        look's (_open_round)."""
+        data = self._parked_file() or {}
+        roots = None
+        found = {}
+        for e in data.get("rounds", ())[:MAX_PARKED]:
+            p = e["path"]
+            if (p in found or not os.path.isabs(p) or CONTROL_CHARS.search(p) or not p.endswith(".json")
+                    or p.endswith((".answers.json", ".outcome.json")) or os.path.basename(p).startswith(".")):
+                continue
+            try:
+                if os.path.realpath(p) != p:  # a link on the way could lead out of the project
+                    continue
+            except (OSError, ValueError):
+                continue
+            if roots is None:  # read only when something is parked
+                roots = _roots(projects)
+            pid = _project_in(p, roots)
+            if pid is not None:
+                found[p] = (e["at"] if SAVED_PATTERN.fullmatch(e["at"]) else None, e.get("back"), pid)
+        return found
+
+    def park(self, raw):
+        """Park or Back from the list page: {run, round, park}, the numbers of a round the list shows now. The server
+        maps them to the round file's real path and keeps it in parked.json in the home, with the time; the round's
+        files, its lock and its run are left as they were. Returns (status, body)."""
+        try:
+            body = json.loads(raw.decode("utf-8"))
+        except (ValueError, RecursionError):
+            return 400, b"bad request: not JSON\n"
+        if (not isinstance(body, dict) or sorted(body) != ["park", "round", "run"] or not _whole(body["run"])
+                or not _whole(body["round"]) or type(body["park"]) is not bool):
+            return 400, b'bad request: send {"run": <n>, "round": <n>, "park": true or false}\n'
+        with self.scan_lock:  # the look, and parked.json's read and write, one request at a time
+            if self.closed.is_set():
+                return 409, b"the inbox is stopping\n"
+            projects = self._scan()
+            g = self.groups[body["run"]] if body["run"] < len(self.groups) else None
+            r = g.rounds[body["round"]] if g and body["round"] < len(g.rounds) else None
+            if r is None or r.finished:
+                return 409, b"that round is no longer open here; reload the page\n"
+            if body["park"] and _project_in(str(r.path), _roots(projects)) is None:  # a look would drop the entry
+                return 409, b"that round is in no project the inbox knows, so it cannot be parked\n"
+            data = self._parked_file()
+            if data is None:
+                return 409, b"parked.json in the Signoff home is not the inbox's; move it away\n"
+            rounds = data.get("rounds", [])
+            path = str(r.path)
+            # Parked while its entry has no back time. Back keeps the entry and adds one: a round no live run lists
+            # then waits as a Run ended row for RUNS_MAX_AGE after it; a Park again takes it off.
+            entry = next((e for e in rounds if e["path"] == path), None)
+            if body["park"] == (entry is not None and "back" not in entry):
+                return 200, b'{"ok": true}'  # as asked already: nothing to write
+            now = utc_now()
+            if entry is None:
+                rounds = rounds + [{"path": path, "at": now}]
+            else:
+                kept = {k: v for k, v in entry.items() if k != "back"}
+                rounds = [(dict(kept, at=now) if body["park"] else dict(entry, back=now)) if e is entry else e
+                          for e in rounds]
+            text = json.dumps(dict(data, schema=1, rounds=rounds), indent=2) + "\n"
+            # Entries of rounds done or gone count too (nothing prunes the file yet), so the text says how to start
+            # over. Back adds no entry, so only the size can refuse it.
+            if len(rounds) > MAX_PARKED and entry is None or len(text) > MAX_PARKED_FILE:
+                return 409, (b"parked.json is full (rounds answered or gone since stay in it); move it out of the "
+                             b"Signoff home to start over\n")
+            try:
+                write_atomic(self.home / "parked.json", text)
+            except OSError as e:
+                return 500, ("could not write parked.json (%s)\n" % (e.strerror or type(e).__name__)).encode("utf-8")
+            self.refresh_state(back=not body["park"])  # the count now: the page that sent this reloads to it
+        return 200, b'{"ok": true}'
+
     def _sent(self, g, r):
         if r.saved_at:
             self.sent[str(r.answers_path)] = dict(_who(g.entry.get("project"), g.name), title=r.decisions["title"],
@@ -3080,7 +3302,8 @@ class InboxServer(_Server):
     def _scan(self):
         """Match the groups to the runs that live now: a new run's rounds are read in (and locked), a run that ended
         or died lets go of its rounds' locks. Orphan rounds (AD-24: open, listed by a recent project run that is gone
-        and by no live run) stay in the group they were in, else go in a group of the newest gone run listing them."""
+        and by no live run) stay in the group they were in, else go in a group of the newest gone run listing them;
+        a parked round no recent run lists is an orphan round of its own. Returns the projects."""
         live, gone = {}, []  # (folder, rounds) -> the live runs on them, oldest first; the project runs gone
         folder = self.home / "runs"
         for path in sorted(folder.glob("[!.]*.json")) if folder.is_dir() else ():
@@ -3101,6 +3324,18 @@ class InboxServer(_Server):
             for n in e["rounds"]:
                 if (e["folder"], n) not in listed and self._open_round(Path(e["folder"]) / n):
                     owner[e["folder"], n] = e
+        projects = self._projects()
+        parked = self._read_parked(projects)
+        self.parked = {p: at for p, (at, back, _) in parked.items() if back is None}
+        for p, (at, back, pid) in sorted(parked.items()):
+            f, n = os.path.split(p)
+            # A parked round stays until Back, also when no recent run lists it: an orphan of its own, by its path.
+            # Put back, it waits as one for RUNS_MAX_AGE after Back, as a gone run's orphan round would.
+            if back is not None and time.time() - (_epoch(back) or 0) > RUNS_MAX_AGE:
+                continue
+            if (f, n) not in listed and (f, n) not in owner and self._open_round(Path(p)):
+                owner[f, n] = {"run": "parked:" + p, "project": pid, "folder": f, "rounds": [n],
+                               "started": back or at or "1970-01-01T00:00:00Z"}
         for key, n in list(self.group_index.items()):
             g = self.groups[n]
             # An orphan group outlives its run, so it is read again once a round file changed or went: a Done there
@@ -3142,7 +3377,6 @@ class InboxServer(_Server):
             g.release()
             self.groups[n] = None
             del self.group_index[key]
-        projects = self._projects()
 
         def add(key, runs, orphan=False):
             e, folder = runs[0], Path(key[0])
@@ -3182,27 +3416,31 @@ class InboxServer(_Server):
 
     def view(self):
         """What the inbox page gets: the rows waiting on the user (open rounds, oldest first, then todo items marked
-        waiting), the rounds answered lately with what their session did since, and each project's open todo items.
-        Names, never paths."""
+        waiting), the rounds answered lately with what their session did since, each project's open todo items, and
+        the parked rounds (out of the count). Names, never paths."""
         with self.scan_lock:
             projects = self._scan()
             found = self._sessions()
             sessions = {}
             for s in found:
                 sessions.setdefault(s["project"], []).append((s["at"], s["state"]))
-            waiting, listed, opened = [], [], {}
+            waiting, listed, opened, parked = [], [], {}, []
             for n, g in sorted([(n, g) for n, g in enumerate(self.groups) if g], key=lambda x: x[1].entry["started"]):
-                for r in g.rounds:
+                for ri, r in enumerate(g.rounds):
                     if r.finished:
                         self._sent(g, r)
                     else:
-                        waiting.append(dict(_who(g.entry.get("project"), g.name), kind="round", group=n,
-                                            title=r.decisions["title"], tab=r.decisions.get("tab"),
-                                            since=g.entry["started"], opened=r.opened, held=not g.writable,
-                                            orphan=g.orphan,
-                                            **({"context": _one_line(_unpathed(g, r.decisions["context"]),
-                                                                     MAX_CONTEXT)} if "context" in r.decisions else {}),
-                                            items=[it["title"][:MAX_ROW_TEXT] for it in r.decisions["items"][:MAX_ROW_ITEMS]]))
+                        row = dict(_who(g.entry.get("project"), g.name), kind="round", group=n, round=ri,
+                                   title=r.decisions["title"], tab=r.decisions.get("tab"),
+                                   since=g.entry["started"], opened=r.opened, held=not g.writable,
+                                   orphan=g.orphan,
+                                   **({"context": _one_line(_unpathed(g, r.decisions["context"]),
+                                                            MAX_CONTEXT)} if "context" in r.decisions else {}),
+                                   items=[it["title"][:MAX_ROW_TEXT] for it in r.decisions["items"][:MAX_ROW_ITEMS]])
+                        if str(r.path) in self.parked:  # counted nowhere, until Back
+                            parked.append(dict(row, since=self.parked[str(r.path)]))
+                        else:
+                            waiting.append(row)
                         # What a todo item may name to link here: its topic folder and file, in its own project.
                         opened.setdefault((g.entry.get("project"), r.path.parent.name + "/" + r.path.name),
                                           "run/%d/" % n)
@@ -3237,7 +3475,8 @@ class InboxServer(_Server):
                     continue
                 working = any(state == "working" and t >= s["saved"] for t, state in sessions.get(s["project"], ()))
                 sent.append(dict(s, state="working" if working else "sent"))
-        return {"mode": "inbox", "waiting": waiting, "sent": sent, "projects": listed, "idle": idle}
+        return {"mode": "inbox", "waiting": waiting, "sent": sent, "projects": listed, "idle": idle,
+                "parked": sorted(parked, key=lambda w: w["since"] or "")}
 
 
 def _inbox_serve():

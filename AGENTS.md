@@ -98,7 +98,10 @@ Instructions for coding agents working on Signoff. The README says what it does 
   asks it for `rows`, on the socket and through `<command> inbox rows <folder>`, and for `open` with a row's target,
   on the socket and through `<command> inbox open --run <n> --focus <round>/<item> --inbox <k>`; its `InboxTodoPath` class starts a fourth for projects whose `todo` key names a
   file inside the root, or one out of it (`..`, an absolute path, a link), too big or not a file, and checks the
-  list page and messages; its `InboxRequests` class writes request files into the home by hand and runs `<command>
+  list page and messages; its `InboxPastAndParked` class starts a fifth for a project with past rounds and a
+  waiter's round (a picture and a board), and checks the history route's rules (Host, tokens, 405 on every POST,
+  pictures and boards by number, a link swapped in not followed, the board CSP) and the park route's (every save
+  rule, the body's shape, `parked.json`'s mode and keys, the count down and back); its `InboxRequests` class writes request files into the home by hand and runs `<command>
   inbox requests <folder> <project> <id>…` with no inbox (its JSON line, the ids gone, its refusals, a folder in
   another project, a nested one too); its `InboxWaiter` class runs `<command> <folder>` as a waiter, once beside a stand-in
   inbox that holds `inbox.lock`, touches it and locks no round (exit 1, nothing on stdout, no lock file made), once
@@ -115,7 +118,8 @@ Instructions for coding agents working on Signoff. The README says what it does 
   between the looks). `test_inbox.py` covers the
   inbox in process: the `todo.md` reader and the `todo` key, the Markdown tree, routes, pairs, locks, the waiter it wakes, messages,
   the theme it keeps, the ops it no longer knows, the panel's rows and their targets, a round lock let go
-  between two looks, and `inbox open --app`, a usage error, run with the process starters and the browser stubbed.
+  between two looks, parking (`InboxParked`: the route, the file, the checks on its paths, a parked round with no
+  run) and a project's past decisions (`InboxHistory`: the route, the folder rule, numbers kept across loads), and `inbox open --app`, a usage error, run with the process starters and the browser stubbed.
   `test_hooks.py` covers the hooks, the SessionStart hand-over, `inbox requests`,
   `inbox done` and `hook.sh`. It also runs the mod's case table of project roots (the strict JSON between the two
   `project_root cases` lines of `register.test.tsx`, which the kit runs against the mod's `projectRoot`) against
@@ -229,13 +233,16 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   count as in `state.json`, JSON), `GET /<page>/run/<n>/` (a
   run's rounds on today's page), `GET /<page>/run/<n>/img/<k>`, `POST /<page>/run/<n>/save/<round>` (today's
   save rules), `POST /<page>/request` (a message on a todo item or Later on one, today's save rules with
-  `MAX_REQUEST_BODY`; see the request rule), `POST /<page>/prefs` (the theme kept, the same rules with `MAX_PREFS_BODY`; see the theme rule), and each
-  run's boards under that run's own board token. The list page asks for `state` every
+  `MAX_REQUEST_BODY`; see the request rule), `POST /<page>/prefs` (the theme kept, the same rules with `MAX_PREFS_BODY`; see the theme rule),
+  `POST /<page>/park` (Park and Back, the same rules with `MAX_PARK_BODY`; see the parking rule),
+  `GET /<page>/history/<project id>/` (that project's past-decisions page, see its rule) and its `img/<k>`, and
+  each run's boards under that run's own board token, a project's past-decisions boards under that project's
+  own. The list page asks for `state` every
   5 seconds, so an open tab keeps its page token alive; a closed one expires after `PAGE_IDLE`.
 - **The mod's panel list is numbers and one-line titles.** `rows` takes `project`, a project id (16 hex digits;
   anything else gets `{error}`), and answers `{rounds: [{run, round, title, item, items: [{item, title}]}], more,
   inbox}`: each
-  open round of that project's live runs and orphan rounds (held ones too), oldest run first, `run` its number (`run/<n>/`),
+  open round of that project's live runs and orphan rounds (held ones too, parked ones never), oldest run first, `run` its number (`run/<n>/`),
   `round` its index in the run, `title` its `tab` or else its `title`, `item` the index its own row opens (its
   first item not yet decided, else its last, whose Focus shows the round's tail with its Accept and Done), and its
   items not yet decided by their index in the round (decided, `_decided`: a saved `choice` that is not null or an
@@ -263,14 +270,43 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   a round without `item`, or rounds without `inbox`, is another shape to the mod. `--app` (which 0.4.0's panel
   sent) is an argument it does not know: the usage error, before anything runs.
 - **`state.json` counts what waits, with no text.** The inbox alone writes it in the home, atomically, 0600:
-  `schema, at, waiting, projects[{id, monogram, waiting}]`. `waiting` is the number of rows in Waiting on you
+  `schema, at, waiting, projects[{id, monogram, waiting}], backs`. `backs` is a whole number, kept in the
+  inbox's memory and written with every count: how many times the user's own Back raised `waiting` since this
+  inbox started (one per Back whose write counted more than the count before it; 0 at a start). It holds no text,
+  path or id, and `schema` stays 1: a reader that does not know it (the 0.4.0 app, the mod) skips it.
+  `waiting` is the number of rows in Waiting on you
   (open rounds of live runs, orphan rounds, todo chains whose top item or a step is marked waiting, each once, and live sessions waiting on the
-  user; never an Idle session), the same list the page shows; `id` is null for a run
+  user; never an Idle session or a parked round), the same list the page shows; `id` is null for a run
   outside any project. It is written at start and whenever the count changes, from the inbox's own look every
-  `STATE_EVERY` seconds; `at` says when. Never a title, path, todo text, link or token. It stays when the inbox
+  `STATE_EVERY` seconds, and at once after a Park or a Back; `at` says when. Never a title, path, todo text, link or token. It stays when the inbox
   stops: a reader trusts it only while `inbox.lock` is held. A reader that cannot lock (the mod) trusts it only
   while `inbox.lock`'s time is within `LIVE_WITHIN` (15 s) of now: the inbox touches it at each look, every
   `STATE_EVERY` seconds, and a stopped, killed or stuck inbox does not.
+- **A parked round waits in the home's `parked.json`, never in the project.** `POST /<page>/park` takes exactly
+  `{run, round, park}`: `run` and `round` whole numbers below 2^31 (never a bool) that name a round open on the
+  list now (`run/<run>/`, its index there; 409 otherwise), `park` a bool; the client never sends a path. The
+  server maps the numbers to the round file's real path and writes `parked.json` in the home (`schema, rounds:
+  [{path, at, back?}]`, paths and times only), atomically, 0600, under the look's lock, so two posts keep both. A
+  round is parked while its entry has no `back`: Back keeps the entry and sets `back` to its time, a Park after it
+  takes `back` off and sets `at` anew; a repeat Park, or a Back on a round not parked, is a 200 with no write. It leaves the file alone (409) when it is a link,
+  not that JSON, or over `MAX_PARKED_FILE` bytes (such a file reads as nothing parked), and refuses (409) a write
+  that would make it hold more than `MAX_PARKED_FILE` bytes (a Back too, as it adds a time) or a new Park past
+  `MAX_PARKED` rounds, entries of rounds done or gone since included: its text says to move the file out of the
+  home. A Park of a round inside no known project's
+  root is 409 too (a look would drop it). The page offers Park only on a row with a project. Each look reads it again (measured: under 0.1 ms for one entry, about 2 ms of an 8 ms look for
+  `MAX_PARKED`), and takes an entry only when its path is absolute, real (no link on the way), with no control
+  character, a `.json` name that is no answers or outcome file, inside a known project's root (the longest root
+  holding it), and, for a round no live run lists, a regular file of the user's own with no outcome file and no
+  answers file that says done (`_open_round`). Anything else counts as nothing parked: a file gone drops out, a
+  round done shows as answered. A parked round no recent run lists is read in as an orphan round of its own
+  (its group's run is the path), so it still opens, saves and takes Done (whose answer is handed over as an
+  orphan's); a run's round goes on waiting as before, its timeout and lock unchanged. The list shows it in Parked,
+  never in Waiting on you, `state.json`, `rows` or the tab title, until Back. Back always puts it back in Waiting
+  on you: a live run's round as before, one no live run lists as a Run ended row that counts (`state.json`, the
+  tab, the sidebar, `rows`) until `back` plus `RUNS_MAX_AGE`, then it drops out, as a gone run's orphan round does
+  (its open row says so while parked). Stale entries (gone, done, or past their Back window) stay in the file:
+  nothing prunes it. A Park or a Back writes `state.json` at once. Known limit: an entry of a round done stays in
+  the file, so a later round written at the same path with no answers file is parked at once.
 - **The mod costs a session nothing and shows no link.** It runs in every interactive session of everyone who
   installs the plugin, so it starts no process to look (the one it starts for a request it found new is the
   mod's hand-over rule's, and `signoff plan` is the plan review's, below): every `EVERY` (5) seconds it checks `inbox.lock` in the
@@ -294,7 +330,8 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   hand-over rule), but for the plan-review check at an `ExitPlanMode` call (not with `claude -p` or on
   Windows) and that review's toast. Only a live count (an inbox that lives,
   a project found) moves Hide (cleared by any other live count) and the toast (once a session, after a live 0 and
-  two live counts above it in a row). Open and `/signoff:open` (typed at the prompt, also with `hint` `off`) open
+  two live counts above it in a row; it reads no `backs`, so a known limit: after a live 0, a Back of the user's
+  own can set it off). Open and `/signoff:open` (typed at the prompt, also with `hint` `off`) open
   the panel: `$.ui.open` of the `signoff` pane before anything else is awaited (so it is the person's own press
   or command, placed at any width), with `focus` only on a press of Open (after the command the person may type
   on, and a digit would press a row), then one run of `signoff inbox rows <session root>`, once per opening and
@@ -586,7 +623,27 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
 - **Boards stay sandboxed.** Boards are served under their own token (`board_token`), which opens nothing else.
   Every board response carries `BOARD_CSP` (`sandbox allow-scripts`, nothing loaded from outside),
   and the page embeds it with `sandbox="allow-scripts"` and never `allow-same-origin`.
-- **The past-decisions page is read only.** No POST route answers there (405), nothing is written.
+- **The past-decisions page is read only.** No POST route answers there (405), nothing is written. `--history`
+  serves it on a server of its own; the inbox serves it under a live page token as `history/<project id>/` (a
+  project in `projects/`, else 404; every POST under it 405), built anew on each load from `_History`, the listing
+  `--history` uses: every topic of each decisions folder the project's runs used (the parent of a `runs/` entry's
+  topic folder of that project, read from the newest `MAX_HISTORY_RUNS` files of `runs/` of any age) and its
+  `.signoff`, each resolved once and kept only when strictly inside its root (a `.signoff` linked out of it is
+  not listed), newest first, within `HISTORY_BUDGET`. One folder lists a topic under each of its names, as
+  `--history` does; a topic two folders reach is listed once, under its name in the folder first by path. It reads
+  no round whose decisions, answers and outcome files, by size and half again for the page's escaping, would pass
+  `HISTORY_DATA_BUDGET`: that round is listed by name, its text not read, so a build's memory follows the budget,
+  not the number of rounds. Each round is held to the budgets as soon as it is read. A known limit: text heavy in
+  `<`, `>` or `&`, or long lists of small numbers, can take 6 times its size on the page or more, so such a round
+  passes the estimate, is read, and is then
+  dropped by the exact check, one at a time (memory stays bounded, later and smaller rounds still show). It does not
+  find a folder used only by runs older than those files, or by runs before the inbox first ran (no `runs/`
+  entry), or one set by the plugin's folder option with no run in it. One listing is built at a time; it drops its
+  rounds' text once the page has it and keeps their pictures and boards by number, read on request with the same
+  checks, its boards under that project's own board token. A file keeps its number in every later build while
+  the inbox lives, so an older tab's pictures still show the files it listed. A folder it cannot read, or a link
+  loop in its place, gives 404 and one stderr line. The page data gets `inbox: true`, `prefs` with `keep`
+  false, and `mono`, nothing more than `--history` sends.
 - **Agent text is never HTML.** The page uses `textContent` and DOM methods only: no `innerHTML`, no inline
   `style` attribute, no inline event handler. A test greps the assembled page, every part in, for these.
 - **The CSP stays strict.** Every executable script and style element carries the nonce (the inert JSON data
@@ -624,13 +681,14 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   Cancel or a click outside goes back, and focus returns to where it was. Without `keep` it previews in that tab
   only and says so.
 - **The inbox list is one screen.** A sidebar (views: Waiting on you, To do; then each project
-  with a row) filters the list, a second click or Show all shows everything; the list's rows open in the pane
+  with a row, and under it a Past decisions link, `a.nav` in a `navs outline` list, to `history/<project id>/` in
+  the same tab) filters the list, a second click or Show all shows everything; the list's rows open in the pane
   beside it, each row's view built once and kept until a reload (typed text, statuses); a round's row is a link
   to its page. Under 1000 px the sidebar is a drawer, under 760 px the open row is a bottom sheet; while either
   is open the rest of the page is `inert`. Keys: j and k (the arrows on a row) move the open row, Enter goes into
   it (a round's opens its page), f is Focus (one item at a time), Esc closes the sheet, the drawer or Focus, ?
   lists them; none of them act with Ctrl, Alt or Cmd held, nor while typing (Esc and the search's keys aside, see below). With nothing waiting and
-  no filter, the empty state stands in for the list (with a button to the Idle rows when there are any). The rows
+  no filter, the empty state stands in for the list (with a button to the Idle rows, and one to Parked, when there are any). The rows
   on the page change only on a reload, which the page makes itself: the 5-second `state` poll keeps the tab title's
   count (in all and per project, as `state.json` gives it) and when it differs from the rows the page reloads its
   own URL (never the single-use start link) if that loses nothing: no typed text in any row's view, no sheet,
@@ -649,8 +707,18 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   reads as oldest first), the order only changes on screen (j and k follow it). To do shows each project's rows
   behind one count row (a button with `aria-expanded`), closed until clicked; a project's filter opens its own.
   Answered (the rounds answered, under Waiting on you) is one such group: its heading is the count row, closed
-  until clicked, and a project's filter opens it (with that project's rows only). No `prefs.json` key keeps any
-  of them.
+  until clicked, and a project's filter opens it (with that project's rows only). Parked (the parked rounds,
+  `parked` in the page data, under Answered) is another: its heading counts its rows and, when any, how many an
+  agent still waits on (a live run's round: its row's kind is "Agent waiting", else "Parked"); each row is a link
+  to its round's page, its `since` the park time. Every round row with a project (live, held, Run ended) ends in
+  a Park button, a parked row in Back (`button.ib-rowact`, a sibling after the row's link, never inside it, its
+  accessible name "Park <title>" or "Back <title>", reached with Tab; the link keeps the rest of the width, so the
+  title and time stay in place at 390 px). The open row has Open round and the same button again, because Focus
+  hides the list (the Later pattern: `post('park', {run, round, park})`). A press in the list sends the focus,
+  after the reload too, to the row that took its place (the next shown, else the one before); on success the page counts the round where it now is
+  (no "new" bar) and reloads itself unless a row holds typed text, else its status says it moves at the next
+  reload. A project's sidebar count is its Waiting on you rows and its To do rows; Answered, Parked and Idle rows
+  count nowhere. No `prefs.json` key keeps any of them.
   j, k and Focus walk only the rows shown, never a closed group's. **The search** is a `role=search` field in the
   header (a phone gets it on a second line), live as you type, over every view and past the sidebar's filter: a
   row matches when each word of the query (split on spaces, folded with NFD, combining marks dropped, lower case)
@@ -665,7 +733,7 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   the open (else first) shown row; Enter or the down arrow in it go to that row, then j, k and Enter walk the
   results. The query goes through a reload with the rest (`query` in the kept state). The groups of Waiting on you follow their first
   row in the chosen order, so the oldest (or newest) row is always at the top. A self-reload keeps which To do
-  groups were open, and whether Answered was. A live session (its `sessions/` file no older than `SESSIONS_MAX_AGE`, not `ended`, its
+  groups were open, and whether Answered and Parked were. A live session (its `sessions/` file no older than `SESSIONS_MAX_AGE`, not `ended`, its
   `pid` alive) that waits on the user is a row in Waiting on you, ordered like the others (its `since` is its
   `waiting_at`): the project, how long, and for a `bg` session `claude attach <short id>` in a code block with Copy
   (the short id is the session id's first 8 characters, sent only when they are lowercase hex), else "Go to its
@@ -718,7 +786,8 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   of a new one (see the hooks rule). The inbox
   writes, in the home, `inbox.lock` (empty; its time touched at each look), `inbox.json` (`schema, server_id, port, control`; 0600, no token),
   `state.json` (see the state rule), `inbox.sock`, `requests/<project>/<id>.json` (see the request rule),
-  `prefs.json` (see the theme rule), and
+  `prefs.json` (see the theme rule), `parked.json` (see the parking rule; no entry is ever removed, Back adds its
+  time, and a round's own files are never touched by it), and
   `logs/inbox.log` when `signoff inbox open` or the app starts it (the app makes the home and `logs/` for it,
   0700, when absent); `signoff inbox done` writes `<id>.done`. The one thing Signoff removes is a
   dead `inbox.sock`: only when it is a socket in the inbox's own home, the starting inbox holds `inbox.lock`, and
@@ -866,7 +935,12 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   anything else loads nothing. A link of the inbox's own for a new window opens in a window of the app. The badge
   and the count beside the menu bar item (the number and nothing else) come from `state.json`'s count only, read
   only while an inbox holds `inbox.lock` (looked at as `inbox_alive()` does, so a starting inbox is never kept
-  out). A rise of that count triggers a notification whose text is the number and nothing else: no link, token
+  out). A rise of that count triggers a notification, unless the user's own Backs made it: the app leaves out as
+  much of the rise as `backs` rose by since its last trusted read (a `backs` lower than then, or none then, is an
+  inbox started anew and leaves out nothing; no `backs`, or one that is not a whole number from 0: every rise, as
+  before; only `schema` and `waiting` can fail the file). A known limit: `backs` counts a Back's rise, not a Park's
+  fall, so a new round that lands in the same read as a Park and its Back sends no notification; the badge still
+  shows the count, and the list page its own bar. Its text is the number and nothing else: no link, token
   or path in its title, body or identifier (`waiting`), and no user info (no `Data`). It has no actions, and the
   app registers no category. Any response to a banner only opens the window (a hidden one gets a fresh start link), also one to a
   banner a 0.3.0 or 0.4.0 app left in Notification Center (`offer-<k>`, Accept & send, Other answer…): the app

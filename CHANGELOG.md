@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Park a round, and see past decisions in the inbox:** each round row in the inbox list (and the macOS app) ends in a **Park** button: the round leaves Waiting on you for **Parked**, under Answered and closed the same way, and counts nowhere (the tab title, the sidebar, the band and panel, the app's badge) until you press **Back** on its row, which puts it back in Waiting on you (a round whose run has ended as **Run ended**, for 14 days) with no app notification for it (`state.json` gains `backs`, the count of those rises; readers that do not know it skip it). Parking keeps only the round file's path and the times, in `parked.json` in the Signoff home; the round's files and its run stay as they were, and its row says **Agent waiting** while that run still runs. Each project in the sidebar links to its **Past decisions**, the read-only page `signoff --history` shows, now also inside the inbox and its app window.
+
 - **Attachment rows no longer pile up:** a round you leave, on a round's page or the past-decisions page, lets go of its attachments' rows, and its open boxes draw them again when you come back (from the box's top), with every note, typed and not yet saved ones too. Before, each big round visited kept its rows, so the memory grew with every such round. Now it holds up to about two rounds' worth until Chrome frees the dropped rows on its own, within about 30 seconds in headless Chrome.
 
 - **A picker in `/config`, and the Claude Code floor:** Waiting hint is now a picker in `/config`. A Claude Code before 2.1.271 no longer loads the plugin.

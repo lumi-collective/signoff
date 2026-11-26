@@ -344,19 +344,26 @@ func checkLink(link string, port int) error {
 	return nil
 }
 
-// waiting reads the count in state.json (AGENTS.md: numbers only, schema 1).
-func waiting(home string) (int, error) {
+// waiting reads the count in state.json (AGENTS.md: numbers only, schema 1), and backs, the rises the user's own
+// Backs made since that inbox started: -1 when the key is not there (an inbox from before it) or not a whole number
+// from 0. Only schema and waiting can fail the file, as in 0.4.0.
+func waiting(home string) (int, int, error) {
 	var state struct {
-		Schema  *int `json:"schema"`
-		Waiting *int `json:"waiting"`
+		Schema  *int            `json:"schema"`
+		Waiting *int            `json:"waiting"`
+		Backs   json.RawMessage `json:"backs"`
 	}
 	if err := readJSON(filepath.Join(home, "state.json"), &state); err != nil {
-		return 0, err
+		return 0, -1, err
 	}
 	if state.Schema == nil || *state.Schema != 1 || state.Waiting == nil || *state.Waiting < 0 {
-		return 0, errors.New("state.json is not one this app knows")
+		return 0, -1, errors.New("state.json is not one this app knows")
 	}
-	return *state.Waiting, nil
+	var backs *int
+	if json.Unmarshal(state.Backs, &backs) != nil || backs == nil || *backs < 0 {
+		return *state.Waiting, -1, nil
+	}
+	return *state.Waiting, *backs, nil
 }
 
 func readJSON(path string, v any) error {
@@ -379,17 +386,24 @@ func readJSON(path string, v any) error {
 }
 
 // rise remembers the last trusted count and says when a new one is higher: one notification per rise. The first
-// trusted count is the baseline; an unknown count (no inbox) keeps the last one.
+// trusted count is the baseline; an unknown count (no inbox) keeps the last one. A rise the user's own Back made
+// (backs went up by as much since the last read) is no notification; a backs lower than last time, or one after
+// none, is an inbox started anew and leaves nothing out. shortcut: an inbox restarted whose backs climbed past the
+// old value between two reads leaves out too few; key backs on inbox.json's server_id if that bites.
 type rise struct {
-	last  int
-	known bool
+	last, backs int
+	known       bool
 }
 
-func (r *rise) next(n int, ok bool) bool {
+func (r *rise) next(n, backs int, ok bool) bool {
 	if !ok {
 		return false
 	}
-	up := r.known && n > r.last
-	r.last, r.known = n, true
+	own := 0
+	if r.known && r.backs >= 0 && backs >= r.backs {
+		own = backs - r.backs
+	}
+	up := r.known && n-r.last > own
+	r.last, r.backs, r.known = n, backs, true
 	return up
 }

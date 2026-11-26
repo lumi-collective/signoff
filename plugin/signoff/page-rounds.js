@@ -573,8 +573,9 @@
     // ---- The page of past decisions: a filterable list, and the chosen round read only ----
     [status, acceptButton, doneButton].forEach(function (b) { b.hidden = true; });
     var minutes = data.timeout;
-    showHeader({title: L.historyTitle, intro: L.historyIntro,
-      notice: minutes ? fmt(L.historyNotice, {m: minutes}) : L.historyNoticeNever});
+    // Opened from the inbox, it closes with the tab: no terminal to stop it in.
+    showHeader({title: L.historyTitle, intro: L.historyIntro, notice: data.inbox ? L.historyNoticeInbox
+      : minutes ? fmt(L.historyNotice, {m: minutes}) : L.historyNoticeNever});
     sh.nav.append(byId('history'));
     byId('history').hidden = false;
     byId('h-text-label').textContent = L.search;

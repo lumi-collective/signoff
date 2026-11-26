@@ -986,7 +986,8 @@ class Inbox(unittest.TestCase):
         self.assertEqual((resp.status, resp.getheader("Content-Type")), (200, "application/json"), body)
         data = json.loads(body)
         # The round, and the chain whose step waits: one row each.
-        self.assertEqual((sorted(data), data["waiting"]), (["at", "projects", "schema", "waiting"], 2))
+        self.assertEqual((sorted(data), data["waiting"], data["backs"]), (["at", "backs", "projects", "schema",
+                                                                           "waiting"], 2, 0))
         for text in (str(self.folder.path), "decisions.json", self.home, "0123456789abcdef", page.strip("/")):
             self.assertNotIn(text.encode(), body)
         with open(os.path.join(self.home, "state.json"), encoding="utf-8") as f:
@@ -1195,6 +1196,186 @@ class Inbox(unittest.TestCase):
                          ("dark", "gruvbox", "comfortable", "project"))
         self.assertEqual(self.request("GET", start)[0].status, 410)
         refused(404)  # a closed pair writes nothing more
+
+
+@unittest.skipIf(sys.platform == "win32", "the inbox's control socket is a Unix socket; no inbox on Windows yet")
+class InboxPastAndParked(unittest.TestCase):
+    """The inbox's past-decisions route (GET /<page>/history/<project id>/, read only) and Park (POST /<page>/park,
+    which writes parked.json in the home), for a project whose decisions folder holds past rounds and a run's open
+    round with a picture and a board."""
+
+    link = Inbox.__dict__["link"]
+    request, open = Inbox.request, Inbox.open
+
+    @classmethod
+    def setUpClass(cls):
+        cls._tmp = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(cls._tmp.cleanup)
+        cls.home = os.path.join(os.path.realpath(cls._tmp.name), "home")
+        cls.root = HistoryRoot()
+        cls.addClassCleanup(cls.root.cleanup)
+        cls.topic = cls.root.path / ".signoff" / "2026-03-02-board"
+        (cls.topic / "mockups").mkdir(parents=True)
+        (cls.topic / "mockups" / "a.png").write_bytes(png_bytes())
+        (cls.topic / "boards").mkdir()
+        (cls.topic / "boards" / "b.html").write_bytes(BOARD)
+        data = sample_decisions()
+        data["items"][0]["images"].append({"html": "boards/b.html", "caption": "Live"})
+        (cls.topic / "round-01.json").write_text(json.dumps(data), encoding="utf-8")
+        cls.pid = hashlib.sha256(str(cls.root.path).encode("utf-8")).hexdigest()[:16]
+        for sub in ("runs", "projects"):
+            os.makedirs(os.path.join(cls.home, sub), mode=0o700)
+        with open(os.path.join(cls.home, "projects", cls.pid + ".json"), "w", encoding="utf-8") as f:
+            json.dump({"schema": 1, "id": cls.pid, "root": str(cls.root.path), "name": "project"}, f)
+        entry = {"schema": 1, "run": "fedcba9876543210", "project": cls.pid, "folder": str(cls.topic),
+                 "rounds": ["round-01.json"], "mode": "waiter", "pid": os.getpid(), "started": "2026-01-01T00:00:00Z"}
+        with open(os.path.join(cls.home, "runs", "fedcba9876543210.json"), "w", encoding="utf-8") as f:
+            json.dump(entry, f)
+        cls.proc = subprocess.Popen(COMMAND + ["inbox", "serve"], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                    env=dict(os.environ, SIGNOFF_INBOX_HOME=cls.home))
+
+        def stop():
+            if cls.proc.poll() is None:
+                cls.proc.kill()
+            cls.proc.communicate()
+        cls.addClassCleanup(stop)
+        deadline = time.monotonic() + 30
+        while True:
+            try:
+                link = cls.link()
+                break
+            except OSError:
+                assert cls.proc.poll() is None and time.monotonic() < deadline, "the inbox did not start"
+                time.sleep(0.1)
+        found = LINK.search(link)
+        cls.origin, cls.port = found.group(1), int(found.group(3))
+        cls.host = "127.0.0.1:%d" % cls.port
+
+    def post(self, path, body, headers=None):
+        hdrs = {"Content-Type": "application/json", "Origin": self.origin, "Sec-Fetch-Site": "same-origin"}
+        hdrs.update(headers or {})
+        return self.request("POST", path, body, hdrs)
+
+    def data(self, path):
+        resp, body = self.request("GET", path)
+        self.assertEqual(resp.status, 200, path)
+        return json.loads(re.search(r'id="signoff-data">(.*?)</script>', body.decode("utf-8"), re.S).group(1)), body
+
+    def parked(self):
+        try:
+            with open(os.path.join(self.home, "parked.json"), "rb") as f:
+                return f.read()
+        except FileNotFoundError:
+            return None
+
+    def test_the_history_route_is_read_only_and_keeps_todays_rules(self):
+        start, page = self.open()
+        hist = page + "history/%s/" % self.pid
+        before = contents(self.root.path)
+        resp, body = self.request("GET", hist)
+        csp = policy(resp)
+        nonce = re.fullmatch(r"'nonce-([^']+)'", (csp.get("script-src") or [""])[0]).group(1)
+        for name, sources in csp.items():
+            self.assertLessEqual(set(sources), {"'none'", "'self'", "'nonce-%s'" % nonce}, name)
+        data = json.loads(re.search(r'id="signoff-data">(.*?)</script>', body.decode("utf-8"), re.S).group(1))
+        self.assertEqual((data["mode"], data["root"], data["inbox"], data["prefs"]["keep"]),
+                         ("history", "project", True, False))
+        self.assertIn("Second round", [e["title"] for e in data["entries"]])
+        for text in (str(self.root.path), self.home, "fedcba9876543210", page.strip("/")):
+            self.assertNotIn(text.encode(), body)
+        for host in ("localhost.example:%d" % self.port, "127.0.0.1", "evil.example", "[::1]:%d" % self.port, "",
+                     None):
+            self.assertEqual(self.request("GET", hist, headers={"Host": host})[0].status, 403, host)
+        token = page.strip("/")
+        for bad in ("/%s/history/%s/" % ("A" * len(token), self.pid), page + "history/%s/" % ("f" * 16),
+                    page + "history/%s" % self.pid, page + "history/%s/" % self.pid.upper(),
+                    hist + "?theme=dark", hist + "state", page + "run/0/history/%s/" % self.pid):
+            self.assertEqual(self.request("GET", bad)[0].status, 404, bad)
+        for path in (hist, hist + "save/0", hist + "prefs", hist + "park", page + "history/%s/" % ("f" * 16)):
+            self.assertEqual(self.post(path, ANSWER)[0].status, 405, path)
+        # Pictures by number, read on request inside their folder; boards under a token of their own, sandboxed.
+        text = body.decode("utf-8")
+        src = re.findall(r'"src":\s*"(img/[0-9]+)"', text)
+        board = re.search(r'"board":\s*"(/[^"]+)"', text).group(1)
+        self.assertEqual(self.request("GET", hist + src[0])[1], png_bytes())
+        for path in ("img/999", "img/../x", ".signoff/2026-01-05-settings/mockups/a.png"):
+            self.assertEqual(self.request("GET", hist + path)[0].status, 404, path)
+        resp, html = self.request("GET", board)
+        self.assertEqual((resp.status, html, policy(resp).get("sandbox")), (200, BOARD, ["allow-scripts"]))
+        btoken = board.split("/")[1]
+        for path in ("/%s/" % btoken, "/%s/history/%s/" % (btoken, self.pid), "/%s/0/9" % btoken):
+            self.assertEqual(self.request("GET", path)[0].status, 404, path)
+        self.assertEqual(self.post("/%s/park" % btoken, {"run": 0, "round": 0, "park": True})[0].status, 404)
+        self.assertEqual(contents(self.root.path), before)
+        # Read on request: a picture or a board of the newest topic (listed first) swapped for a link out of its
+        # folder is not followed.
+        for listed, name, data in ((hist + src[0], "mockups/a.png", png_bytes()), (board, "boards/b.html", BOARD)):
+            self.assertEqual(self.request("GET", listed)[1], data, listed)
+            secret = self.root.path / ("secret-" + os.path.basename(name))
+            secret.write_bytes(data + b"SECRET")
+            (self.topic / name).rename(self.root.path / ("moved-" + os.path.basename(name)))
+            os.symlink(str(secret), str(self.topic / name))
+            resp, body = self.request("GET", listed)
+            self.assertEqual(resp.status, 404, listed)
+            self.assertNotIn(b"SECRET", body)
+        self.assertEqual(self.request("GET", start)[0].status, 410)
+        self.assertEqual(self.request("GET", hist)[0].status, 404)  # a closed pair opens nothing
+
+    def test_park_keeps_todays_rules_and_takes_the_round_out_of_the_count(self):
+        start, page = self.open()
+        self.data(page)
+        good = {"run": 0, "round": 0, "park": True}
+
+        def refused(status, body=good, headers=None, path="park"):
+            resp, out = self.post(page + path, body, headers)
+            self.assertEqual(resp.status, status, (body, headers, path, out))
+            self.assertIsNone(self.parked())
+        for host in ("localhost.example:%d" % self.port, "127.0.0.1", "evil.example", "[::1]:%d" % self.port, "",
+                     None):
+            refused(403, headers={"Host": host})
+        for origin in ("http://evil.example", "null", "http://localhost:%d" % self.port, self.origin + "/", None):
+            refused(403, headers={"Origin": origin})
+        for site in ("cross-site", "same-site", "none"):
+            refused(403, headers={"Sec-Fetch-Site": site})
+        for ctype in ("text/plain", "application/x-www-form-urlencoded", None):
+            refused(415, headers={"Content-Type": ctype})
+        refused(411, json.dumps(good).encode(), {"Content-Length": None})
+        refused(413, b"{}", {"Content-Length": "41943040"})
+        refused(413, dict(good, pad="x" * 1024))
+        for bad in (b"{x", b"[]", {}, dict(good, extra=1), dict(good, run=True), dict(good, run="0"),
+                    dict(good, round=None), dict(good, park="true"), {"run": 0, "round": 0},
+                    dict(good, path=str(self.topic / "round-01.json"))):
+            refused(400, bad)
+        for body in (dict(good, run=7), dict(good, round=1)):  # no such run or round on the list now
+            refused(409, body)
+        for path in ("park/", "park?theme=dark", "run/0/park", "history/%s/park" % self.pid):
+            refused(404 if "history" not in path else 405, path=path)
+        state = json.loads(self.request("GET", page + "state")[1])["waiting"]
+        resp, out = self.post(page + "park", good)
+        self.assertEqual(resp.status, 200, out)
+        saved = json.loads(self.parked())
+        self.assertEqual((sorted(saved), saved["schema"]), (["rounds", "schema"], 1))
+        self.assertEqual([sorted(e) for e in saved["rounds"]], [["at", "path"]])
+        self.assertEqual(saved["rounds"][0]["path"], str(self.topic / "round-01.json"))
+        self.assertEqual(os.stat(os.path.join(self.home, "parked.json")).st_mode & 0o777, 0o600)
+        for text in (page.strip("/"), start.split("/")[2], "http", "Second round"):
+            self.assertNotIn(text.encode(), self.parked())
+        self.assertEqual(json.loads(self.request("GET", page + "state")[1])["waiting"], state - 1)
+        with open(os.path.join(self.home, "state.json"), encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["waiting"], state - 1)
+        listed = self.data(page)[0]
+        self.assertEqual(([w["kind"] for w in listed["waiting"]], [w["title"] for w in listed["parked"]]),
+                         ([], [sample_decisions()["title"]]))
+        resp, out = self.post(page + "park", dict(good, park=False))
+        self.assertEqual(resp.status, 200, out)
+        (kept,) = json.loads(self.parked())["rounds"]  # Back keeps the entry and adds when
+        self.assertEqual(sorted(kept), ["at", "back", "path"])
+        self.assertEqual(json.loads(self.request("GET", page + "state")[1])["waiting"], state)
+        self.assertEqual(self.request("GET", start)[0].status, 410)
+        before = self.parked()
+        resp, _ = self.post(page + "park", good)
+        self.assertEqual(resp.status, 404)  # a closed pair writes nothing more
+        self.assertEqual(self.parked(), before)
 
 
 @unittest.skipIf(sys.platform == "win32", "the inbox's control socket is a Unix socket; no inbox on Windows yet")

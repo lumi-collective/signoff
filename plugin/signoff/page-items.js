@@ -137,7 +137,9 @@
       // This page sends nothing while read, so its server stops after the idle time: say so, not a silent gap. A
       // second request tells that from a picture the server could not read (an HTTP error resolves, a dead one not).
       pic.addEventListener('error', function () {
-        fetch(pic.src).catch(function () { showHeader({title: L.historyTitle, intro: L.historyIntro, notice: L.historyGone}); });
+        fetch(pic.src).catch(function () {
+          showHeader({title: L.historyTitle, intro: L.historyIntro, notice: data.inbox ? L.historyGoneInbox : L.historyGone});
+        });
       });
     }
     frame.append(pic);

@@ -70,6 +70,7 @@
     ['status', 'accept-all', 'done', 'intro-phone'].forEach(function (id) { byId(id).hidden = true; });
     byId('title').textContent = L.inbox;
     var waiting = data.waiting || [], sent = data.sent || [], projects = data.projects || [], idle = data.idle || [];
+    var parked = data.parked || [];
     // The tab title keeps the count of Waiting on you, the same number as state.json. When that count, in all or per
     // project, differs from the rows on the page, the page reloads itself if that loses nothing (see below), else a bar at the top of the list says so.
     function waitingTitle(n) { document.title = (n ? '(' + n + ') ' : '') + L.inbox; }
@@ -153,20 +154,24 @@
     function rowKey(r) {
       return [r.sec.key, r.w.project || '', r.title.textContent, r.w.kind === 'todo' ? '' : r.w.since || r.w.saved || ''].join('|');
     }
-    function reloadNow() {
+    function reloadNow(to) {  // to: a row whose link takes the focus after the reload (Park, Back), else none
       try {  // the load after a reload takes this once
         sessionStorage.setItem(KEPT, JSON.stringify({row: current ? rowKey(current) : null,
+          focus: to && to.go ? rowKey(to) : null,
           filter: filter ? filter.key : null, query: box.value, scroll: pane.scrollTop, detail: detail.scrollTop, at: Date.now(),
           open: closable().filter(function (g) { return g.open; }).map(function (g) { return g.key; })}));
       } catch (e) { /* no storage: it reloads from the top */ }
       location.reload();
     }
+    function typed() {  // text in a row's view that a reload would lose
+      return rows.some(function (r) {
+        return r.view && Array.prototype.some.call(r.view.querySelectorAll('input[type=text],textarea'),
+          function (i) { return i.value.trim() !== ''; });
+      });
+    }
     function calm() {
       return !(has('sheet') || has('side-open') || has('focusing') || picker.open || byId('help').open
-        || String(window.getSelection()) !== '' || typing(document.activeElement) || rows.some(function (r) {
-          return r.view && Array.prototype.some.call(r.view.querySelectorAll('input[type=text],textarea'),
-            function (i) { return i.value.trim() !== ''; });
-        }));
+        || String(window.getSelection()) !== '' || typing(document.activeElement) || typed());
     }
     var fresh = el('p', 'ib-fresh'), freshText = el('span'), freshGo = el('button', 'primary', L.reload);
     freshGo.type = 'button';
@@ -180,22 +185,37 @@
     function tally(pairs) {
       var c = {};
       pairs.forEach(function (p) { c[p[0]] = (c[p[0]] || 0) + p[1]; });
-      return Object.keys(c).sort().map(function (k) { return k + '=' + c[k]; }).join(',');
+      return Object.keys(c).sort().filter(function (k) { return c[k]; }).map(function (k) { return k + '=' + c[k]; }).join(',');
     }
-    var shownTally = tally(waiting.map(function (w) { return [w.project + '|' + w.mono, 1]; }));
+    // What the server counts: the rows shown, and a Park or a Back it took since (moved).
+    var pairs = waiting.map(function (w) { return [w.project + '|' + w.mono, 1]; }), expect = waiting.length;
+    var shownTally = tally(pairs);
     function counted(s) {
       var n = s.waiting;
       waitingTitle(n);
-      if (n === waiting.length && (!Array.isArray(s.projects) || tally(s.projects.map(function (p) {
+      if (n === expect && (!Array.isArray(s.projects) || tally(s.projects.map(function (p) {
         return [p.id + '|' + p.monogram, p.waiting];
       })) === shownTally)) {
         fresh.hidden = true;
         return;
       }
       if (calm() && performance.now() > AGAIN) return reloadNow();
-      freshText.textContent = n > waiting.length ? fmt(L.freshMore, {n: n - waiting.length}) : L.freshChanged;
+      freshText.textContent = n > expect ? fmt(L.freshMore, {n: n - expect}) : L.freshChanged;
       fresh.hidden = false;
       stale();
+    }
+    // A Park or a Back the server took: the page expects the count without it (no bar), and reloads to show the
+    // row in its new place unless that would lose typed text; then the status says so. A press from the list sends
+    // the focus to the row that took its place (the next shown, else the one before).
+    function moved(r, step, status, note, fromList) {
+      expect += step;
+      pairs.push([r.w.project + '|' + r.w.mono, step]);
+      shownTally = tally(pairs);
+      waitingTitle(expect);
+      var all = shown(), i = all.indexOf(r), to = fromList ? all[i + 1] || all[i - 1] : null;
+      if (!typed()) return reloadNow(to);
+      status.textContent = note;
+      if (to) to.go.focus();
     }
     var poll = setInterval(function () {
       fetch('state').then(function (r) {
@@ -292,7 +312,8 @@
       h.id = 'ib-head-' + sections.length;
       ul.setAttribute('aria-labelledby', h.id);
       h.append(document.createTextNode(title + ' '), el('span', 'n', String(n)));
-      if (note) h.append(el('span', 'ib-note', note));
+      // The note sits apart by CSS only: the hidden comma reads "Parked 2, 1 with an agent waiting" aloud.
+      if (note) h.append(el('span', 'visually-hidden', ', '), el('span', 'ib-note', note));
       s.append(h);
       pane.append(s);
       var sec ={el: s, head: h, ul: ul, key: key, rows: []};
@@ -353,9 +374,10 @@
     function closable() {
       return [].concat.apply([], sections.map(function (x) { return x.groups || []; })).filter(function (g) { return g.toggle; });
     }
-    // A project filter opens its own To do group and Answered, which then holds only that project's rows.
+    // A project filter opens its own To do group, Answered and Parked, which then hold only that project's rows.
     function forced(g) {
-      return terms.length > 0 || !!(filter && filter.project && (g.key === filter.project || g.key === 'answered'));
+      return terms.length > 0 || !!(filter && filter.project && (g.key === filter.project || g.key === 'answered'
+        || g.key === 'parked'));
     }
     function paint(g) {  // a group: its rows open or closed, hidden when the filter leaves none of them
       var open = g.open || forced(g);
@@ -586,27 +608,59 @@
       if (parked) laterPill(r, parked.done);
       return r;
     }
+    // A round's row: a link to its page, and Park (a parked one: Back) beside the link, never inside it. Opened, its
+    // notes, Open round and the same button again, for Focus, which hides the list. A parked one says whether its
+    // run still waits (Agent waiting) or has ended (Back then makes it a Run ended row).
+    function roundRow(sec, w, isParked) {
+      var buttons = [];
+      function parkButton(fromList) {  // the server maps the numbers to the round; no path goes out
+        var b = el('button', fromList ? 'ib-rowact' : '', isParked ? L.back : L.park);
+        b.type = 'button';
+        b.setAttribute('aria-label', fmt(isParked ? L.backOf : L.parkOf, {t: w.title}));
+        b.addEventListener('click', function () {
+          var status = fromList ? stateText : b.parentNode.nextSibling;  // the key bar's line, or the open view's
+          buttons.forEach(function (x) { x.disabled = true; });
+          status.textContent = '';
+          post('park', {run: Number(w.group), round: Number(w.round), park: !isParked}, status, L.parkFailed,
+            function () {
+              moved(r, isParked ? 1 : -1, status, isParked ? L.backReload : L.parkReload, fromList);
+              buttons.forEach(function (x) { x.hidden = true; });
+            }).then(function () { buttons.forEach(function (x) { x.disabled = false; }); });
+        });
+        buttons.push(b);
+        return b;
+      }
+      var run = 'run/' + Number(w.group) + '/', tab = w.tab && w.tab !== w.title ? w.tab : '';
+      var aged = oldRound(w.opened);  // the round file's time; the row's clock stays on `since` (run start, or park)
+      // The context rides on the short line, so the search and the link's name get it once.
+      var r = row(sec, w, as(isParked ? (w.orphan ? {kind: L.parkedKind, cls: 'k-t', glyph: '◇'}
+        : {kind: L.agentWaiting, cls: 'k-w', glyph: '●'}) : w.held ? {kind: L.heldKind, cls: 'k-t', glyph: '◇'}
+        : w.orphan ? {kind: L.orphanKind, cls: 'k-q', glyph: '◆'} : Q, {title: w.title,
+        sub: [tab, w.context].filter(Boolean).join(' · '),
+        find: function () { return w.items || []; }, stamp: w.since, href: run, fill: function (box) {
+          if (tab) box.append(el('p', '', tab));
+          if (w.context) box.append(el('p', 'context', w.context));
+          if (isParked) box.append(el('p', 'ib-vuln-note', w.orphan ? L.parkedNote : L.parkedLiveNote));
+          else if (w.held) box.append(el('p', 'ib-vuln-note', L.held));
+          else if (w.orphan) box.append(el('p', 'ib-vuln-note', L.orphan));
+          if (aged) box.append(el('p', 'ib-vuln-note', fmt(L.oldOpenFor, {t: lasted(w.opened)}) + ' ' + L.oldNote));
+          var acts = el('div', 'ib-acts'), go = el('a', 'ib-go', L.openRound), status = el('p', 'ib-msg-status');
+          go.href = run;
+          status.setAttribute('role', 'status');
+          acts.append(go);
+          if (w.project) acts.append(parkButton(false));
+          box.append(acts, status);
+        }}));
+      if (aged) r.go.querySelector('.ib-sub').append(el('span', 'pill old', L.oldRound));
+      if (w.project) {  // the server keeps a park only for a round inside a known project
+        r.li.classList.add('has-act');
+        r.li.append(parkButton(true));
+      }
+    }
     var s = section(L.waitingHead, waiting.length, '', 'wait', 'waiting'), waitSec = s;
     waiting.forEach(function (w) {
-      if (w.kind === 'round') {
-        var run = 'run/' + Number(w.group) + '/', tab = w.tab && w.tab !== w.title ? w.tab : '';
-        var aged = oldRound(w.opened);  // the round file's time; the row's clock stays on its run's start
-        // The context rides on the short line, so the search and the link's name get it once.
-        var r = row(s, w, as(w.held ? {kind: L.heldKind, cls: 'k-t', glyph: '◇'}
-          : w.orphan ? {kind: L.orphanKind, cls: 'k-q', glyph: '◆'} : Q, {title: w.title,
-          sub: [tab, w.context].filter(Boolean).join(' · '),
-          find: function () { return w.items || []; }, stamp: w.since, href: run, fill: function (box) {
-            if (tab) box.append(el('p', '', tab));
-            if (w.context) box.append(el('p', 'context', w.context));
-            if (w.held) box.append(el('p', 'ib-vuln-note', L.held));
-            else if (w.orphan) box.append(el('p', 'ib-vuln-note', L.orphan));
-            if (aged) box.append(el('p', 'ib-vuln-note', fmt(L.oldOpenFor, {t: lasted(w.opened)}) + ' ' + L.oldNote));
-            var go = el('a', 'ib-go', L.openRound);
-            go.href = run;
-            box.append(go);
-          }}));
-        if (aged) r.go.querySelector('.ib-sub').append(el('span', 'pill old', L.oldRound));
-      } else if (w.kind === 'session') {
+      if (w.kind === 'round') roundRow(s, w, false);
+      else if (w.kind === 'session') {
         row(s, w, as(W, as(live(w, function (box) { box.append(el('p', '', L.sessionNote)); }), {stamp: w.since})));
       } else todoRow(s, w, w.project, w, as(W, {stamp: w.since}));
     });
@@ -686,16 +740,28 @@
         row(s, w, {kind: L.answered, cls: 'k-ok', glyph: '✓', title: w.title, sub: pill, when: since(w.saved),
           fill: function (box) { box.append(pill.cloneNode(true)); }});
       });
-      // Closed until clicked, as a To do group: the whole section is one group, its heading the count row.
-      var sentGroup = {key: 'answered', rows: s.rows, open: false, ul: s.ul, box: el('div', 'ib-groups')};
-      s.ul.id = 'ib-group-' + (count++);
-      s.rows.forEach(function (r) { r.grp = sentGroup; });
-      s.groups = [sentGroup];
-      s.box = sentGroup.box;
-      s.box.append(s.ul);
-      s.head.append(toggler(sentGroup, Array.prototype.slice.call(s.head.childNodes)));
-      paint(sentGroup);
-      done(s);
+      closedGroup(s, 'answered');
+    }
+    // Closed until clicked, as a To do group: the whole section is one group, its heading the count row.
+    function closedGroup(sec, key) {
+      var g = {key: key, rows: sec.rows, open: false, ul: sec.ul, box: el('div', 'ib-groups')};
+      sec.ul.id = 'ib-group-' + (count++);
+      sec.rows.forEach(function (r) { r.grp = g; });
+      sec.groups = [g];
+      sec.box = g.box;
+      sec.box.append(sec.ul);
+      sec.head.append(toggler(g, Array.prototype.slice.call(sec.head.childNodes)));
+      paint(g);
+      done(sec);
+    }
+    // Parked rounds: counted nowhere, kept until Back; the heading says how many an agent still waits on.
+    var parkedSec = null;
+    if (parked.length) {
+      var agentsWait = parked.filter(function (w) { return !w.orphan; }).length;
+      s = parkedSec = section(L.parkedHead, parked.length, agentsWait ? fmt(L.parkedLive, {n: agentsWait}) : '',
+                              'tog', 'waiting');
+      parked.forEach(function (w) { roundRow(s, w, true); });
+      closedGroup(s, 'parked');
     }
     var idleSec = null;
     if (idle.length) {
@@ -732,7 +798,7 @@
       if (!r.w.project) return;
       var p = named[r.w.project] || (named[r.w.project] = {id: r.w.project, w: r.w, n: 0, hot: false});
       if (order.indexOf(p) < 0) order.push(p);
-      var asks = r.sec.key === 'waiting' && !!r.w.kind;  // the Answered rows share the section, without a kind
+      var asks = r.sec === waitSec;  // Answered, Parked and Idle share its view, and count nowhere
       if (asks || r.sec.key === 'todo') p.n += 1;
       p.hot = p.hot || asks;
     });
@@ -758,6 +824,15 @@
           (first && !pane.hidden ? first.go : sideButton).focus();
         });
         li.append(b);
+        if (it.filter.project) {  // the project's past decisions, read only, under the inbox (in this tab)
+          var sub = el('ul', 'navs outline'), past = el('a', 'nav'), pli = el('li');
+          past.href = 'history/' + encodeURIComponent(it.filter.project) + '/';
+          past.append(el('span', 'nl', L.historyTitle));
+          past.setAttribute('aria-label', fmt(L.pastOf, {p: it.name}));
+          pli.append(past);
+          sub.append(pli);
+          li.append(sub);
+        }
         ul.append(li);
         navs.push(b);
       });
@@ -784,12 +859,18 @@
     mark.setAttribute('aria-hidden', 'true');
     zbox.append(mark, el('h2', '', L.zeroTitle), el('p', '', L.zeroText + (agents === 1 ? L.zeroWorkingOne
       : agents ? fmt(L.zeroWorking, {n: agents}) : '')), zs);
-    // Idle has no view of its own: it sits under Waiting on you, as Answered does, so its button lands on its rows.
-    [[todos, L.todoN, VIEWS[1]], [idle.length, L.idleN, VIEWS[0], idleSec]].forEach(function (z) {
+    // Idle and Parked have no view of their own: they sit under Waiting on you, as Answered does, so their buttons
+    // land on their rows (Parked opened).
+    [[todos, L.todoN, VIEWS[1]], [idle.length, L.idleN, VIEWS[0], idleSec],
+      [parked.length, L.parkedN, VIEWS[0], parkedSec]].forEach(function (z) {
       if (!z[0]) return;
       var b = el('button', '', fmt(z[1], {n: z[0]}));
       b.type = 'button';
       b.addEventListener('click', function () {
+        if (z[3] && z[3].groups) {
+          z[3].groups[0].open = true;
+          paint(z[3].groups[0]);
+        }
         setFilter(z[2].filter);
         var first = z[3] ? z[3].rows[0].go : shown().length ? shown()[0].go
           : (todoSec.groups || []).map(function (g) { return g.toggle; })[0];  // To do: its first count row
@@ -877,6 +958,8 @@
         detail.scrollTop = Number(back.detail) || 0;
       }
       pane.scrollTop = Number(back.scroll) || 0;
+      var to = back.focus && shown().filter(function (r) { return rowKey(r) === back.focus; })[0];
+      if (to) to.go.focus();  // after a Park or a Back from the list: the row that took its place
     }
 
     // Keys: j and k (or the arrows on a row) move between rows; Enter opens; f is Focus; Esc closes; ? lists them.

@@ -212,34 +212,73 @@ func TestCheckLink(t *testing.T) {
 
 func TestWaiting(t *testing.T) {
 	cases := map[string]struct {
-		text string
-		n    int
-		ok   bool
+		text  string
+		n     int
+		backs int
+		ok    bool
 	}{
-		"ok":         {`{"schema": 1, "at": "2026-11-07T10:00:00Z", "waiting": 3, "projects": []}`, 3, true},
-		"zero":       {`{"schema": 1, "waiting": 0}`, 0, true},
-		"newer":      {`{"schema": 2, "waiting": 3}`, 0, false},
-		"negative":   {`{"schema": 1, "waiting": -1}`, 0, false},
-		"fraction":   {`{"schema": 1, "waiting": 1.5}`, 0, false},
-		"text":       {`{"schema": 1, "waiting": "3"}`, 0, false},
-		"no waiting": {`{"schema": 1}`, 0, false},
-		"junk":       {`{"schema": 1, "waiting": 3`, 0, false},
-		"empty":      {``, 0, false},
-		"json null":  {`null`, 0, false},
-		"not object": {`[3]`, 0, false},
+		"ok":         {`{"schema": 1, "at": "2026-11-07T10:00:00Z", "waiting": 3, "projects": []}`, 3, -1, true},
+		"zero":       {`{"schema": 1, "waiting": 0}`, 0, -1, true},
+		"backs":      {`{"schema": 1, "waiting": 3, "projects": [], "backs": 2}`, 3, 2, true},
+		"backs zero": {`{"schema": 1, "waiting": 3, "backs": 0}`, 3, 0, true},
+		// A backs that is not a whole number from 0 is no backs: the count reads as in 0.4.0, every rise notifies.
+		// Only schema and waiting can fail the file.
+		"backs below":    {`{"schema": 1, "waiting": 3, "backs": -1}`, 3, -1, true},
+		"backs text":     {`{"schema": 1, "waiting": 3, "backs": "2"}`, 3, -1, true},
+		"backs bool":     {`{"schema": 1, "waiting": 3, "backs": true}`, 3, -1, true},
+		"backs fraction": {`{"schema": 1, "waiting": 3, "backs": 1.5}`, 3, -1, true},
+		"backs array":    {`{"schema": 1, "waiting": 3, "backs": [2]}`, 3, -1, true},
+		"backs object":   {`{"schema": 1, "waiting": 3, "backs": {"n": 2}}`, 3, -1, true},
+		"backs huge":     {`{"schema": 1, "waiting": 3, "backs": 99999999999999999999}`, 3, -1, true},
+		"backs null":     {`{"schema": 1, "waiting": 3, "backs": null}`, 3, -1, true},
+		"newer":          {`{"schema": 2, "waiting": 3}`, 0, -1, false},
+		"negative":       {`{"schema": 1, "waiting": -1}`, 0, -1, false},
+		"fraction":       {`{"schema": 1, "waiting": 1.5}`, 0, -1, false},
+		"text":           {`{"schema": 1, "waiting": "3"}`, 0, -1, false},
+		"no waiting":     {`{"schema": 1}`, 0, -1, false},
+		"junk":           {`{"schema": 1, "waiting": 3`, 0, -1, false},
+		"empty":          {``, 0, -1, false},
+		"json null":      {`null`, 0, -1, false},
+		"not object":     {`[3]`, 0, -1, false},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
 			write(t, filepath.Join(dir, "state.json"), c.text)
-			n, err := waiting(dir)
-			if n != c.n || (err == nil) != c.ok {
-				t.Fatalf("n %d, err %v", n, err)
+			n, backs, err := waiting(dir)
+			if n != c.n || backs != c.backs || (err == nil) != c.ok {
+				t.Fatalf("n %d, backs %d, err %v", n, backs, err)
 			}
 		})
 	}
-	if _, err := waiting(t.TempDir()); err == nil {
+	if _, _, err := waiting(t.TempDir()); err == nil {
 		t.Fatal("no error for a missing state.json")
+	}
+}
+
+// TestWaitingOf040ReadsBacks reads a state.json with backs through the 0.4.0 app's parser (waiting() as released):
+// the key is skipped, the count is the same.
+func TestWaitingOf040ReadsBacks(t *testing.T) {
+	old := func(home string) (int, error) {
+		var state struct {
+			Schema  *int `json:"schema"`
+			Waiting *int `json:"waiting"`
+		}
+		if err := readJSON(filepath.Join(home, "state.json"), &state); err != nil {
+			return 0, err
+		}
+		if state.Schema == nil || *state.Schema != 1 || state.Waiting == nil || *state.Waiting < 0 {
+			return 0, os.ErrInvalid
+		}
+		return *state.Waiting, nil
+	}
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "state.json"), `{"schema": 1, "at": "2026-11-26T10:00:00Z", "waiting": 4, "projects": [], "backs": 3}`)
+	if n, err := old(dir); err != nil || n != 4 {
+		t.Fatalf("0.4.0: n %d, err %v", n, err)
+	}
+	if n, backs, err := waiting(dir); err != nil || n != 4 || backs != 3 {
+		t.Fatalf("now: n %d, backs %d, err %v", n, backs, err)
 	}
 }
 
@@ -260,13 +299,52 @@ func TestRiseNotifiesOncePerRise(t *testing.T) {
 		{5, true, true},
 	}
 	for i, s := range steps {
-		if got := r.next(s.n, s.ok); got != s.notify {
+		if got := r.next(s.n, -1, s.ok); got != s.notify {
 			t.Fatalf("step %d (%d, %v): notify %v", i, s.n, s.ok, got)
 		}
 	}
 	var fresh rise
-	if fresh.next(0, false) || fresh.next(4, true) {
+	if fresh.next(0, -1, false) || fresh.next(4, -1, true) {
 		t.Fatal("notified before a baseline")
+	}
+}
+
+// TestRiseLeavesOutTheUsersOwnBacks: within one read window, the count rises by the user's own Backs (backs) and by
+// anything else; only a rise past what backs rose by notifies.
+func TestRiseLeavesOutTheUsersOwnBacks(t *testing.T) {
+	type read struct{ n, backs int }
+	cases := map[string]struct {
+		reads  []read
+		notify bool
+	}{
+		"Back alone":                {[]read{{2, 0}, {3, 1}}, false},
+		"Back, then a new round":    {[]read{{2, 0}, {4, 1}}, true},
+		"a new round, then Back":    {[]read{{2, 4}, {4, 5}}, true},
+		"Back, then an answer":      {[]read{{2, 0}, {2, 1}}, false},
+		"two Backs":                 {[]read{{2, 0}, {4, 2}}, false},
+		"a restart, then a rise":    {[]read{{2, 3}, {3, 0}}, true}, // backs lower: an inbox started anew
+		"no key, a rise":            {[]read{{2, -1}, {3, -1}}, true},
+		"the key comes, a rise":     {[]read{{2, -1}, {3, 1}}, true}, // an inbox from before the key, then this one
+		"Back, later a new round":   {[]read{{2, 0}, {3, 1}, {4, 1}}, true},
+		"Back after a quiet read":   {[]read{{2, 0}, {2, 0}, {3, 1}}, false},
+		"a drop, then Back":         {[]read{{3, 0}, {2, 0}, {3, 1}}, false},
+		"a restart, the same count": {[]read{{2, 3}, {2, 0}}, false},
+		"a restart, a drop":         {[]read{{3, 3}, {2, 0}}, false},
+		// Known limit: backs counts a Back's rise, not a Park's fall, so a new round in the same read as a Park and
+		// its Back is left out. The badge still shows the count, and the list page its own bar.
+		"known limit: Park, Back and a new round in one read": {[]read{{2, 0}, {3, 1}}, false},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			var r rise
+			got := false
+			for _, x := range c.reads {
+				got = r.next(x.n, x.backs, true)
+			}
+			if got != c.notify {
+				t.Fatalf("notify %v", got)
+			}
+		})
 	}
 }
 

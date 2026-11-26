@@ -1474,8 +1474,8 @@ class InboxState(InboxTest):
         self.assertEqual(stat.S_IMODE((self.home / "state.json").stat().st_mode), 0o600)
         for body in (raw, route):
             data = json.loads(body)
-            self.assertEqual(sorted(data), ["at", "projects", "schema", "waiting"])
-            self.assertEqual((data["schema"], data["waiting"]), (1, 3))
+            self.assertEqual(sorted(data), ["at", "backs", "projects", "schema", "waiting"])
+            self.assertEqual((data["schema"], data["waiting"], data["backs"]), (1, 3, 0))
             self.assertRegex(data["at"], signoff.SAVED_PATTERN)
             for p in data["projects"]:
                 self.assertEqual(sorted(p), ["id", "monogram", "waiting"])
@@ -2469,8 +2469,9 @@ class InboxOrphan(InboxTest):
             self.assertNotIn(text.encode(), body)
         row = self.rounds_waiting(page)[0]
         self.assertEqual(sorted(row), ["color", "group", "held", "items", "kind", "mono", "name", "opened", "orphan",
-                                       "project", "since", "tab", "title"])
+                                       "project", "round", "since", "tab", "title"])
         self.assertTrue(signoff.SAVED_PATTERN.fullmatch(row["opened"]))  # a time, never a path
+        self.assertEqual((row["group"], row["round"]), (0, 0))  # numbers for Park, never a path
         state = (self.home / "state.json").read_bytes()
         for text in (str(self.root), self.topic.name, "Round", e["run"]):
             self.assertNotIn(text.encode(), state)
@@ -2838,6 +2839,619 @@ class InboxOrphan(InboxTest):
         self.assertEqual(len(self.answers()), 1)
         self.assertEqual(self.save(page, dict(ANSWER, done=True))[0].status, 200)
         self.assertEqual(len(self.answers()), 2)
+
+
+class InboxParked(InboxTest):
+    """Park and Back: POST park writes parked.json in the home, a parked round leaves Waiting on you for the Parked
+    list and counts nowhere, and it stays parked until Back, with or without a run that lists it."""
+
+    rows, ctl = InboxRows.rows, InboxControl.ctl
+
+    def park(self, page, run=0, round_=0, park=True, headers=None, body=None):
+        hdrs = {"Content-Type": "application/json", "Origin": self.origin, "Sec-Fetch-Site": "same-origin"}
+        hdrs.update(headers or {})
+        return self.request("POST", page + "park", body if body is not None else
+                            {"run": run, "round": round_, "park": park}, hdrs)
+
+    def stored(self):
+        try:
+            return (self.home / "parked.json").read_bytes()
+        except FileNotFoundError:
+            return None
+
+    def lists(self, page):
+        data = self.view(page)[0]
+        return ([w["title"] for w in data["waiting"] if w["kind"] == "round"],
+                [(w["title"], w["group"], w["round"], w["orphan"]) for w in data["parked"]], data)
+
+    def count(self):
+        return json.loads((self.home / "state.json").read_text(encoding="utf-8"))["waiting"]
+
+    def test_park_moves_a_round_to_parked_counted_nowhere_and_back_returns_it(self):
+        self.register()
+        self.start()
+        start, page = self.open()
+        self.assertEqual(self.lists(page)[:2], (["Round 1", "Round 2"], []))
+        self.assertEqual(self.count(), 3)  # two rounds and the waiting todo item
+        resp, out = self.park(page)
+        self.assertEqual((resp.status, json.loads(out)), (200, {"ok": True}))
+        self.assertEqual(self.count(), 2)  # at once, not at the next look
+        saved = json.loads(self.stored())
+        self.assertEqual(sorted(saved), ["rounds", "schema"])
+        self.assertEqual(saved["schema"], 1)
+        self.assertEqual([sorted(e) for e in saved["rounds"]], [["at", "path"]])
+        self.assertEqual(saved["rounds"][0]["path"], str(self.topic / "round-01.json"))
+        self.assertTrue(signoff.SAVED_PATTERN.fullmatch(saved["rounds"][0]["at"]))
+        self.assertEqual(os.stat(str(self.home / "parked.json")).st_mode & 0o777, 0o600)
+        waiting, parked, data = self.lists(page)
+        self.assertEqual((waiting, parked), (["Round 2"], [("Round 1", 0, 0, False)]))  # its run lives: agent waiting
+        self.assertEqual(data["parked"][0]["since"], saved["rounds"][0]["at"])
+        self.assertEqual([r["title"] for r in self.rows()["rounds"]], ["R2"])
+        self.assertEqual(self.request("GET", page + "state")[0].status, 200)
+        self.assertEqual(json.loads(self.request("GET", page + "state")[1])["waiting"], 2)
+        # A repeat Park, and a Back on a round not parked, write nothing.
+        before = os.stat(str(self.home / "parked.json")).st_mtime_ns, self.stored()
+        self.assertEqual(self.park(page)[0].status, 200)
+        self.assertEqual(self.park(page, round_=1, park=False)[0].status, 200)
+        self.assertEqual((os.stat(str(self.home / "parked.json")).st_mtime_ns, self.stored()), before)
+        # It still opens, saves and takes Done on its own page; the run is left as it was.
+        self.assertEqual(self.view(page + "run/0/")[0]["mode"], "rounds")
+        self.assertEqual(self.save(page, ANSWER)[0].status, 200)
+        self.assertEqual(self.park(page, park=False)[0].status, 200)
+        self.assertEqual((self.lists(page)[:2], self.count()), ((["Round 1", "Round 2"], []), 3))
+        (kept,) = json.loads(self.stored())["rounds"]  # Back keeps the entry, with its back time
+        self.assertEqual((sorted(kept), kept["path"]), (["at", "back", "path"], str(self.topic / "round-01.json")))
+        self.assertEqual([r["title"] for r in self.rows()["rounds"]], ["R1", "R2"])
+
+    def test_state_counts_the_rises_the_users_own_backs_made(self):
+        def state():
+            return json.loads((self.home / "state.json").read_text(encoding="utf-8"))
+        self.register()
+        self.start()
+        start, page = self.open()
+        self.assertEqual((state()["waiting"], state()["backs"]), (3, 0))
+        self.assertEqual(self.park(page)[0].status, 200)
+        self.assertEqual((state()["waiting"], state()["backs"]), (2, 0))  # a Park adds nothing
+        self.assertEqual(self.park(page, park=False)[0].status, 200)
+        self.assertEqual((state()["waiting"], state()["backs"]), (3, 1))  # in the same write as the rise
+        self.assertEqual(self.park(page, park=False)[0].status, 200)  # a repeat Back: no rise, nothing added
+        self.assertEqual(state()["backs"], 1)
+        (self.root / "TODO.md").write_text("- [ ] (waiting on you: a pick) Check\n- [ ] (waiting on you: b) More\n",
+                                           encoding="utf-8")
+        self.server.refresh_state()  # the look's write keeps it
+        self.assertEqual((state()["waiting"], state()["backs"]), (4, 1))
+        self.assertEqual(sorted(state()), ["at", "backs", "projects", "schema", "waiting"])
+        self.assertEqual(type(state()["backs"]), int)
+        self.stop()
+        self.start()  # a restart starts at 0
+        self.assertEqual(state()["backs"], 0)
+
+    def test_back_on_a_never_parked_round_writes_no_file(self):
+        self.register()
+        self.start()
+        start, page = self.open()
+        self.assertEqual(self.park(page, park=False)[0].status, 200)
+        self.assertIsNone(self.stored())
+
+    def test_the_park_route_keeps_todays_rules(self):
+        self.register()
+        self.start()
+        start, page = self.open()
+        self.view(page)
+
+        def refused(status, **kw):
+            resp, out = self.park(page, **kw)
+            self.assertEqual(resp.status, status, (kw, out))
+            self.assertIsNone(self.stored())
+        for host in ("localhost.example:%d" % self.port, "127.0.0.1", "evil.example", "[::1]:%d" % self.port, "", None):
+            refused(403, headers={"Host": host})
+        for origin in ("http://evil.example", "null", "http://localhost:%d" % self.port, self.origin + "/", None):
+            refused(403, headers={"Origin": origin})
+        for site in ("cross-site", "same-site", "none"):
+            refused(403, headers={"Sec-Fetch-Site": site})
+        for ctype in ("text/plain", "application/x-www-form-urlencoded", None):
+            refused(415, headers={"Content-Type": ctype})
+        refused(411, headers={"Content-Length": None}, body=b'{"run": 0, "round": 0, "park": true}')
+        refused(413, headers={"Content-Length": "41943040"}, body=b"{}")
+        refused(413, body={"run": 0, "round": 0, "park": True, "pad": "x" * 1024})
+        good = {"run": 0, "round": 0, "park": True}
+        for bad in (b"{x", b"[]", b"null", {}, dict(good, extra=1), {"run": 0, "park": True}, dict(good, run=True),
+                    dict(good, run="0"), dict(good, round=False), dict(good, round=0.0), dict(good, run=-1),
+                    dict(good, run=2 ** 31), dict(good, park="yes"), dict(good, park=1), dict(good, park=None),
+                    dict(good, path=str(self.topic / "round-01.json"))):
+            refused(400, body=bad)
+        for run, round_ in ((5, 0), (0, 2), (0, 9)):  # no such run, no such round
+            refused(409, run=run, round_=round_)
+        for path in ("park/", "park?theme=dark", "run/0/park", "Park"):
+            resp, _ = self.request("POST", page + path, good, {"Content-Type": "application/json",
+                                                               "Origin": self.origin})
+            self.assertEqual(resp.status, 404, path)
+        self.assertEqual(self.request("GET", page + "park")[0].status, 404)
+        board = self.view(page + "run/0/")[0]["rounds"][0]["decisions"]["items"][0]["images"][1]["board"]
+        resp, _ = self.request("POST", "/%s/park" % board.split("/")[1], good, {"Content-Type": "application/json",
+                                                                                "Origin": self.origin})
+        self.assertEqual(resp.status, 404)
+        self.assertIsNone(self.stored())
+        # A round answered with Done is listed no more.
+        self.assertEqual(self.save(page, dict(ANSWER, done=True), round_=1)[0].status, 409)  # round 1 first
+        (self.topic / "round-02.answers.json").write_text(json.dumps(done_record()), encoding="utf-8")
+        self.view(page)
+        refused(409, round_=1)
+        self.assertEqual(self.request("GET", start)[0].status, 410)
+        refused(404)  # a closed pair writes nothing
+
+    def test_two_parks_at_once_keep_both(self):
+        self.register()
+        self.start()
+        start, page = self.open()
+        self.view(page)
+        write, gate = signoff.write_atomic, threading.Barrier(2, timeout=1)
+
+        def slow(path, data):  # both posts reach the write together unless one lock covers the read and the write
+            if path.name == "parked.json":
+                try:
+                    gate.wait()
+                except threading.BrokenBarrierError:
+                    pass
+            return write(path, data)
+        codes = []
+        with mock.patch.object(signoff, "write_atomic", slow):
+            posts = [threading.Thread(target=lambda n=n: codes.append(self.park(page, round_=n)[0].status))
+                     for n in (0, 1)]
+            for t in posts:
+                t.start()
+            for t in posts:
+                t.join(10)
+        self.assertEqual(codes, [200, 200])
+        self.assertEqual(sorted(e["path"] for e in json.loads(self.stored())["rounds"]),
+                         [str(self.topic / "round-01.json"), str(self.topic / "round-02.json")])
+        self.assertEqual(self.lists(page)[0], [])
+
+    def test_a_parked_file_the_inbox_did_not_write_is_left_alone(self):
+        self.register()
+        target = self.root / "elsewhere.json"
+        target.write_text('{"schema": 1, "rounds": []}', encoding="utf-8")
+        cases = [("link", None), ("text", b"not json"), ("list", b"[]"), ("schema", b'{"schema": 2, "rounds": []}'),
+                 ("rounds", b'{"schema": 1, "rounds": {}}'), ("entry", b'{"schema": 1, "rounds": [{"path": 1}]}'),
+                 ("big", b'{"schema": 1, "rounds": [], "pad": "' + b"x" * signoff.MAX_PARKED_FILE + b'"}')]
+        self.start()
+        start, page = self.open()
+        for name, raw in cases:
+            path = self.home / "parked.json"
+            if path.exists() or path.is_symlink():
+                os.unlink(str(path))
+            if raw is None:
+                os.symlink(str(target), str(path))
+            else:
+                path.write_bytes(raw)
+            before = path.read_bytes()
+            resp, out = self.park(page)
+            self.assertEqual(resp.status, 409, (name, out))
+            self.assertEqual((path.read_bytes(), path.is_symlink()), (before, raw is None), name)
+            self.assertEqual(self.lists(page)[:2], (["Round 1", "Round 2"], []), name)  # read: nothing parked
+        self.assertEqual(target.read_text(encoding="utf-8"), '{"schema": 1, "rounds": []}')
+
+    def test_the_file_has_a_cap_on_its_entries(self):
+        self.register()
+        self.start()
+        start, page = self.open()
+        self.view(page)
+        with mock.patch.object(signoff, "MAX_PARKED", 1):
+            self.assertEqual(self.park(page)[0].status, 200)
+            resp, out = self.park(page, round_=1)
+            self.assertEqual(resp.status, 409, out)
+            self.assertIn(b"move it out of the Signoff home", out)
+        self.assertEqual(len(json.loads(self.stored())["rounds"]), 1)
+
+    def test_back_still_works_on_a_file_past_the_cap(self):
+        self.register()
+        self.parked_by_hand(self.topic / "round-01.json", self.topic / "round-02.json")
+        self.start()
+        start, page = self.open()
+        self.view(page)
+        with mock.patch.object(signoff, "MAX_PARKED", 1):
+            resp, out = self.park(page, park=False)
+            self.assertEqual(resp.status, 200, out)
+        self.assertEqual([("back" in e, e["path"]) for e in json.loads(self.stored())["rounds"]],
+                         [(True, str(self.topic / "round-01.json")), (False, str(self.topic / "round-02.json"))])
+
+    def test_a_round_in_no_known_project_is_not_parked(self):
+        outside = Path(self._tmp.name).resolve() / "loose"
+        (outside / "mockups").mkdir(parents=True)
+        (outside / "mockups" / "a.png").write_bytes(png_bytes())
+        (outside / "boards").mkdir()
+        (outside / "boards" / "b.html").write_bytes(BOARD)
+        (outside / "round-01.json").write_bytes((self.topic / "round-01.json").read_bytes())
+        e = entry(outside, ["round-01.json"])  # a run outside any project
+        self.write(self.home / "runs" / (e["run"] + ".json"), e)
+        self.start()
+        start, page = self.open()
+        (row,) = [w for w in self.view(page)[0]["waiting"] if w["kind"] == "round"]
+        self.assertIsNone(row["project"])
+        resp, out = self.park(page, run=row["group"], round_=row["round"])
+        self.assertEqual(resp.status, 409, out)
+        self.assertIsNone(self.stored())
+
+    def parked_by_hand(self, *paths):
+        self.write(self.home / "parked.json", {"schema": 1, "rounds": [{"path": str(p), "at": "2026-01-02T03:04:05Z"}
+                                                                       for p in paths]})
+
+    def stays_parked(self):
+        """The parked round with no live run: in Parked (no agent waiting), not counted, its page opens, saves and
+        takes Done. Back puts it in Waiting on you as a Run ended row that counts, until back + RUNS_MAX_AGE; a
+        Park after Back parks it again."""
+        self.start()
+        start, page = self.open()
+        waiting, parked, data = self.lists(page)
+        self.assertEqual((waiting, parked), ([], [("Round 1", 0, 0, True)]))
+        self.assertEqual(data["parked"][0]["since"], "2026-01-02T03:04:05Z")
+        self.assertEqual(self.count(), 1)  # the todo item only
+        self.assertEqual(self.rows()["rounds"], [])
+        rounds = self.view(page + "run/0/")[0]
+        self.assertEqual((rounds["mode"], len(rounds["rounds"]), rounds["orphan"]), ("rounds", 1, True))
+        self.assertEqual(self.save(page, ANSWER)[0].status, 200)
+        # Back: the entry stays with its back time, and the round waits on you as a Run ended row.
+        self.assertEqual(self.park(page, park=False)[0].status, 200)
+        (kept,) = json.loads(self.stored())["rounds"]
+        self.assertEqual((kept["path"], kept["at"]), (str(self.topic / "round-01.json"), "2026-01-02T03:04:05Z"))
+        self.assertTrue(signoff.SAVED_PATTERN.fullmatch(kept["back"]))
+        rows = [w for w in self.view(page)[0]["waiting"] if w["kind"] == "round"]
+        self.assertEqual([(w["title"], w["group"], w["orphan"]) for w in rows], [("Round 1", 0, True)])
+        self.assertEqual(self.lists(page)[1], [])
+        self.assertEqual(self.count(), 2)
+        self.assertEqual([r["title"] for r in self.rows()["rounds"]], ["R1"])
+        # A Park after Back parks it again: the back time goes.
+        self.assertEqual(self.park(page)[0].status, 200)
+        (kept,) = json.loads(self.stored())["rounds"]
+        self.assertNotIn("back", kept)
+        self.assertEqual((self.lists(page)[:2], self.count()), (([], [("Round 1", 0, 0, True)]), 1))
+        self.assertEqual(self.park(page, park=False)[0].status, 200)
+        back = signoff._epoch(json.loads(self.stored())["rounds"][0]["back"])
+        # Once back + RUNS_MAX_AGE is past, it drops out, as an orphan round does.
+        with mock.patch.object(signoff.time, "time", lambda: back + signoff.RUNS_MAX_AGE + 60):
+            with self.server.scan_lock:
+                late = self.server.view()
+        self.assertEqual(([w for w in late["waiting"] if w["kind"] == "round"], late["parked"]), ([], []))
+        history = self.view(page + "history/%s/" % self.pid)[0]
+        self.assertIn("Round 1", [e["title"] for e in history["entries"]])
+        # Within the window again (the clock back to now): it waits, and takes Done there.
+        (row,) = [w for w in self.view(page)[0]["waiting"] if w["kind"] == "round"]
+        self.assertEqual(self.save(page, dict(ANSWER, done=True), group=row["group"])[0].status, 200)
+        data = self.view(page)[0]
+        self.assertEqual(([w for w in data["waiting"] if w["kind"] == "round"], data["parked"],
+                          [s["title"] for s in data["sent"]]), ([], [], ["Round 1"]))
+
+    def test_a_parked_round_whose_run_is_old_stays_parked_and_back_makes_it_wait(self):
+        e = self.register(pid=dead_pid())
+        os.utime(str(self.home / "runs" / (e["run"] + ".json")), (time.time() - signoff.RUNS_MAX_AGE - 60,) * 2)
+        self.parked_by_hand(self.topic / "round-01.json")
+        self.stays_parked()
+
+    def test_a_parked_round_no_run_ever_listed_stays_parked_and_back_makes_it_wait(self):
+        self.parked_by_hand(self.topic / "round-01.json")
+        self.stays_parked()
+
+    def test_a_round_put_back_before_a_restart_waits_since_its_back_time(self):
+        back = signoff.utc_now()
+        self.write(self.home / "parked.json", {"schema": 1, "rounds": [
+            {"path": str(self.topic / "round-01.json"), "at": "2026-01-02T03:04:05Z", "back": back}]})
+        self.start()
+        rows = [w for w in self.view(self.open()[1])[0]["waiting"] if w["kind"] == "round"]
+        self.assertEqual([(w["title"], w["since"]) for w in rows], [("Round 1", back)])
+
+    def test_a_back_time_it_cannot_read_drops_the_round(self):
+        self.write(self.home / "parked.json", {"schema": 1, "rounds": [
+            {"path": str(self.topic / "round-01.json"), "at": "2026-01-02T03:04:05Z", "back": "yesterday"}]})
+        self.start()
+        waiting, parked, data = self.lists(self.open()[1])
+        self.assertEqual((waiting, parked), ([], []))
+
+    def test_the_parked_list_is_oldest_first(self):
+        self.register()  # one live run on both rounds: its group lists them in their own order
+        self.write(self.home / "parked.json", {"schema": 1, "rounds": [
+            {"path": str(self.topic / "round-01.json"), "at": "2026-01-03T00:00:00Z"},
+            {"path": str(self.topic / "round-02.json"), "at": "2026-01-02T00:00:00Z"}]})
+        self.start()
+        self.assertEqual([p[0] for p in self.lists(self.open()[1])[1]], ["Round 2", "Round 1"])
+
+    def test_each_parked_path_gets_the_checks_of_a_round(self):
+        outside = Path(self._tmp.name).resolve() / "outside"
+        outside.mkdir()
+        (outside / "round-01.json").write_bytes((self.topic / "round-01.json").read_bytes())
+        linked = self.topic.parent / "linked"
+        os.symlink(str(self.topic), str(linked))
+        gone = self.topic.parent / "gone" / "round-01.json"
+        done = self.topic.parent / "done"
+        done.mkdir()
+        for name in ("round-01.json", "round-02.json"):
+            (done / name).write_bytes((self.topic / name).read_bytes())
+        (done / "round-01.answers.json").write_text(json.dumps(done_record()), encoding="utf-8")
+        (done / "round-02.outcome.json").write_text("{}", encoding="utf-8")
+        self.parked_by_hand("round-01.json", str(self.topic / "round-0\n1.json"), outside / "round-01.json",
+                            linked / "round-01.json", gone, done / "round-01.json", done / "round-02.json",
+                            self.topic / "round-01.answers.json", self.root / "TODO.md")
+        (self.topic / "round-01.answers.json").write_text(json.dumps(record({})), encoding="utf-8")
+        self.start()
+        start, page = self.open()
+        waiting, parked, data = self.lists(page)
+        self.assertEqual((waiting, parked, self.count()), ([], [], 1))
+        self.assertEqual([g for g in self.server.groups if g], [])  # nothing read in, no lock taken
+        self.assertFalse((outside / "round-01.json.lock").exists())
+
+    def test_a_parked_round_answered_done_shows_as_answered(self):
+        self.register()
+        self.parked_by_hand(self.topic / "round-01.json")
+        (self.topic / "round-01.answers.json").write_text(json.dumps(dict(done_record(), saved=signoff.utc_now())),
+                                                          encoding="utf-8")  # answered lately: listed in Answered
+        self.start()
+        waiting, parked, data = self.lists(self.open()[1])
+        self.assertEqual((waiting, parked), (["Round 2"], []))
+        self.assertEqual([s["title"] for s in data["sent"]], ["Round 1"])
+
+    def test_the_parked_rows_hold_no_path_link_or_token(self):
+        self.register()
+        self.parked_by_hand(self.topic / "round-01.json")
+        self.start()
+        start, page = self.open()
+        data, body = self.view(page)
+        self.assertEqual(len(data["parked"]), 1)
+        for text in (str(self.root), str(self.home), self.topic.name, "round-01.json", "parked.json"):
+            self.assertNotIn(text.encode(), body)
+
+
+class InboxHistory(InboxTest):
+    """GET /<page>/history/<project id>/: the past-decisions page of one project, read only, inside the inbox."""
+
+    def history(self, page, pid=None):
+        return self.view(page + "history/%s/" % (pid or self.pid))
+
+    def runs_on(self, folder, ago=0, project=None):
+        e = entry(folder, ["round-01.json"], project=project or self.pid, pid=dead_pid(), ended=signoff.utc_now())
+        path = self.home / "runs" / (e["run"] + ".json")
+        self.write(path, e)
+        if ago:
+            os.utime(str(path), (time.time() - ago,) * 2)
+        return e
+
+    def topic_in(self, base, name, title):
+        topic = self.root / base / name
+        topic.mkdir(parents=True)
+        data = sample_decisions()
+        data["title"] = title
+        (topic / "round-01.json").write_text(json.dumps(data), encoding="utf-8")
+        (topic / "mockups").mkdir()
+        (topic / "mockups" / "a.png").write_bytes(png_bytes())
+        return topic
+
+    def test_the_route_serves_the_projects_past_decisions_read_only(self):
+        self.start()
+        start, page = self.open()
+        before = self.files(self.root)
+        data, body = self.history(page)
+        self.assertEqual((data["mode"], data["root"], data["inbox"]), ("history", "project", True))
+        self.assertEqual(sorted(e["title"] for e in data["entries"]), ["Round 1", "Round 2"])
+        self.assertEqual(data["prefs"]["keep"], False)
+        self.assertEqual(data["mono"], {k: signoff._who(None, "project")[k] for k in ("mono", "color")})
+        self.assertIsNone(data["timeout"])
+        for text in (str(self.root), str(self.home), str(self.topic)):
+            self.assertNotIn(text.encode(), body)
+        csp = self.request("GET", page + "history/%s/" % self.pid)[0].getheader("Content-Security-Policy")
+        self.assertIn("frame-ancestors 'none'", csp)
+        hdrs = {"Content-Type": "application/json", "Origin": self.origin, "Sec-Fetch-Site": "same-origin"}
+        for path in ("", "save/0", "prefs", "park", "request", "img/0"):
+            resp, _ = self.request("POST", page + "history/%s/%s" % (self.pid, path), ANSWER, hdrs)
+            self.assertEqual(resp.status, 405, path)
+        self.assertEqual(self.request("POST", page + "history/%s/" % ("f" * 16), ANSWER, hdrs)[0].status, 405)
+        self.assertEqual(self.files(self.root), before)
+
+    files = InboxControl.files
+
+    def test_the_route_keeps_the_host_and_token_rules(self):
+        self.start()
+        start, page = self.open()
+        path = page + "history/%s/" % self.pid
+        self.assertEqual(self.request("GET", path)[0].status, 200)
+        for host in ("localhost.example:%d" % self.port, "127.0.0.1", "evil.example", "[::1]:%d" % self.port, "", None):
+            self.assertEqual(self.request("GET", path, headers={"Host": host})[0].status, 403, host)
+        token = page.strip("/")
+        for bad in ("/%s/history/%s/" % ("A" * len(token), self.pid), page + "history/%s/" % ("f" * 16),
+                    page + "history/%s" % self.pid, page + "history/%s/" % self.pid.upper(), page + "history/x/",
+                    page + "history/", page + "history/%s/?theme=dark" % self.pid, page + "history/%s/state" % self.pid,
+                    page + "run/0/history/%s/" % self.pid):
+            self.assertEqual(self.request("GET", bad)[0].status, 404, bad)
+        self.assertEqual(self.request("GET", start)[0].status, 410)
+        self.assertEqual(self.request("GET", path)[0].status, 404)  # a closed pair opens nothing
+
+    def test_pictures_and_boards_by_number_inside_the_folder(self):
+        self.start()
+        start, page = self.open()
+        hist = page + "history/%s/" % self.pid
+        self.assertEqual(self.request("GET", hist + "img/0")[0].status, 404)  # nothing listed before the page
+        data, _ = self.history(page)
+        images = [img for e in data["entries"] for it in e["decisions"]["items"] for img in it["images"]]
+        src = [img["src"] for img in images if "src" in img]
+        board = [img["board"] for img in images if "board" in img][0]
+        self.assertEqual(self.request("GET", hist + src[0])[1], png_bytes())
+        for bad in ("img/999", "img/../x", "img/00"):
+            self.assertEqual(self.request("GET", hist + bad)[0].status, 404, bad)
+        resp, html = self.request("GET", board)
+        self.assertEqual((resp.status, html, resp.getheader("Content-Security-Policy")), (200, BOARD, signoff.BOARD_CSP))
+        token = board.split("/")[1]
+        for path in ("/%s/" % token, "/%s/run/0/" % token, "/%s/history/%s/" % (token, self.pid), "/%s/0/9" % token):
+            self.assertEqual(self.request("GET", path)[0].status, 404, path)
+        # Read on request: a picture swapped for a link out of its folder is not followed.
+        (self.root / "secret.png").write_bytes(png_bytes() + b"SECRET")
+        picture = self.topic / "mockups" / "a.png"
+        picture.rename(self.root / "moved.png")
+        os.symlink(str(self.root / "secret.png"), str(picture))
+        resp, body = self.request("GET", hist + src[0])
+        self.assertEqual(resp.status, 404)
+        self.assertNotIn(b"SECRET", body)
+        # And a board swapped for a link out of its folder.
+        (self.root / "secret.html").write_bytes(BOARD + b"SECRET")
+        drawn = self.topic / "boards" / "b.html"
+        drawn.rename(self.root / "moved.html")
+        os.symlink(str(self.root / "secret.html"), str(drawn))
+        resp, body = self.request("GET", board)
+        self.assertEqual(resp.status, 404)
+        self.assertNotIn(b"SECRET", body)
+
+    def test_an_older_tabs_numbers_name_the_same_files_after_a_new_load(self):
+        self.start()
+        start, page = self.open()
+        hist = page + "history/%s/" % self.pid
+
+        def media(data):
+            return [img.get("src") or img.get("board") for e in data["entries"] for it in e["decisions"]["items"]
+                    for img in it["images"]]
+        before = media(self.history(page)[0])
+        newer = self.topic.parent / "2026-12-01-newer"  # listed first: every older round moves down
+        (newer / "mockups").mkdir(parents=True)
+        (newer / "mockups" / "a.png").write_bytes(png_bytes() + b"NEWER")
+        data = sample_decisions()
+        data["title"] = "Newer"
+        (newer / "round-01.json").write_text(json.dumps(data), encoding="utf-8")
+        after = media(self.history(page)[0])
+        self.assertEqual(after[1:], before)  # the old rounds keep their numbers; the new picture takes a new one
+        self.assertNotIn(after[0], before)
+        self.assertEqual(self.request("GET", hist + after[0])[1], png_bytes() + b"NEWER")
+        self.assertEqual(self.request("GET", hist + before[0])[1], png_bytes())
+        self.assertEqual(self.request("GET", [m for m in before if m.startswith("/")][0])[1], BOARD)
+
+    def test_a_folder_it_cannot_read_gives_404_and_the_inbox_goes_on(self):
+        self.start()
+        start, page = self.open()
+        self.topic.chmod(0)
+        try:
+            with mock.patch("sys.stderr", new_callable=io.StringIO) as err:
+                self.assertEqual(self.request("GET", page + "history/%s/" % self.pid)[0].status, 404)
+        finally:
+            self.topic.chmod(0o755)
+        self.assertIn("cannot list the past decisions of project", err.getvalue())
+        self.assertEqual(self.request("GET", page + "history/%s/" % self.pid)[0].status, 200)
+
+    def test_a_non_default_folder_of_old_runs_is_still_listed(self):
+        topic = self.topic_in("docs/decisions", "2026-03-01-custom", "Custom")
+        self.runs_on(topic, ago=signoff.RUNS_MAX_AGE + 60)
+        self.start()
+        titles = [e["title"] for e in self.history(self.open()[1])[0]["entries"]]
+        self.assertEqual(sorted(titles), ["Custom", "Round 1", "Round 2"])
+
+    def test_a_one_off_newest_run_elsewhere_keeps_the_main_folder_listed(self):
+        main = self.topic_in("docs/decisions", "2026-03-01-custom", "Custom")
+        demo = self.topic_in("examples", "demo", "Demo")
+        self.runs_on(main, ago=600)
+        self.runs_on(demo)
+        self.start()
+        titles = [e["title"] for e in self.history(self.open()[1])[0]["entries"]]
+        self.assertEqual(sorted(titles), ["Custom", "Demo", "Round 1", "Round 2"])
+
+    def test_only_folders_inside_the_root_of_this_project(self):
+        self.topic_in("docs/decisions", "2026-03-01-custom", "Custom")
+        self.runs_on(self.topic_in("", "round-topic", "At the root"))  # its parent is the root: never listed
+        outside = Path(self._tmp.name).resolve() / "other" / "decisions" / "t"
+        (outside / "mockups").mkdir(parents=True)
+        (outside / "mockups" / "a.png").write_bytes(png_bytes())
+        (outside / "boards").mkdir()
+        (outside / "boards" / "b.html").write_bytes(BOARD)
+        (outside / "round-01.json").write_bytes((self.topic / "round-01.json").read_bytes())
+        self.runs_on(outside)
+        self.runs_on(self.root / "docs" / "decisions" / "2026-03-01-custom", project="f" * 16)  # another project's
+        self.start()
+        titles = [e["title"] for e in self.history(self.open()[1])[0]["entries"]]
+        self.assertEqual(sorted(titles), ["Round 1", "Round 2"])
+
+    def away(self):
+        """The default folder moved aside, so a test can put a link in its place."""
+        (self.root / ".signoff").rename(self.root / "moved")
+
+    def test_a_default_folder_linked_out_of_the_root_is_not_listed(self):
+        self.topic_in("docs/decisions", "2026-03-01-custom", "Custom")
+        self.runs_on(self.root / "docs" / "decisions" / "2026-03-01-custom")
+        self.away()
+        outside = Path(self._tmp.name).resolve() / "outside"
+        topic = outside / "2026-04-01-out"
+        (topic / "mockups").mkdir(parents=True)
+        (topic / "mockups" / "a.png").write_bytes(png_bytes())
+        data = sample_decisions()
+        data["title"] = "OUTSIDE"
+        (topic / "round-01.json").write_text(json.dumps(data), encoding="utf-8")
+        os.symlink(str(outside), str(self.root / ".signoff"))
+        self.start()
+        start, page = self.open()
+        data, body = self.history(page)
+        self.assertEqual([e["title"] for e in data["entries"]], ["Custom"])
+        self.assertNotIn(b"OUTSIDE", body)
+        # The one picture listed is the custom round's; nothing names one outside.
+        self.assertEqual(self.request("GET", page + "history/%s/img/0" % self.pid)[1], png_bytes())
+        self.assertEqual(self.request("GET", page + "history/%s/img/1" % self.pid)[0].status, 404)
+
+    def test_a_default_folder_link_loop_gives_404_and_one_stderr_line(self):
+        self.away()
+        os.symlink(".signoff", str(self.root / ".signoff"))
+        self.start()
+        start, page = self.open()
+        with mock.patch("sys.stderr", new_callable=io.StringIO) as err:
+            self.assertEqual(self.request("GET", page + "history/%s/" % self.pid)[0].status, 404)
+        self.assertEqual(err.getvalue().count("\n"), 1, err.getvalue())
+        self.assertIn("cannot list the past decisions of project", err.getvalue())
+        self.assertEqual(self.request("GET", page)[0].status, 200)
+
+    def test_one_folder_lists_a_topic_under_each_of_its_names(self):
+        os.symlink(self.topic.name, str(self.topic.parent / "2026-11-07-again"))
+        self.start()
+        topics = sorted(e["topic"] for e in self.history(self.open()[1])[0]["entries"])
+        self.assertEqual(topics, ["2026-11-06-inbox"] * 2 + ["2026-11-07-again"] * 2)
+
+    def test_a_topic_two_folders_reach_is_listed_once_under_the_first_folders_name(self):
+        # docs/p and docs/p/q are both decisions folders; docs/p/q/t is a topic of the second and, through a link,
+        # of the first. The folders go by path, whichever run is newer: the first folder's name wins.
+        inner = self.topic_in("docs/p/q", "t", "Inner")
+        os.symlink("q/t", str(self.root / "docs" / "p" / "y"))
+        self.runs_on(self.root / "docs" / "p" / "q", ago=600)  # docs/p is the parent of this topic folder
+        self.runs_on(inner)  # newer: docs/p/q
+        self.start()
+        topics = [e["topic"] for e in self.history(self.open()[1])[0]["entries"] if e["title"] == "Inner"]
+        self.assertEqual(topics, ["y"])
+
+    def test_rounds_past_the_data_budget_are_not_read(self):
+        big = self.root / ".signoff" / "2026-12-01-big"
+        big.mkdir()
+        for n in range(1, 21):
+            data = sample_decisions()
+            data["title"] = "Big %d" % n
+            data["items"][0]["description"] = "x" * 15000
+            (big / ("round-%02d.json" % n)).write_text(json.dumps(data), encoding="utf-8")
+        self.start()
+        page = self.open()[1]
+        read = []
+        real = signoff.load_decisions
+
+        def counted(path, *a, **kw):
+            if Path(path).parent == big:
+                read.append(Path(path).name)
+            return real(path, *a, **kw)
+        with mock.patch.object(signoff, "HISTORY_DATA_BUDGET", 64 * 1024), \
+                mock.patch.object(signoff, "load_decisions", counted):
+            entries = self.history(page)[0]["entries"]
+        shown = [e["file"] for e in entries if e["topic"] == big.name and e["status"] != "error"]
+        self.assertEqual(len(shown), 3)  # three of about 16 KiB each fit in 64 KiB
+        self.assertEqual(read, shown)  # and no other round of them was read
+        over = [e for e in entries if e["topic"] == big.name and e["status"] == "error"]
+        self.assertEqual(len(over), 17)
+        self.assertTrue(all("over the text budget" in e["error"] and e["decisions"] is None for e in over))
+        self.assertEqual(sorted(e["title"] for e in entries if e["topic"] == self.topic.name),
+                         ["Round 1", "Round 2"])  # a smaller round after them still fits
+
+    def test_it_reads_at_most_the_newest_runs_files(self):
+        main = self.topic_in("docs/decisions", "2026-03-01-custom", "Custom")
+        demo = self.topic_in("examples", "demo", "Demo")
+        self.runs_on(main, ago=600)
+        self.runs_on(demo)
+        self.start()
+        with mock.patch.object(signoff, "MAX_HISTORY_RUNS", 1):
+            titles = [e["title"] for e in self.history(self.open()[1])[0]["entries"]]
+        self.assertEqual(sorted(titles), ["Demo", "Round 1", "Round 2"])
 
 
 @unittest.skipUnless(POSIX, "the control socket is a Unix socket; the inbox does not run on Windows yet")

@@ -33,7 +33,12 @@ inbox does not answer it for you. Its row says to go to its terminal, or, for a 
 --bg`), gives `claude attach <id>` to copy. **Answered** lists the rounds answered in the last day: *sent*, or *working* once
 that project's Claude Code session reported a new turn after your answer. It is closed until you click its
 heading; a search opens it while a match is in it, and picking a project in the sidebar opens it with that
-project's rounds. **Idle**, dimmer, lists the open
+project's rounds. **Parked**, under it and closed the same way, lists the rounds you parked: each round row ends in
+**Park** (its open row has it too, for Focus), which takes it out of Waiting on you, the tab title, the sidebar, the mod's band and panel, and the app's
+badge until you press **Back** on its row there. Its heading says how many an agent still waits on (**Agent
+waiting**: the run that asked is still running; parking does not stop it or change its timeout). A parked round
+still opens, saves and takes Done on its page. **Back** puts it back in Waiting on you; one whose run has ended
+waits there as **Run ended** for 14 days after Back, as a round of an ended run does. **Idle**, dimmer, lists the open
 sessions idle for a minute or more, waiting for your next prompt; they do not count as waiting on
 you. **To do** holds every project's other open items behind one row per project (`docs-site: 12 more open`), closed
 until you click it; picking a project in the sidebar opens its own. The tab title shows how many rows wait on you, as `(3) Inbox`, and keeps that count current.
@@ -51,8 +56,10 @@ the oldest (or newest) row is always at the top; the choice is kept in `prefs.js
 The list sits between a sidebar and the open row. The sidebar's views (Waiting on you, To do)
 and projects each show only their rows; a second click, or Show all, shows everything. A click on a row opens it
 in the pane beside the list (on a phone, in a sheet from the bottom); a round's row opens the round's page. On a
-narrow window the sidebar button opens the sidebar as a drawer. With nothing waiting on you, a calm empty state
-stands in for the list, with a button to the To do rows.
+narrow window the sidebar button opens the sidebar as a drawer. Under each project, **Past decisions** opens that
+project's rounds in the same tab, read only, as `signoff --history` shows them: every round of each decisions
+folder its runs used and of its `.signoff`, newest first. With nothing waiting on you, a calm empty state
+stands in for the list, with a button to each of the To do, Idle and Parked rows there are.
 
 **Search** is the field in the header (on a phone, a line below it). It filters as you type, over every view at once,
 ignoring case and accents (`ikonja` finds `Ikonjá`): a row matches when each word you typed is somewhere in its project
@@ -163,9 +170,10 @@ The inbox listens on `127.0.0.1` with the same rules as a run. Start links come 
 `inbox.sock` in the home (readable by you only): each works once, within two minutes, and opens its own page,
 which closes after 12 hours without use (an open tab asks for the count, so it stays open). Opening one a second time closes that page only. For the plugin's mod it lists a project's open rounds and their undecided questions (`rows`: run and item numbers and one-line titles, at most 24 in all, no path, link or token of its own; a URL the agent wrote in a title stays). `signoff inbox rows <folder>` prints that list as one JSON line for the project the folder belongs to, and never starts an inbox. A row opens through `signoff inbox open --run <n> --focus <round>/<item> --inbox <k>`, with those numbers and the inbox's own (new at each start). Its start link opens that question in Focus on its round's page. It opens the list instead when the round is gone or done, or the numbers came from an inbox before a restart. With no inbox running, `open` starts one, and the list opens. The inbox writes `inbox.lock` (empty, its time touched every two seconds while the inbox lives), `inbox.json` (its port and
 socket, no token), `state.json` (how many rows wait on you, in all and per project, with each project's id and
-two letters; no text), `prefs.json` (the palette, light or dark, the density and the order of Waiting on you you kept; see [Light, dark, phone,
-language](page.md#light-dark-phone-language)), the socket and the requests in the home, and the answers files and round locks a run would
-write.
+two letters, and how many times your own Back raised it; no text), `prefs.json` (the palette, light or dark, the density and the order of Waiting on you you kept; see [Light, dark, phone,
+language](page.md#light-dark-phone-language)), `parked.json` (the rounds you parked: each round file's path and
+when, and when you put it back), the socket and the requests in the home, and the answers files and round locks a
+run would write.
 
 ## The macOS app
 
@@ -212,6 +220,7 @@ with its badge; click its Dock icon or its menu bar icon to bring the window bac
 on the menu bar icon offers Open Signoff and Quit Signoff. With many menu bar icons,
 macOS may tuck it away with the others it hides. Quitting the app leaves the inbox running (`signoff inbox
 stop` ends it). macOS asks once whether the app may send notifications. A notification says only how many wait,
-and a click on it opens the window. Started from
+and a click on it opens the window. A round you put back with **Back** raises the count but sends no
+notification. Started from
 the Dock, the inbox runs on the `python3` of `/usr/bin`, which on a Mac without the Command Line Tools offers to
 install them.

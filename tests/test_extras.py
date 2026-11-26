@@ -413,6 +413,13 @@ class History(unittest.TestCase):
         (self.root.path / ".signoff" / "2026-03-05-loop").symlink_to("2026-03-05-loop")
         self.assertIn("2026-01-05-settings/round-01.json", self.entries())
 
+    @unittest.skipIf(os.name == "nt", "symlinks need extra rights on Windows")
+    def test_a_topic_reached_by_two_names_is_listed_under_both(self):
+        (self.root.path / ".signoff" / "2026-03-06-link").symlink_to("2026-01-05-settings")
+        e = self.entries()
+        self.assertIn("2026-01-05-settings/round-01.json", e)
+        self.assertIn("2026-03-06-link/round-01.json", e)
+
     @unittest.skipUnless(hasattr(os, "mkfifo"), "POSIX FIFOs")
     def test_fifos_are_errors_not_a_blocked_page(self):
         topic = self.root.path / ".signoff" / "2026-03-07-fifo"

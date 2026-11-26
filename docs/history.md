@@ -25,4 +25,10 @@ the page shows that line with the round:
 Nothing on this page can be changed and nothing is written: it has no save route and no Done. Close it with
 Ctrl+C; it also stops after the idle timeout.
 
+The inbox shows the same page for each project: **Past decisions** under the project in its sidebar. There it
+lists every decisions folder the project's runs used (the folder that holds a run's topic folder, inside the
+project) and its `.signoff` (when that is inside the project too), found in the newest thousand run notes in the Signoff home, and closes with the tab.
+A folder that only older runs used, or runs before the inbox first ran, is not listed there; `--history
+--folder` still shows it.
+
 ![The past-decisions page: the project's name in the header, rounds with dates, status and outcomes in the sidebar, the chosen round with its outcome read only on the right](../media/history.png)

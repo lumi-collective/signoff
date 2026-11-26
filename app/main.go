@@ -183,7 +183,7 @@ func (s *appShell) badge(home string) {
 	var seen rise
 	shown := ""
 	for {
-		n, err := waiting(home)
+		n, backs, err := waiting(home)
 		ok := err == nil && ownFolder(home) == nil && inboxAlive(home)
 		label := countLabel(n, ok)
 		if label != shown {
@@ -197,7 +197,7 @@ func (s *appShell) badge(home string) {
 				shown = label // else the next look tries again
 			}
 		}
-		if seen.next(n, ok) && s.notesOK.Load() {
+		if seen.next(n, backs, ok) && s.notesOK.Load() {
 			s.notify(n)
 		}
 		time.Sleep(badgeEvery)

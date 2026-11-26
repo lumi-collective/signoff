@@ -2533,7 +2533,7 @@ def run_inbox(work):
                            " document.querySelector('.ib-zero').hidden, document.getElementById('intro').textContent,"
                            " Array.prototype.filter.call(document.querySelectorAll('.nav'), function (b) {"
                            " return b.getAttribute('aria-pressed') === 'true'; }).map(function (b) { return b.textContent; })]; })()")
-        check(shown == [1, "To do 3by project", True, "Showing To do", ["To do 3"]],
+        check(shown == [1, "To do 3, by project", True, "Showing To do", ["To do 3"]],
               "To do (3) should show the To do rows only: %r" % shown)
         # Each project's other open items sit behind one count row, closed; the button lands on the first of them, and
         # a click shows that project's rows.
@@ -3265,14 +3265,15 @@ def run_live(work):
         check(seen[:2] == [["Waiting on you 2", False, [
                            ["Waiting on you", "Claude Code session", "claude attach 8d4e0402", "600"],
                            ["Waiting on you", "Claude Code session", "Go to its terminal", "600"]]],
-                       ["Idle 1not counted", True, [
+                       ["Idle 1, not counted", True, [
                            ["Idle", "Claude Code session", "Go to its terminal", "500"]]]]
               and whens[0][0] in ("5 min ago", "6 min ago") and whens[0][1] in ("1 min ago", "2 min ago")
               and whens[1][0] in ("for 15 min", "for 16 min"),
               "Waiting on you should list both waiting sessions, Idle the idle one, dimmer: %r %r" % (seen, whens))
         counts = browser.js("[document.title, Array.prototype.map.call(document.querySelectorAll('.nav'), function (b) {"
                             " return b.textContent; }), document.body.textContent.indexOf('SENTINEL') < 0]")
-        check(counts == ["(2) Inbox", ["Waiting on you 2", "To do", "LIlive-project 2, waiting on you"], True],
+        check(counts == ["(2) Inbox", ["Waiting on you 2", "To do", "LIlive-project 2, waiting on you", "Past decisions"],
+                         True],
               "the idle session must count nowhere: %r" % counts)
         browser.click("#panels button.ib-main")
         detail = browser.js("(function () { var b = document.querySelector('#ib-detail .ib-body'); return b && ["
@@ -3348,6 +3349,346 @@ def run_live(work):
         raise
     finally:
         kill(browser.proc)
+        end_inbox(inbox, script, env, home)
+
+
+def parked_fixture(work):
+    """A Signoff home and a project for Park, Back and Past decisions, also for screenshots by hand: two open rounds a
+    run will ask (topic), a past round answered with Done and another left open, and a parked round no run lists.
+    Returns the home, the topic for the waiter, and the inbox's environment and command."""
+    sg = _signoff()
+    home, root = work / "parked-home", work / "parked-project"
+    signoff_dir = root / ".signoff"
+    topic, past, left = signoff_dir / "2026-01-12-park", signoff_dir / "2026-01-02-past", signoff_dir / "2026-01-03-left"
+    for folder in (topic, past, left):
+        folder.mkdir(parents=True)
+    (root / ".git").mkdir()
+    base = json.loads((DEMO / "round-04.json").read_text(encoding="utf-8"))
+    for folder, name, title in ((topic, "round-01.json", "Wording of the export"), (topic, "round-02.json", "Name of the app"),
+                                (past, "round-01.json", "An earlier choice"), (left, "round-01.json", "A round no run lists")):
+        (folder / name).write_text(json.dumps(dict(base, title=title, tab=title.split()[0])), encoding="utf-8")
+    sha = hashlib.sha256((past / "round-01.json").read_bytes()).hexdigest()
+    (past / "round-01.answers.json").write_text(json.dumps(
+        {"version": 1, "done": True, "saved": "2026-01-02T10:00:00Z", "decisions": {"file": "round-01.json", "sha256": sha},
+         "answers": {}, "free_text": "", "accepted": True}), encoding="utf-8")
+    pid = sg.project_id(root.resolve())
+    for sub in ("projects", "runs"):
+        (home / sub).mkdir(parents=True, mode=0o700)
+    (home / "projects" / (pid + ".json")).write_text(json.dumps(
+        {"schema": 1, "id": pid, "root": str(root.resolve()), "name": "park-project"}), encoding="utf-8")
+    (home / "parked.json").write_text(json.dumps({"schema": 1, "rounds": [
+        {"path": str((left / "round-01.json").resolve()), "at": "2026-01-03T09:00:00Z"}]}), encoding="utf-8")
+    os.chmod(str(home / "parked.json"), 0o600)
+    env = dict(os.environ, SIGNOFF_INBOX_HOME=str(home))
+    script = [sys.executable, "-I", "-B", str(ROOT / "plugin" / "signoff" / "signoff.py")]
+    return home, topic, env, script
+
+
+# The list's sections as shown: each heading's text, whether its rows show, and each shown row's kind and title.
+SECTIONS = """Array.prototype.filter.call(document.querySelectorAll('#panels section.ib'), function (s) { return !s.hidden; })
+  .map(function (s) { var t = s.querySelector('.ib-gtoggle'); return [s.querySelector('h2').textContent,
+  t ? t.getAttribute('aria-expanded') : null, Array.prototype.filter.call(s.querySelectorAll('.ib-row'), function (r) {
+  return r.offsetParent !== null; }).map(function (r) { return [r.querySelector('.ib-kind').textContent,
+  r.querySelector('.ib-title').textContent]; })]; })"""
+
+
+# Each round row's own button: its text, its accessible name, whether it sits inside the row's link, and whether it
+# is a sibling right after that link in the row.
+ROW_BUTTONS = """Array.prototype.map.call(document.querySelectorAll('#panels .ib-row > .ib-rowact'), function (b) {
+  return [b.textContent, b.getAttribute('aria-label'), !!b.closest('a'),
+  b.previousElementSibling.classList.contains('ib-main')]; })"""
+# At each shown row with a button: the title and the time end left of the button and inside the link.
+ROW_FIT = """Array.prototype.filter.call(document.querySelectorAll('#panels .ib-row.has-act'), function (li) {
+  return li.offsetParent !== null; }).map(function (li) { var b = li.querySelector('.ib-rowact').getBoundingClientRect(),
+  a = li.querySelector('.ib-main').getBoundingClientRect(); return ['.ib-title', '.ib-when'].every(function (s) {
+  var r = li.querySelector(s).getBoundingClientRect(); return r.width > 0 && r.right <= b.left + 0.5
+  && r.left >= a.left && r.right <= a.right + 0.5; }); })"""
+
+
+def row_button(browser, name):
+    """A real mouse click on the row button with this accessible name, the page marked to see its reload."""
+    browser.js("window.notReloaded = true; Array.prototype.forEach.call(document.querySelectorAll('[data-e2e=rowact]'), "
+               "function (b) { b.removeAttribute('data-e2e'); }); "
+               "Array.prototype.filter.call(document.querySelectorAll('.ib-rowact'), "
+               "function (b) { return b.getAttribute('aria-label') === %s; })[0].setAttribute('data-e2e', 'rowact')"
+               % json.dumps(name))
+    browser.click(".ib-rowact[data-e2e=rowact]")
+
+
+def run_parked(work):
+    """Park and Back from the inbox list, and a project's past decisions from its sidebar row. A waiting round parked
+    leaves Waiting on you for Parked under Answered, closed behind its heading, which counts it and the one an agent
+    still waits on; the tab title and state.json drop at once, with no "new" bar; Back returns it. Parked opens on a
+    click, its project's filter and a search, its rows are out of j, k and Focus while closed, and the page's own
+    reload keeps it as it was. Past decisions opens read only in the same tab. At 390 px nothing runs past the edge."""
+    home, topic, env, script = parked_fixture(work)
+    inbox_err, err = [], []
+    inbox = spawn(script + ["inbox", "serve"], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                  universal_newlines=True, encoding="utf-8", errors="replace")
+    threading.Thread(target=pump, args=(inbox.stderr, inbox_err), daemon=True).start()
+    start = wait_for("a start link from the inbox", lambda: inbox_link(inbox, inbox_err, script, env, home))
+    waiter = spawn(script + [str(topic), "--no-open"], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                   universal_newlines=True, encoding="utf-8", errors="replace")
+    threading.Thread(target=pump, args=(waiter.stderr, err), daemon=True).start()
+    wait_for("the run to wait on the inbox", lambda: any("inbox is open" in l for l in err))
+    browser = Browser(str(work / "profile-parked"))
+
+    def state():
+        return json.loads((home / "state.json").read_text(encoding="utf-8"))["waiting"]
+
+    def reloaded():
+        return wait_for("the page to reload itself", lambda: browser.js(
+            "window.notReloaded !== true && !!document.querySelector('#panels section.ib')"), timeout=20)
+
+    def toggle(head):
+        browser.js("Array.prototype.filter.call(document.querySelectorAll('#panels section.ib'), function (s) {"
+                   " return s.querySelector('h2').textContent.indexOf(%s) === 0; })[0].querySelector('.ib-gtoggle')"
+                   ".setAttribute('data-e2e', 'tog')" % json.dumps(head))
+        browser.click(".ib-gtoggle[data-e2e=tog]")
+        browser.js("document.querySelector('[data-e2e=tog]').removeAttribute('data-e2e')")
+    try:
+        browser.call("Emulation.setDeviceMetricsOverride", width=1280, height=900, deviceScaleFactor=1, mobile=False)
+        browser.call("Page.enable")
+        browser.call("Page.navigate", url=start)
+        seen = wait_for("the waiting rounds", lambda: browser.js(
+            "document.querySelectorAll('#panels .ib-row').length >= 3 && " + SECTIONS))
+        wait_for("the inbox's own count", lambda: state() == 2)  # its look every STATE_EVERY seconds
+        check(seen[:2] == [["Waiting on you 2", None, [["Question", "Wording of the export"], ["Question", "Name of the app"]]],
+                           ["Parked 1", "false", []]] and browser.js("document.title") == "(2) Inbox",
+              "two rounds wait, the round no run lists sits in Parked, closed and counted nowhere: %r" % seen)
+        # Park on the open row (the first one, beside the list): the page reloads to its new count, no bar.
+        acts = browser.js("Array.prototype.map.call(document.querySelectorAll('#ib-detail .ib-acts > *'), function (e) {"
+                          " return e.textContent; })")
+        check(acts == ["Open round", "Park"], "a round's open row offers Open round and Park: %r" % acts)
+        browser.js("window.notReloaded = true")
+        browser.click("#ib-detail .ib-acts button")
+        reloaded()
+        seen = browser.js(SECTIONS)
+        bar = browser.js("[document.title, document.querySelector('#panels .ib-fresh').hidden,"
+                         " document.querySelector('.bar-state .dot').classList.contains('new')]")
+        check(seen[:2] == [["Waiting on you 1", None, [["Question", "Name of the app"]]],
+                           ["Parked 2, 1 with an agent waiting", "false", []]] and bar == ["(1) Inbox", True, False]
+              and state() == 1, "Park moves the round to Parked, the count drops, no new bar: %r %r" % (seen, bar))
+        nav = browser.js("[Array.prototype.map.call(document.querySelectorAll('#ib-side .nav'), function (b) {"
+                         " return b.textContent; }), document.getElementById('intro').textContent,"
+                         " getComputedStyle(document.querySelector('#ib-side a.nav')).textDecorationLine]")
+        check(nav == [["Waiting on you 1", "To do", "PApark-project 1, waiting on you", "Past decisions"],
+                      "1 waiting on you in 1 project", "none"],
+              "the sidebar and the header line count what waits, the project row has its Past decisions: %r" % nav)
+        # Closed, Parked's rows are out of Focus: it walks the one waiting round.
+        press(browser, "f", "KeyF", 70, text="f")
+        check(browser.js("document.querySelector('.ib-fbar span').textContent") == "1 of 1",
+              "Focus walks only the rows shown: %r" % browser.js("document.querySelector('.ib-fbar span').textContent"))
+        press(browser, "Escape", "Escape", 27)
+        # A click opens it: the round no run lists, then the parked one whose agent still waits.
+        toggle("Parked")
+        check(browser.js(SECTIONS)[1] == ["Parked 2, 1 with an agent waiting", "true", [
+              ["Parked", "A round no run lists"], ["Agent waiting", "Wording of the export"]]],
+              "Parked opens on a click, each row saying whether an agent waits: %r" % browser.js(SECTIONS))
+        browser.js("document.querySelector('#panels .ib-main').focus()")  # the waiting round's row; j to each parked
+        press(browser, "j", "KeyJ", 74, text="j")
+        note = browser.js("[document.querySelector('#ib-detail h2').textContent, Array.prototype.map.call("
+                          "document.querySelectorAll('#ib-detail .ib-vuln-note'), function (p) { return p.textContent; })]")
+        check(note == ["A round no run lists", ["Parked: it counts nowhere and stays until Back. Its run has ended: "
+                                                "Back puts it in Waiting on you as Run ended for 14 days, and your "
+                                                "answer goes to the project's sessions."]],
+              "a parked round no run lists says what Back does: %r" % note)
+        press(browser, "j", "KeyJ", 74, text="j")
+        acts = browser.js("[document.querySelector('#ib-detail h2').textContent, Array.prototype.map.call("
+                          "document.querySelectorAll('#ib-detail .ib-acts > *'), function (e) { return e.textContent; })]")
+        check(acts == ["Wording of the export", ["Open round", "Back"]], "a parked row offers Back: %r" % acts)
+        browser.js("window.notReloaded = true")
+        browser.click("#ib-detail .ib-acts button")
+        reloaded()
+        seen = browser.js(SECTIONS)
+        check(seen[0] == ["Waiting on you 2", None, [["Question", "Wording of the export"], ["Question", "Name of the app"]]]
+              and seen[1] == ["Parked 1", "true", [["Parked", "A round no run lists"]]]
+              and browser.js("document.title") == "(2) Inbox" and state() == 2,
+              "Back returns the round; the page's own reload keeps Parked open: %r" % seen)
+        # The row's own button, beside its link (never inside it), named for its round, reached with Tab.
+        check(browser.js(ROW_BUTTONS) == [["Park", "Park Wording of the export", False, True],
+                                          ["Park", "Park Name of the app", False, True],
+                                          ["Back", "Back A round no run lists", False, True]],
+              "each round row ends in its own Park or Back: %r" % browser.js(ROW_BUTTONS))
+        browser.js("document.querySelector('#panels .ib-main').focus()")
+        press(browser, "Tab", "Tab", 9)
+        check(browser.js("document.activeElement.getAttribute('aria-label')") == "Park Wording of the export",
+              "Tab goes from a row's link to its button")
+        row_button(browser, "Park Name of the app")
+        reloaded()
+        seen = browser.js(SECTIONS)
+        landed = browser.js("[document.activeElement.className, (document.activeElement.querySelector('.ib-title') || {})"
+                            ".textContent]")
+        check(seen[:2] == [["Waiting on you 1", None, [["Question", "Wording of the export"]]],
+                           ["Parked 2, 1 with an agent waiting", "true", [["Parked", "A round no run lists"],
+                                                                         ["Agent waiting", "Name of the app"]]]]
+              and browser.js("document.title") == "(1) Inbox" and state() == 1
+              and landed == ["ib-main", "A round no run lists"],
+              "a click on the row's Park parks it, the focus on the row that took its place: %r %r" % (seen, landed))
+        row_button(browser, "Back Name of the app")
+        reloaded()
+        seen = browser.js(SECTIONS)
+        check(seen[:2] == [["Waiting on you 2", None, [["Question", "Wording of the export"], ["Question", "Name of the app"]]],
+                           ["Parked 1", "true", [["Parked", "A round no run lists"]]]] and state() == 2,
+              "a click on the row's Back puts it back: %r" % seen)
+        toggle("Parked")
+        check(browser.js(SECTIONS)[1][1:] == ["false", []], "a second click closes Parked")
+        # Its project's filter opens it with that project's rows; a search opens it on a match.
+        browser.js("Array.prototype.filter.call(document.querySelectorAll('#ib-side button.nav'), function (b) {"
+                   " return b.textContent.indexOf('park-project') >= 0; })[0].setAttribute('data-e2e', 'proj')")
+        browser.click("#ib-side button.nav[data-e2e=proj]")
+        check(browser.js(SECTIONS)[-1][1:] == ["true", [["Parked", "A round no run lists"]]],
+              "the project's filter opens Parked: %r" % browser.js(SECTIONS))
+        browser.click("#ib-side button.nav[data-e2e=proj]")
+        browser.click("#ib-search")
+        browser.call("Input.insertText", text="no run lists")
+        found = wait_for("the search's match", lambda: browser.js(
+            "document.getElementById('ib-search-count').textContent === '1 match' && " + SECTIONS))
+        check(found == [["Parked 1", "true", [["Parked", "A round no run lists"]]]], "a search opens Parked: %r" % found)
+        press(browser, "Escape", "Escape", 27)
+        check(browser.js(SECTIONS)[1][1] == "false", "the cleared search gives Parked back closed")
+        # Past decisions: the project's rounds, newest first, read only, in this tab; Inbox leads back.
+        browser.click("#ib-side a.nav")
+        hist = wait_for("the past-decisions page", lambda: browser.js(
+            "document.body.classList.contains('hist') && document.querySelectorAll('#h-list li').length > 0 && ["
+            "location.pathname.split('/').slice(2).join('/').replace(/[0-9a-f]{16}/, 'ID'), document.getElementById('title').textContent,"
+            " document.getElementById('notice').textContent, document.querySelectorAll('#h-list li').length,"
+            " (document.querySelector('a.back') || {}).textContent]"))
+        check(hist == ["history/ID/", "Past decisions", "Read only.", 4, "← Inbox"],
+              "the sidebar's Past decisions opens the project's rounds read only: %r" % hist)
+        browser.click("a.back")
+        wait_for("the list again", lambda: browser.js("!!document.querySelector('#panels section.ib')"))
+        # A phone: Parked and its rows fit, the drawer holds Past decisions.
+        browser.call("Emulation.setDeviceMetricsOverride", width=390, height=844, deviceScaleFactor=1, mobile=True)
+        browser.call("Page.navigate", url=browser.js("location.href"))
+        wait_for("the list at 390", lambda: browser.js("!!document.querySelector('#panels section.ib')"))
+        toggle("Parked")
+        phone = browser.js("[document.documentElement.scrollWidth, Array.prototype.every.call(document.querySelectorAll("
+                           "'#panels .ib-row, #panels .ib-gtoggle'), function (e) { var r = e.getBoundingClientRect();"
+                           " return r.right <= 390.5; }), " + SECTIONS + "[1][1]]")
+        check(phone == [390, True, "true"], "at 390 px Parked opens and nothing runs past the edge: %r" % phone)
+        fits = browser.js(ROW_FIT)
+        check(fits and all(fits), "at 390 px each row's title and time stay in their link, left of its button: %r" % fits)
+        row_button(browser, "Park Wording of the export")
+        reloaded()
+        check(browser.js("document.title") == "(1) Inbox" and state() == 1
+              and browser.js(SECTIONS)[1][0] == "Parked 2, 1 with an agent waiting",
+              "a tap on the row's Park at 390 px parks it: %r" % browser.js(SECTIONS))
+        row_button(browser, "Back Wording of the export")
+        reloaded()
+        check(browser.js("document.title") == "(2) Inbox" and state() == 2, "a tap on the row's Back at 390 px")
+        browser.click("header button.icon")
+        check(browser.js("document.body.classList.contains('side-open') && document.querySelector('#ib-side a.nav')"
+                         ".getBoundingClientRect().width > 0"), "the drawer holds Past decisions")
+        press(browser, "Escape", "Escape", 27)
+        # Back on the round no run lists: it waits on you as a Run ended row, and counts.
+        browser.call("Emulation.setDeviceMetricsOverride", width=1280, height=900, deviceScaleFactor=1, mobile=False)
+        browser.call("Page.navigate", url=browser.js("location.href"))
+        wait_for("the list at 1280", lambda: browser.js("!!document.querySelector('#panels section.ib')"))
+        toggle("Parked")
+        browser.js("document.querySelector('#panels .ib-main').focus()")
+        for _ in range(2):
+            press(browser, "j", "KeyJ", 74, text="j")
+        check(browser.js("document.querySelector('#ib-detail h2').textContent") == "A round no run lists",
+              "j reaches the parked round no run lists")
+        browser.js("window.notReloaded = true")
+        browser.click("#ib-detail .ib-acts button")
+        reloaded()
+        back = browser.js("[document.title, document.querySelector('#panels .ib-fresh').hidden, " + SECTIONS + "]")
+        check(back[:2] == ["(3) Inbox", True] and back[2][:2] == [
+              # Its group, read in while it was parked, keeps that time as its since: oldest first, it leads.
+              ["Waiting on you 3", None, [["Run ended", "A round no run lists"], ["Question", "Wording of the export"],
+                                          ["Question", "Name of the app"]]], ["To do 0, by project", None, []]]
+              and state() == 3, "Back on a round no run lists makes it a Run ended row that counts: %r" % back)
+    except E2EError:
+        sys.stderr.write("--- inbox stderr ---\n" + "".join(inbox_err) + "--- run stderr ---\n" + "".join(err))
+        raise
+    finally:
+        kill(browser.proc)
+        kill(waiter)
+        end_inbox(inbox, script, env, home)
+
+
+def run_parked_typed(work):
+    """Park and Back while a row's view holds typed text: the page does not reload (it would lose the text), so its
+    own count does the work. The tab title follows at once, and the state polls after it show no "new" bar. Then the
+    past-decisions page under the inbox: once the inbox stops, a picture that fails says to open the inbox again."""
+    work = work / "pt"  # short: the inbox's socket path under it must stay within 100 bytes
+    work.mkdir()
+    home, topic, env, script = parked_fixture(work)
+    root = topic.parent.parent
+    (root / "TODO.md").write_text("- [ ] (waiting on you: a pick) Check the thing\n", encoding="utf-8")
+    pics = root / ".signoff" / "2026-01-04-pics"
+    shutil.copytree(str(DEMO / "mockups"), str(pics / "mockups"))
+    shutil.copyfile(str(DEMO / "round-02.json"), str(pics / "round-01.json"))
+    inbox_err, err = [], []
+    inbox = spawn(script + ["inbox", "serve"], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                  universal_newlines=True, encoding="utf-8", errors="replace")
+    threading.Thread(target=pump, args=(inbox.stderr, inbox_err), daemon=True).start()
+    start = wait_for("a start link from the inbox", lambda: inbox_link(inbox, inbox_err, script, env, home))
+    waiter = spawn(script + [str(topic), "--no-open"], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                   universal_newlines=True, encoding="utf-8", errors="replace")
+    threading.Thread(target=pump, args=(waiter.stderr, err), daemon=True).start()
+    wait_for("the run to wait on the inbox", lambda: any("inbox is open" in l for l in err))
+    browser = Browser(str(work / "profile-parked-typed"))
+
+    def state():
+        return json.loads((home / "state.json").read_text(encoding="utf-8"))["waiting"]
+
+    # After two state polls: whether the page reloaded, its title, whether the "new" bar shows, and the status line.
+    after = ("[window.notReloaded === true, document.title, document.querySelector('#panels .ib-fresh').hidden,"
+             " (document.querySelector('.bar-state') || {}).textContent]")
+    try:
+        browser.call("Emulation.setDeviceMetricsOverride", width=1280, height=900, deviceScaleFactor=1, mobile=False)
+        browser.call("Page.enable")
+        browser.call("Page.navigate", url=start)
+        wait_for("the rows", lambda: browser.js("document.querySelectorAll('#panels .ib-row').length >= 4"))
+        wait_for("the inbox's own count", lambda: state() == 3)  # two rounds and the todo item
+        wait_for("the page's title", lambda: browser.js("document.title") == "(3) Inbox")
+        browser.js("Array.prototype.filter.call(document.querySelectorAll('#panels section.ib'), function (s) {"
+                   " return s.querySelector('h2').textContent.indexOf('Parked') === 0; })[0].querySelector('.ib-gtoggle')"
+                   ".click()")  # open, so its row's Back can be pressed
+        browser.js("Array.prototype.filter.call(document.querySelectorAll('#panels .ib-main'), function (a) {"
+                   " return a.textContent.indexOf('Check the thing') >= 0; })[0].setAttribute('data-e2e', 'todo')")
+        browser.click("#panels .ib-main[data-e2e=todo]")
+        browser.click("#ib-detail input[type=text]")
+        browser.call("Input.insertText", text="half a message")
+        row_button(browser, "Park Name of the app")
+        check(browser.js("document.title") == "(2) Inbox", "Park drops the tab title at once: %r" % browser.js(after))
+        time.sleep(11)  # two state polls, 5 s apart
+        got = browser.js(after)
+        check(got == [True, "(2) Inbox", True, "Parked. It moves to Parked when this page reloads."] and state() == 2,
+              "with typed text, Park keeps the page, its count and no new bar: %r" % got)
+        row_button(browser, "Back A round no run lists")
+        check(browser.js("document.title") == "(3) Inbox", "Back raises the tab title at once: %r" % browser.js(after))
+        time.sleep(11)
+        got = browser.js(after)
+        check(got == [True, "(3) Inbox", True, "Put back. It moves back when this page reloads."] and state() == 3,
+              "with typed text, Back keeps the page, its count and no new bar: %r" % got)
+        check(browser.js("document.querySelector('#ib-detail input[type=text]').value") == "half a message",
+              "the typed text is still there")
+        # Past decisions under the inbox, then the inbox stops: a picture that fails says to open the inbox again.
+        browser.js("document.querySelector('#ib-side a.nav').click()")
+        wait_for("the past-decisions page", lambda: browser.js(
+            "!!document.body && document.body.classList.contains('hist') && document.querySelectorAll('#h-list li')"
+            ".length > 0"))
+        browser.js("Array.prototype.filter.call(document.querySelectorAll('#h-list li'), function (li) { return "
+                   "li.textContent.indexOf('round 2: lists') >= 0; })[0]"
+                   ".querySelector('button, a').click()")
+        wait_for("a picture of the round", lambda: browser.js("!!document.querySelector('.frame img')"))
+        end_inbox(inbox, script, env, home)
+        browser.js("(function () { var p = document.querySelector('.frame img'); p.src = p.src + '?again'; })()")
+        notice = wait_for("the notice that the inbox stopped", lambda: browser.js(
+            "document.getElementById('notice').textContent").startswith("The inbox has stopped") and browser.js(
+            "document.getElementById('notice').textContent"))
+        check(notice == "The inbox has stopped, so pictures no longer load. Open the inbox again.",
+              "under the inbox the stopped notice says to open the inbox again: %r" % notice)
+    except E2EError:
+        sys.stderr.write("--- inbox stderr ---\n" + "".join(inbox_err) + "--- run stderr ---\n" + "".join(err))
+        raise
+    finally:
+        kill(browser.proc)
+        kill(waiter)
         end_inbox(inbox, script, env, home)
 
 
@@ -3643,6 +3984,8 @@ def run():
         run_inbox(work)
         run_inbox_search(work)
         run_live(work)
+        run_parked(work)
+        run_parked_typed(work)
         run_focus_link(work)
         run_plan(work)
         run_round_age(work)
@@ -3829,6 +4172,10 @@ def main():
              "interactive one pointed to its terminal, an idle one dimmer in Idle and counted nowhere, a third "
              "session of another project reloads the page by itself under its own project's heading, the groups "
              "following the order; "
+             "Park on a round's open row moves it to Parked under Answered, closed, the tab title and state.json "
+             "down at once with no new bar, Agent waiting on a live run's round, Back returns it, Parked opens on a "
+             "click, its project's filter and a search, out of Focus while closed, kept open by the page's own "
+             "reload, a project's Past decisions read only from the sidebar, nothing past the edge at 390 px; "
              "a panel row's start link opens its item in Focus (a hash naming nothing is ignored); "
              "a plan round from signoff plan: two options, none preselected, the plan open, Approve and Done, exit 0, "
              "the answers the mod takes as an approval; "

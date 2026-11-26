@@ -152,7 +152,9 @@ The inbox is one browser tab for every project. It lists the open rounds of runs
 todo items an agent marked as waiting on you, and the Claude Code sessions that wait on you for a permission or an
 answer. Ask the agent to open the Signoff inbox. A round opens on the usual page in
 the same tab; Done there writes the answers file, and the waiting run wakes its agent. On an open todo item you can
-send a message to the project's agent. The inbox listens on `127.0.0.1` with the same rules as a run, never runs a
+send a message to the project's agent. **Park** takes a round out of Waiting on you into Parked, which counts
+nowhere, until you press **Back**; the round's files and its run stay as they were. Each project in the sidebar
+links to its past decisions, read only. The inbox listens on `127.0.0.1` with the same rules as a run, never runs a
 command from a todo file, and does not run on Windows yet. Everything about it is in
 [docs/inbox.md](docs/inbox.md).
 
