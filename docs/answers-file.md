@@ -23,25 +23,25 @@ Beside each round, `round-NN.answers.json`, from the first change on the page:
 ```
 
 - `choice` is an option id or `null` for `one`, a list for `many`, and a JSON number for `number` (such as
-  `12.5`; `0` is a value too), or `null` there when nothing was saved. Where it differs from `recommended`, you
+  `12.5`, and `0` is a value too). It is `null` for `number` when nothing was saved. Where it differs from `recommended`, you
   overruled the agent. `_other` means you picked Other and wrote `other`; `_skip` means you skipped the item.
   Neither can clash with an option id, which starts with a letter or digit. An answers file holding a number
   needs Signoff 0.5.0 or newer to be read.
 - `source`: `recommended` (the preselected recommendation, never touched), `accept_all` (set by **Accept all
   recommendations**), `user`, `notification` (the recommendation, accepted with Done from the macOS app's
-  notification; Signoff 0.3.0 and 0.4.0 wrote it, and later versions still read it). Signoff also reads
-  `elsewhere`, which a development build of 0.5.0 wrote: the page shows such an item as any answer with no
+  notification). Signoff 0.3.0 and 0.4.0 wrote `notification`, and later versions still read it. Signoff also reads
+  `elsewhere`, which a development build of 0.5.0 wrote. The page shows such an item as any answer with no
   choice and its comment, and the Markdown copy names its source `unknown`.
 - `marks`: your rectangles, `image` being the picture's position in the item's `images` (from 0) and `box` in
   percent like `boxes`.
 - `lines`: your notes on lines of the item's attachments (an item with `lines: true`), at most 50, each
-  `{att, line, quote, comment}`: `att` the attachment's position in the item's `attachments` (from 0), `line`
-  the line's number in the file (from 1 to 262,144: the text split at each line feed, a carriage return at a line's end
-  dropped, no line after a final line feed), `quote` that line's first 300 characters as the page showed it, and
-  `comment` your note (1 to 20,000 characters). A save checks a new or changed note against the file as Signoff
-  read it at start; a note saved before is kept as it is, so a `quote` that no longer matches the file's line
-  means the file changed since. Needs Signoff 0.5.0 or newer: an older one refuses an answers file with `lines`
-  (it cannot resume it, and the past-decisions page shows the round as broken).
+  `{att, line, quote, comment}`. `att` is the attachment's position in the item's `attachments` (from 0). `line` is
+  the line's number in the file, from 1 to 262,144. The text is split at each line feed, a carriage return at a
+  line's end is dropped, and there is no line after a final line feed. `quote` is that line's first 300 characters
+  as the page showed it. `comment` is your note (1 to 20,000 characters). A save checks a new or changed note
+  against the file as Signoff read it at start. A note saved before is kept as it is, so a `quote` that no longer
+  matches the file's line means the file changed since. This needs Signoff 0.5.0 or newer. An older one refuses an
+  answers file with `lines`: it cannot resume it, and the past-decisions page shows the round as broken.
 - `private`: `true` when you marked the item Private. Its comment, Other text, mark comments and line note
   comments stay in this file; the Markdown copy shows `(private)` in their place (`(privát)` in a Hungarian
   round).
@@ -51,13 +51,13 @@ Beside each round, `round-NN.answers.json`, from the first change on the page:
 - `decisions` names the round file the answers belong to and its SHA-256 when they were saved.
 
 Every save from the page also writes `round-NN.answers.md`, the same answers as Markdown
-for people, all text escaped; an answers file another program wrote has no fresh copy. The copy is written before
+for people, all text escaped. An answers file another program wrote has no fresh copy. The copy is written before
 the JSON. A GFM viewer shows each text as written: none
-of the GFM spec's formatting, HTML, character references (`&amp;`) or links from a bare URL, but for one: it
+of the GFM spec's formatting, HTML, character references (`&amp;`) or links from a bare URL. One exception: it
 still links an email address. No Markdown escape stops that, nor GitHub's own extensions (`$math$`, `:+1:`
 emoji, `@user` mentions). A control character (but tab), a format character (a bidi override, a zero-width mark,
 also the joiner inside an emoji sequence and a soft hyphen) and a lone surrogate show as their code, such as
-`U+202E`, so nothing reverses or hides the rest of a line. Of viewers' own extras only Obsidian's `%%` comment
+`U+202E`, so nothing reverses or hides the rest of a line. Of viewers' own extras, only Obsidian's `%%` comment
 is handled (checked in Obsidian 1.15.1): a `%` after a `%` is escaped. The others were not checked. Its
 labels follow the round's `lang` (`en` or `hu`; anything else gets English), and an empty comment leaves no
 line. An item's commands get a line each, for reading, not for pasting: the copy drops their indentation and

@@ -69,15 +69,19 @@ JSON, one file per round. [`plugin/signoff/schema.json`](../plugin/signoff/schem
 | `settled` | item | no | where and when the user decided this before, such as `round-01, 11-14`: one line as for `irreversible`, and only with `recommended`, which is that decision. The item starts folded: **Settled earlier**, the line and its choice, and **Change**, which shows the options. It counts as decided while its choice is `recommended`, so the inbox's panel does not wait on it. In the Markdown copy, not in the answers file |
 
 Unknown keys are refused, so a typo shows up at once instead of being ignored. Text is plain: no Markdown, links
-or HTML. `commands`, `blocking`, `stakes`, `irreversible`, `settled`, `select: "number"` with `range`, `context`, `lines`, an attachment's `open`, and a `.diff` or `.patch` attachment need Signoff 0.5.0 or newer; an
-older one refuses the round, and so does an inbox an older one started, which keeps running after an update. A
-run waiting on such an inbox notices within a few seconds, says on stderr to restart the inbox
-(`signoff inbox stop`, then `signoff inbox open`) and run the same command again, and exits 1.
+or HTML. These need Signoff 0.5.0 or newer: `commands`, `blocking`, `stakes`, `irreversible`, `settled`,
+`select: "number"` with `range`, `context`, `lines`, an attachment's `open`, and a `.diff` or `.patch` attachment.
+An older Signoff refuses the round. So does an inbox an older Signoff started, which keeps running after an update.
+A run waiting on such an inbox notices within a few seconds. It says on stderr to restart the inbox
+(`signoff inbox stop`, then `signoff inbox open`) and run the same command again, and it exits 1.
 
-An invisible or blank character in a command is a control character other than tab and newline; a format, line
-or paragraph separator, surrogate, private-use or unassigned one; one of Unicode's default-ignorable code points
-(a bidi override, a zero-width mark, a variation selector, a Hangul filler, a tag); or U+2800 (the Braille blank)
-or U+FFFC, which draw nothing. A `caption` may hold an emoji: U+FE0F and U+200D are allowed there. "Unassigned"
-is as the Python running Signoff knows it, so an older Python refuses a character that a newer Unicode assigned.
-These checks catch the known tricks, not every one: the block wraps and is capped, and the user should read a
-command before running it.
+An invisible or blank character in a command is one of these:
+- a control character other than tab and newline,
+- a format, line separator, paragraph separator, surrogate, private-use or unassigned character,
+- one of Unicode's default-ignorable code points (a bidi override, a zero-width mark, a variation selector, a Hangul
+  filler, a tag),
+- U+2800 (the Braille blank) or U+FFFC, which draw nothing.
+
+A `caption` can hold an emoji: U+FE0F and U+200D are allowed there. "Unassigned" is as the Python running Signoff
+knows it, so an older Python refuses a character that a newer Unicode assigned. These checks catch the known
+tricks, not every one. The block wraps and is capped, so read a command before running it.

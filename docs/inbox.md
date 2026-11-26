@@ -22,23 +22,24 @@ sockets, so it does not run on Windows yet; runs work there as before.
 items an agent marked as waiting on you, under one heading per project; the line under the header says how many wait
 in how many projects (`3 waiting on you in 2 projects`). Open a round to answer it on the usual page, in the same tab; Done there
 writes the answers file, and the waiting run picks it up and wakes its agent. A project's open round whose run ended
-or died before it was answered (and that has no outcome file) stays there for up to 14 days, counted like the others;
-its answers file is written as usual. Its row (**Run ended**) and its page say that the Signoff run that asked has
-ended and the answer goes to the project's sessions: once its rounds are done, the inbox sends the agent a
+or died before you answered it (and that has no outcome file) stays there for up to 14 days, counted like the
+others. Its answers file is written as usual. Its row (**Run ended**) and its page say that the Signoff run that
+asked has ended and the answer goes to the project's sessions. Once its rounds are done, the inbox sends the agent a
 message about them (see below). A round another Signoff run has open on its own page shows read only. A plan
-review's round ([Plan review](running.md#plan-review)) waits here like any other; it has no recommendation.
+review's round ([Plan review](running.md#plan-review)) waits here like any other. It has no recommendation.
 A Claude Code session that waits on you for a permission or an answer to its
 question (from about six seconds after it asks) is a row too, with its project and how long it has waited; the
 inbox does not answer it for you. Its row says to go to its terminal, or, for a background session (`claude
 --bg`), gives `claude attach <id>` to copy. **Answered** lists the rounds answered in the last day: *sent*, or *working* once
 that project's Claude Code session reported a new turn after your answer. It is closed until you click its
 heading; a search opens it while a match is in it, and picking a project in the sidebar opens it with that
-project's rounds. **Parked**, under it and closed the same way, lists the rounds you parked: each round row ends in
-**Park** (its open row has it too, for Focus), which takes it out of Waiting on you, the tab title, the sidebar, the mod's band and panel, and the app's
-badge until you press **Back** on its row there. Its heading says how many an agent still waits on (**Agent
-waiting**: the run that asked is still running; parking does not stop it or change its timeout). A parked round
-still opens, saves and takes Done on its page. **Back** puts it back in Waiting on you; one whose run has ended
-waits there as **Run ended** for 14 days after Back, as a round of an ended run does. **Idle**, dimmer, lists the open
+project's rounds. **Parked**, under it and closed the same way, lists the rounds you parked. Each round row ends in
+**Park**, and its open row has it too, for Focus. Park takes the round out of Waiting on you, the tab title, the
+sidebar, the mod's band and panel, and the app's badge, until you press **Back** on its row there. The heading of
+**Parked** says how many an agent still waits on (**Agent waiting**: the run that asked is still running). Parking
+does not stop that run or change its timeout. A parked round still opens, saves and takes Done on its page.
+**Back** puts it back in Waiting on you. A round whose run has ended waits there as **Run ended** for 14 days after
+Back, as a round of an ended run does. **Idle**, dimmer, lists the open
 sessions idle for a minute or more, waiting for your next prompt; they do not count as waiting on
 you. **To do** holds every project's other open items behind one row per project (`docs-site: 12 more open`), closed
 until you click it; picking a project in the sidebar opens its own. The tab title shows how many rows wait on you, as `(3) Inbox`, and keeps that count current.
@@ -47,9 +48,9 @@ loses nothing: nothing typed and unsent in a message box, no sheet, sidebar draw
 cursor not in a field. Otherwise a bar at the top of the list says how many are new, with a Reload button.
 Each row in Waiting on you says how long ago it last changed (a round: when its run started; a session: when it
 began to wait; a todo item: when its file last changed), the exact time on hover. A round asked 2 days ago or
-more (its round file's time, as its page shows it) also says **Open 2+ days**, and its open row says how long and
-that its questions may be out of date. A round whose agent wrote a `context` line shows it after the tab on
-the row's second line, and in its open row; the search finds it too. The two buttons under the
+more (its round file's time, as its page shows it) also says **Open 2+ days**. Its open row says how long, and
+that its questions can be out of date. A round whose agent wrote a `context` line shows it after the tab on
+the row's second line, and in its open row. The search finds it too. The two buttons under the
 heading order the rows oldest first or newest first, within each project, and the projects by their first row, so
 the oldest (or newest) row is always at the top; the choice is kept in `prefs.json`.
 
@@ -110,9 +111,9 @@ EOF
 ```
 
 Add the key beside the others, for example `"todo": "docs/tasks.md"`, then check the file is still JSON with
-`python3 -m json.tool <that file>`: one slip, such as a trailing comma, makes the inbox skip the project whole (its
-todo items, its sessions and its count). To start over, delete the file; the next session in
-the project writes a fresh one, without the key. With the key, that file alone is read: when it is not a file
+`python3 -m json.tool <that file>`. One slip, such as a trailing comma, makes the inbox skip the project whole (its
+todo items, its sessions and its count). To start over, delete the file. The next session in
+the project writes a fresh one, without the key. With the key, the inbox reads that file alone. When it is not a file
 inside the root (a link is followed and must stay inside too), the inbox shows "the todo path in its project file
 not read: it names no file inside the project" and reads none of the three names.
 
@@ -139,15 +140,15 @@ The agent gets each as one line, as your own words:
 Signoff inbox: the user sent you a message on the todo item "Ship the release": "please split it in two". Treat it as the user's own words. When it is handled, run: signoff inbox done 3f9c0a1b2c3d4e5f
 ```
 
-A session open in the project gets it from the plugin's mod (`plugin/hooks/register.tsx`), within seconds when the
-session is idle, else as a turn of its own after the one that runs; with several sessions open there, each one gets
-it. After you stop the agent with Esc, Claude Code takes no message from a plugin until you send something: the
-message then goes at your next turn, as a turn of its own. While the plan review's message waits behind a turn,
-the mod holds yours until that one went: it sends one message at a time.
-The mod does not look with `claude -p`: such a session gets it only at a
-later session start with no other live session of the project. The mod's project is the session's root (where it
-started, or where `/cd` or a worktree move took it; a shell `cd` does not move it); a project the root moves into
-gets its older messages at such a later session start too. With no session of the project open, the next session
+A session open in the project gets it from the plugin's mod (`plugin/hooks/register.tsx`). It arrives within seconds
+when the session is idle, else as a turn of its own after the one that runs. With several sessions open there, each
+one gets it. After you stop the agent with Esc, Claude Code takes no message from a plugin until you send
+something. The message then goes at your next turn, as a turn of its own. While the plan review's message waits
+behind a turn, the mod holds yours until that one went, because it sends one message at a time.
+The mod does not look with `claude -p`. Such a session gets the message only at a
+later session start with no other live session of the project. The mod's project is the session's root. That is
+where the session started, or where `/cd` or a worktree move took it. A shell `cd` does not move it. A project the
+root moves into gets its older messages at such a later session start too. With no session of the project open, the next session
 that starts there gets the messages not yet handled, at most ten, when it starts; since they come from a hook, the
 agent is asked to tell you about them first and act once you say so. `signoff inbox done <id>`
 writes an empty `<id>.done` beside the request; a request without one comes back at a later session start. The
@@ -157,13 +158,13 @@ inbox of 0.3.0 or 0.4.0 and not yet marked done reaches the agent the same way.
 
 When the last open round of a run that had ended is finished (Done on its page, or an answers file another
 program wrote with Done), the inbox writes one more request, of kind
-`answer`, for that run's rounds together: its `ref` is the topic folder and the rounds
-(`2026-11-05-settings / round-01, round-02`), its text the inbox's own, with none of your answers in it.
-It reaches the project's sessions the same way, and asks the agent to tell you first, then read the answers files
-and act on them; the agent marks it done with `signoff inbox done <id>`. A round whose run still waits needs
-none: the run wakes its agent. If that run stops before it hands the answers over (a closed terminal right
+`answer`, for that run's rounds together. Its `ref` is the topic folder and the rounds
+(`2026-11-05-settings / round-01, round-02`), and its text is the inbox's own, with none of your answers in it.
+It reaches the project's sessions the same way. It asks the agent to tell you first, then read the answers files
+and act on them. The agent marks it done with `signoff inbox done <id>`. A round whose run still waits needs
+none, because the run wakes its agent. If that run stops before it hands the answers over (a closed terminal right
 after your Done, say), or another program finishes its rounds just after it stopped or timed out, the inbox
-writes the same request at its next look, once. A run whose start link was used twice gets none: it tells its
+writes the same request at its next look, once. A run whose start link was used twice gets none. It tells its
 agent to check the answers first. The request route takes no `answer` from a page.
 
 The inbox listens on `127.0.0.1` with the same rules as a run. Start links come only from its control socket,

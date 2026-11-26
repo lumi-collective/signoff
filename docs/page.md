@@ -7,17 +7,16 @@
 
 - **The project's name** and its two-letter monogram (the same as in the inbox) start the header, and the name
   starts the browser tab's title, so with several projects open you can tell which one is asking. It is the name
-  of the nearest folder with a `.git` or a `.signoff` folder (not a link) in it, never the home folder and never a
+  of the nearest folder that has a `.git` (a folder or a file) or a `.signoff` folder (not a link) in it, never the home folder and never a
   path. A decisions folder with neither shows no name. The past-decisions page shows the name of its root folder
   instead. Where the round's title would get less than 260 px, the header's buttons move to a row of their own
   under it.
 - **When the round was asked** is on the line under the name: `Opened <date> · 3 days ago`, the full time on
   hover. It is the round file's time, so a new run on the same rounds keeps it, and an agent's edit of the round
-  moves it; a
-  `touch`, a copy that does not keep file times (`cp` without `-p`) or a `git checkout` moves it too, which only
-  makes a round look younger. An open round 2 days old or more says **Open 2+ days** there and, at the top of the
-  round, that its questions may be out of date, so ask the agent if in doubt. A tab left open keeps its age text and
-  warning as they were until it is reloaded.
+  moves it. A `touch`, a copy that does not keep file times (`cp` without `-p`) or a `git checkout` moves it too,
+  which only makes a round look younger. An open round 2 days old or more says **Open 2+ days** there and, at the
+  top of the round, that its questions can be out of date. Ask the agent if in doubt. A tab left open keeps its age
+  text and warning as they were until it is reloaded.
 - **The round's context**, when the agent wrote one (`context`: which session asks and what it was working on),
   is the first line of the round, in quieter text (after the outcome on the past-decisions page). On a phone in
   Focus it shows with the first item only.
@@ -36,13 +35,13 @@
   item's options.
 - **Focus** (the button in the header, or `f`) shows one item at a time, with Previous and Next; the round's last
   box and its Accept or Done come after the last item. Esc leaves it. A phone opens the page in Focus. There an
-  item reads its question, the recommendation, its commands, then its pictures as thumbnails, then the options, so
-  the options start on the first screen. The question and the recommendation stay on the first screen; with
-  commands or a long context the options start below. Tap a thumbnail to open it full size; a picture you can mark
+  item shows its question, the recommendation, its commands, then its pictures as thumbnails, then the options. So
+  the options start on the first screen. The question and the recommendation stay on the first screen. With
+  commands or a long context, the options start below. Tap a thumbnail to open it full size. A picture you can mark
   starts small beside its caption, and **Larger** (and back **Smaller**) gives it the full width to draw on. The
-  header keeps the round's title beside the project's mark, and the bar at the foot takes two rows: why Done waits,
-  then the save state and **Accept this round** (three when the save state needs a line of its own, as after a
-  reload).
+  header keeps the round's title beside the project's mark. The bar at the foot takes two rows: why Done waits,
+  then the save state and **Accept this round**. It takes three rows when the save state needs a line of its own,
+  as after a reload.
 - **Other and Skip** appear where the agent allows them: Other with its own text field, Skip on its own.
 - **A number.** Where the answer is a number, the item has a slider and a number field that move together,
   between the agent's lowest and highest value and on its step, with the unit beside them. The recommended
@@ -55,33 +54,37 @@
   scrolls sideways in its own box, the criteria column staying in place.
 - **Attachments.** Where an item lists text files (`.md`, `.txt`, `.diff` or `.patch`) the detail behind a choice shows under the
   options in a box that starts closed (open when the agent marks it `open`), as plain text. Nothing in it is rendered as
-  Markdown or HTML. A `.diff` or `.patch` shows as a unified diff, a row per line: the old line's number, the new
-  line's, the sign and the text; added and removed lines on backgrounds of their own (the palette's green and red,
-  Rose Pine's foam and love), the `+` and `-` always
-  shown (and read out as "added" and "removed"), file and hunk headers set apart. One that is not a unified diff shows
-  as numbered lines, and so does a `.md` or `.txt` on an item whose lines take notes (`lines`). A hunk counts
-  only after a `+++` line. A file shows as numbered lines when it has no such hunk, when a hunk has fewer lines
-  than its `@@` counts or a stray line inside, or when a `+`, `-` or space line comes straight after a full hunk or
-  its `\ No newline` line (a line starting with `+++ `, `--- ` or `-- ` aside). A line is what the answers file
-  counts as one: the text split at each line feed. A carriage return, vertical tab, form feed, next line (U+0085), line
-  or paragraph separator inside a line shows as `↵`, so you can see it, and a line's number never wraps. The rows are drawn when the box opens (an open box: when its
-  round is shown), the first screen at once and the rest after it, so even a 256 KiB file leaves the page
-  answering. A round you leave, here or on the past-decisions page, lets go of its rows, and its open boxes draw
-  them again when you come back, with every note, one typed and not yet saved too; a box comes back from its top,
-  and a note field's undo history is not kept.
+  Markdown or HTML.
+  - A `.diff` or `.patch` shows as a unified diff, a row per line: the old line's number, the new line's, the sign
+    and the text. Added and removed lines have backgrounds of their own (the palette's green and red, Rose Pine's
+    foam and love). The `+` and `-` are always shown, and read out as "added" and "removed". File and hunk headers
+    are set apart.
+  - A file that is not a unified diff shows as numbered lines, and so does a `.md` or `.txt` on an item whose lines
+    take notes (`lines`). A hunk counts only after a `+++` line. A file also shows as numbered lines in these
+    cases: it has no such hunk, a hunk has fewer lines than its `@@` counts, a hunk has a stray line inside, or a
+    `+`, `-` or space line comes straight after a full hunk or its `\ No newline` line (a line starting with
+    `+++ `, `--- ` or `-- ` aside).
+  - A line is what the answers file counts as one: the text split at each line feed. A carriage return, vertical
+    tab, form feed, next line (U+0085), line or paragraph separator inside a line shows as `↵`, so you can see it.
+    A line's number never wraps.
+  - The rows are drawn when the box opens (an open box: when its round is shown). The first screen comes at once
+    and the rest after it, so even a 256 KiB file leaves the page answering.
+  - A round you leave, here or on the past-decisions page, lets go of its rows. Its open boxes draw them again when
+    you come back, with every note, including one typed and not yet saved. A box comes back from its top, and a
+    note field's undo history is not kept.
 - **Line notes.** On an item whose lines take notes (`lines`), each row of its attachments leads with the line's
-  number in the file (in a diff, before the old and new numbers, which come from the diff's own headers; on a
-  phone those two are left out, so the text has room); a line
-  above the attachments says so. Press it (Tab to it, then Enter or Space) and a field opens under that line, with
-  **Remove**; a second press goes back to the field, and Esc in the field goes back to the number. A field left
-  empty saves nothing. An item takes up to 50 notes; past that the numbers of the other lines are off, and the line
-  above the attachments says why. The notes save with the round, each with its line's first 300 characters, and a
-  box that holds one starts open. When the file has changed since a note was saved (its line is gone, or its first
-  300 characters are no longer the same), the note shows under the box, read only, below "This file changed since.
-  Line N said:" and the saved text, and goes back to the agent as it was; Remove drops it, and the line's number
-  takes a new note. **Private** covers the notes, the Summary lists each under its item (file, line and comment),
-  the past-decisions search finds their comments, and a done round and the past-decisions page show them without
-  the numbers to press or the fields.
+  number in the file. In a diff it comes before the old and new numbers, which come from the diff's own headers. On
+  a phone those two are left out, so the text has room. A line above the attachments says the numbers can be
+  pressed. Press one (Tab to it, then Enter or Space) and a field opens under that line, with **Remove**. A second
+  press goes back to the field, and Esc in the field goes back to the number. A field left empty saves nothing. An
+  item takes up to 50 notes. Past that, the numbers of the other lines are off, and the line above the attachments
+  says why. The notes save with the round, each with its line's first 300 characters, and a box that holds one
+  starts open. A note can go stale when the file has changed since it was saved: its line is gone, or its first 300
+  characters are no longer the same. The note then shows under the box, read only, below "This file changed since.
+  Line N said:" and the saved text. It goes back to the agent as it was. Remove drops it, and the line's number
+  takes a new note. **Private** covers the notes. The Summary lists each note under its item (file, line and
+  comment). The past-decisions search finds their comments. A done round and the past-decisions page show them
+  without the numbers to press or the fields.
 - **A Plan review round** is the one the plugin writes when Claude leaves plan mode while the inbox runs, with
   plan review turned on (see [Plan review](running.md#plan-review)). It has one question, marked **Agent waits on this**: the plan is attached
   and open, its lines take notes, and the two options are Approve the plan and Ask for changes, with a comment.

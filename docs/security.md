@@ -26,59 +26,68 @@ background process in a session but a plan review's waiter while that review is 
 that runs plugin mods, interactive sessions, not on Windows) runs inside Claude Code and starts no process of its own
 to look. Every five seconds it checks for `inbox.lock` in the default homes. Once one is there, it runs
 `signoff inbox home` once each time Claude Code loads the mod (again only when an interrupt killed it). Then it
-reads `inbox.lock`'s time, `projects/` and `state.json` in the home through Claude Code's file reads, and shows the
-session's project count above the prompt
-(or in the status line, or nothing: the `hint` setting; with `off` it reads no count). While an inbox lives it also
-reads the time of `requests/<project>/` and lists it when that changed, or at your next turn when Claude Code
-refused a message (those lines then go again with no command run, unless the session's root moved), whatever the
-`hint`; only for a request it
-has not handed over does it run `signoff inbox requests <folder> <project> <id>…` (fixed arguments: the session's
-root, which the command checks is in that project, and the project's and the requests' 16 hex digit ids), check
-that each line it prints is one line in the fixed frame ending with its own id, and hand those lines to the session
-as one prompt from the plugin (a line in that frame that holds a control, format or line or paragraph separator character or a lone surrogate,
-or is too long, is not sent; a later session
-start with no other live session of the project hands it over). Whoever can write the home's `requests/` folder
-can put such a line before the agent; that folder is the user's own, in the 0700 home, as before.
+reads `inbox.lock`'s time, `projects/` and `state.json` in the home through Claude Code's file reads. It shows the
+session's project count above the prompt, or in the status line, or nothing. The `hint` setting chooses, and with
+`off` the mod reads no count.
 
-For a plan review (the `plan` setting at `inbox`, while an inbox lives; it is off by default, and off these hooks
-pass every call on) the mod has three hooks more: a tool hook
-on `ExitPlanMode`, a permission hook (Claude Code's `PermissionRequest`), which answers only the request described
-below, and a prompt hook (`UserPromptSubmit`), which reads only the prompt's permission mode, to end a kept
-approval when you left plan mode, and passes the prompt on unchanged. The tool hook refuses a main conversation's `ExitPlanMode` call with fixed text and runs
-`signoff plan --topic <date>-plan-<session> --folder <folder> [--resume]` in the session's
-root, with the plan on stdin and never in an argument. That process waits until you answer (at a reload of the mod
-it is started again with `--resume` in the root the review began in, and when what that finds is an answer older
-than the review, by its round's number, by the file's time or by its `saved`, the mod takes no answer from it and
-starts a new round; for the round's number, when the review begins the mod lists the topic folder, found as the
-command finds it: from the session's root up to the nearest folder with a `.git` or a `.signoff` folder), is
-stopped by `/clear`, `/resume`, turning the Plan review setting off or an approval in Claude Code's own dialog, and
-ends when you quit or restart Claude
-Code. A root or folder setting with a control, format or separator character gets no plan review. The mod takes
-from it one line, the answers path, checked to be one line in that topic folder, and reads only `done`, `saved` and
-the plan item's `choice` and `source` from that file (4 MiB at most; a larger or unreadable one is no approval).
-Only `done: true` with `choice` `approve` and `source` `user` is an approval, what the page saves when you press
-Done; it also needs that round's `plan-NN.md`, which must hold exactly the plan it kept: what you saw. To
-the session it sends fixed text and that path, never your words. An approval lets that exact plan text through
-once, in the session root the review began in, and is used up before Claude Code's dialog opens. The mod then
-answers that dialog's permission request itself (`allow`, with the request's own input and no mode, so Claude Code
-picks the mode). The request names no tool call, so the mod binds it by time: the one request for that exact plan,
-from the main conversation and with only the tool's known keys, that comes while the passing call waits, and only
-when no hook beneath it (your own settings hooks, other mods) gives a decision or a block, which goes back unchanged
-(what else they return stays beside the allow; Claude Code did not stop on a `continue: false` there, measured
-headless on 2.1.323 and 2.1.330); any other request
-gets Claude Code's own dialog. Two calls of the same plan at the same moment cannot be told apart, and either gets
-it once. A later rejection in Claude Code's own dialog (not an Esc there), a prompt you send outside plan mode, or
-turning the Plan review setting off ends a kept approval; a `/rewind` does not. Under a managed guard that runs no `classic` hooks of a mod, the tool
-hook still takes the plan over, and Claude Code's dialog asks after the approval (not measured). With
-`allowManagedModsOnly`, which runs no hook of a mod you installed, nothing is taken over, and plans get Claude
-Code's own dialog (not measured). Whoever can write the answers or plan file, or get a start link of the inbox,
-can approve, and that approval ends plan mode with no dialog. In plan mode Claude Code by default leaves a Bash
-write to the auto mode classifier (`useAutoModeDuringPlan`), and with that off a Bash command you allowed by a rule
-may still write (measured on Claude Code 2.1.323 and 2.1.330, with rules for `python3`, `cp` and `tee`, for a
-write the prompt said you asked for). Write and
-Edit did not write there, in a run that answered no prompt, so an ask was not told from a deny; Claude Code's own
-plan file is written in plan mode with no ask. Other plugins' mods you installed are trusted: they can write the mod's session state and rewrite a
-tool's input.
+While an inbox lives, the mod also reads the time of `requests/<project>/`, whatever the `hint`. It lists that
+folder when the time changed, or at your next turn when Claude Code refused a message. Those lines then go again
+with no command run, unless the session's root moved. Only for a request it has not handed over does it run
+`signoff inbox requests <folder> <project> <id>…`. The arguments are fixed: the session's root, which the command
+checks is in that project, and the project's and the requests' 16 hex digit ids. The mod checks that each line the
+command prints is one line in the fixed frame, ending with its own id. It hands those lines to the session as one
+prompt from the plugin. A line is not sent when it is too long or holds a control, format, line separator,
+paragraph separator or lone surrogate character. A later session start with no other live session of the project
+hands it over. Whoever can write the home's `requests/` folder can put such a line before the agent. That folder is
+the user's own, in the 0700 home, as before.
+
+A plan review needs the `plan` setting at `inbox` and a living inbox. It is off by default, and while it is off
+these hooks pass every call on. With it on, the mod has three hooks more:
+- a tool hook on `ExitPlanMode`,
+- a permission hook (Claude Code's `PermissionRequest`), which answers only the request described below,
+- a prompt hook (`UserPromptSubmit`), which reads only the prompt's permission mode, to end a kept approval when
+  you left plan mode, and passes the prompt on unchanged.
+
+The tool hook refuses a main conversation's `ExitPlanMode` call with fixed text. It runs
+`signoff plan --topic <date>-plan-<session> --folder <folder> [--resume]` in the session's root, with the plan on
+stdin and never in an argument. That process waits until you answer. At a reload of the mod, the mod starts it again
+with `--resume` in the root the review began in. If what it finds is an answer older than the review, the mod takes
+no answer from it and starts a new round. Older is judged by the round's number, the file's time or its `saved`.
+For the round's number, the mod lists the topic folder when the review begins. It finds the folder as the command
+does: from the session's root up to the nearest folder with a `.git` or a `.signoff` folder. `/clear`, `/resume`,
+turning the Plan review setting off, or an approval in Claude Code's own dialog stops the process. It ends when you
+quit or restart Claude Code. A root or folder setting with a control, format or separator character gets no plan
+review.
+
+The mod takes one line from the process: the answers path, checked to be one line in that topic folder. From that
+file it reads only `done`, `saved` and the plan item's `choice` and `source`. It reads at most 4 MiB, and a larger
+or unreadable file is no approval. Only `done: true` with `choice` `approve` and `source` `user` is an approval,
+which is what the page saves when you press Done. It also needs that round's `plan-NN.md` to hold exactly the plan
+the mod kept, which is what you saw. To the session the mod sends fixed text and that path, never your words.
+
+An approval lets that exact plan text through once, in the session root the review began in. It is used up before
+Claude Code's dialog opens. The mod then answers that dialog's permission request itself: `allow`, with the
+request's own input and no mode, so Claude Code picks the mode. The request names no tool call, so the mod binds it
+by time. It answers only the one request that is for that exact plan, from the main conversation, with only the
+tool's known keys, and that comes while the passing call waits. It does so only when no hook beneath it (your own
+settings hooks, other mods) gives a decision or a block. A decision or block of theirs goes back unchanged, and
+what else they return stays beside the allow. Claude Code did not stop on a `continue: false` there, measured
+headless on 2.1.323 and 2.1.330. Any other request gets Claude Code's own dialog. Two calls of the same plan at the
+same moment cannot be told apart, and either gets it once. Three things end a kept approval: a rejection in Claude
+Code's own dialog (not an Esc there), a prompt you send outside plan mode, and turning the Plan review setting off.
+A `/rewind` does not.
+
+Under a managed guard that runs no `classic` hooks of a mod, the tool hook still takes the plan over, and Claude
+Code's dialog asks after the approval. This was not measured. With `allowManagedModsOnly`, which runs no hook of a
+mod you installed, nothing is taken over, and plans get Claude Code's own dialog. This was not measured either.
+
+Whoever can write the answers or plan file, or get a start link of the inbox, can approve, and that approval ends
+plan mode with no dialog. In plan mode Claude Code by default leaves a Bash write to the auto mode classifier
+(`useAutoModeDuringPlan`). With that off, a Bash command you allowed by a rule can still write. This was measured on
+Claude Code 2.1.323 and 2.1.330, with rules for `python3`, `cp` and `tee`, for a write the prompt said you asked
+for. Write and Edit did not write there, in a run that answered no prompt, so an ask was not told from a deny.
+Claude Code's own plan file is written in plan mode with no ask. Other plugins' mods you installed are trusted.
+They can write the mod's session state and rewrite a tool's input.
 
 Its Open button and `/signoff:open` open a panel. They run `signoff inbox rows <session root>` once. That asks
 the running inbox's control socket for the project's open rounds and their open questions (run and item numbers and
@@ -103,13 +112,14 @@ scripts or styles from anywhere, and neither can a board; their Content-Security
 script could still send data out over WebRTC, which no page policy blocks, so boards hold synthetic data only.
 There is no telemetry and no update check.
 
-**Written to disk:** the answers files, their Markdown copies and, when the folder has none, a `.gitignore`;
-for a plan review, `signoff plan` writes the plan as `plan-NN.md` and its `round-NN.json` in the topic folder, each
-created new and never through a link, and an outcome file for each round of the topic it closes (its older open rounds, or its own when the
-inbox is older than the plugin);
-once the inbox has run, also the round locks, the run notes and the hooks' project and session notes and
-`waiting.flag` described under [once the inbox has run](running.md#once-the-inbox-has-run), and the inbox's own files and requests described in [the inbox's page](inbox.md#the-inbox), with the `.done`
-marks agents write; with the macOS app installed, the hooks' `launcher` link in the home. The mod and `signoff inbox requests` write nothing. The
+**Written to disk:** the answers files, their Markdown copies and, when the folder has none, a `.gitignore`.
+For a plan review, `signoff plan` writes the plan as `plan-NN.md` and its `round-NN.json` in the topic folder, each
+created new and never through a link. It also writes an outcome file for each round of the topic it closes: its
+older open rounds, or its own when the inbox is older than the plugin. Once the inbox has run, there are also the
+round locks, the run notes, the hooks' project and session notes and `waiting.flag`, described under
+[once the inbox has run](running.md#once-the-inbox-has-run). The inbox's own files and requests are described in
+[the inbox's page](inbox.md#the-inbox), with the `.done` marks agents write. With the macOS app installed, the
+hooks' `launcher` link is in the home too. The mod and `signoff inbox requests` write nothing. The
 past-decisions page writes nothing. Nothing is deleted, with one narrow exception: a starting inbox removes the socket a stopped inbox left in the Signoff home, and only that.
 The `launcher` link, when it points elsewhere, is replaced by renaming a new link over it.
 
@@ -121,27 +131,27 @@ send requests to `127.0.0.1`. The rules, in short:
 - **Loopback, a fresh port, a secret path:** it binds `127.0.0.1` on a port the OS picks (unless you set one,
   below), and every request must
   carry a random 256-bit token in its path, compared in constant time. The `Host` header must be exactly
-  `127.0.0.1:<port>` or `localhost:<port>` (both name this machine, as a forwarded port or a devcontainer's
-  Ports tab may), which stops DNS rebinding; a save's `Origin` must be `http://` and that same Host. A request
+  `127.0.0.1:<port>` or `localhost:<port>`. Both name this machine, as a forwarded port or a devcontainer's
+  Ports tab can. This stops DNS rebinding. A save's `Origin` must be `http://` and that same Host. A request
   with two Host headers is refused. No cookies.
 - **A fixed port only on request:** `--port` or `SIGNOFF_PORT` sets the port (1024 to 65535), for a tunnel over
   SSH or into a devcontainer that is set up once. Any process on the machine, another user's too, can bind a
-  free port first. Before it binds, Signoff tries a connection to `127.0.0.1:<port>`, and the bind itself fails
-  on a port another program holds on `127.0.0.1`: either way it exits 1 and says so. This is best effort: a
-  program that starts listening between the look and the bind is not seen. A browser or tunnel pointed at that
-  port while Signoff is not running reaches that other program, which could show a page of its own that looks
-  like Signoff's and read what you type there.
+  free port first. Before it binds, Signoff tries a connection to `127.0.0.1:<port>`. The bind itself also fails
+  on a port another program holds on `127.0.0.1`. Either way Signoff exits 1 and says so. This is best effort,
+  because Signoff does not see a program that starts listening between the look and the bind. A browser or tunnel
+  pointed at that port while Signoff is not running reaches that other program. It could show a page of its own
+  that looks like Signoff's and read what you type there.
 - **What a fixed port can leave in your browser:** `http://127.0.0.1:<port>` and `http://localhost:<port>` are
   secure contexts, so a page that once held one of them can leave a service worker in your browser. That worker
-  stays for the origin, which with a fixed port is also the next Signoff run's: it sees the later start links
-  and page URLs, tokens included, the page's data and every save, and can pass them on. Signoff cannot stop this
-  from the server, since a worker answers before the network. So the port is random unless you set one. Set it
-  only on a machine whose other users you trust, pick a port that no other web app has used in that browser, and
-  if someone else may have held it, clear that browser's site data for `127.0.0.1:<port>` and
-  `localhost:<port>`. Open only a start link Signoff printed for that run. It still binds `127.0.0.1` only, never
-  another address. Open that link with `127.0.0.1`, as
-  printed: a browser may try `localhost` as `::1` first, where Signoff never listens and a forward may not
-  either, so another program listening there would get the link, its token included.
+  stays for the origin, which with a fixed port is also the next Signoff run's. It sees the later start links
+  and page URLs, tokens included, the page's data and every save, and it can pass them on. Signoff cannot stop this
+  from the server, because a worker answers before the network. So the port is random unless you set one. Set it
+  only on a machine whose other users you trust. Pick a port that no other web app has used in that browser. If
+  someone else might have held it, clear that browser's site data for `127.0.0.1:<port>` and `localhost:<port>`.
+  Open only a start link Signoff printed for that run. Signoff still binds `127.0.0.1` only, never another
+  address. Open that link with `127.0.0.1`, as printed. A browser can try `localhost` as `::1` first. Signoff never
+  listens there and a forward may not either, so another program listening there would get the link, its token
+  included.
 - **A single-use start link:** the browser is opened with a second token, `/b/<start token>/`, which redirects
   once and is dead from then on; that link is what other programs can see in the browser's command line (over SSH
   with `BROWSER` set, that command runs on the remote machine, where its other users can see it). A

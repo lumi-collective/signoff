@@ -7,7 +7,7 @@ Signoff prints what went wrong on stderr, starting with `signoff:`. Its exit cod
   name, and in Git Bash on Windows the `py` launcher when there is one. On Windows use the `py` launcher:
   `py -3 -I plugin/signoff/signoff.py <folder>`. The plugin's `signoff.cmd` does the same.
 - **No browser opens.** Signoff prints the start link on stderr before it tries to open a browser, as
-  `signoff: open http://127.0.0.1:<port>/b/…`, and says `no browser opened` when it found none (and in an SSH session with no `BROWSER` set, where it tries none). Open that link in a
+  `signoff: open http://127.0.0.1:<port>/b/…`, and says `no browser opened` when it found none. In an SSH session with no `BROWSER` set, it tries none and says the same. Open that link in a
   browser on the same machine, or see `--no-open` in [the options table](running.md#running-it-yourself).
 - **Closed the tab?** Reopen it with your browser's Reopen closed tab (Ctrl+Shift+T, on a Mac Cmd+Shift+T). The
   start link works only once, so clicking it again stops Signoff (see 410 below).
@@ -27,15 +27,15 @@ Signoff prints what went wrong on stderr, starting with `signoff:`. Its exit cod
   same run, or a second run on the same folder, saved first. Copy any text you have not saved, reload, and go
   on. Run one Signoff per topic at a time.
 - **A plan went to Claude Code's own dialog, not to Signoff.** Plan review needs a running inbox and the Plan
-  review setting at inbox (it is off by default), in an interactive session (not `claude -p`) and not on Windows; it takes only the main
-  conversation's plan, so a subagent's always gets the dialog. Ask the agent to open the Signoff inbox, or check the
-  setting in `/config`. The other cases: [Plan review](running.md#plan-review).
+  review setting at inbox (it is off by default), in an interactive session (not `claude -p`) and not on Windows.
+  It takes only the main conversation's plan, so a subagent's always gets the dialog. Ask the agent to open the
+  Signoff inbox, or check the setting in `/config`. [Plan review](running.md#plan-review) lists the other cases.
 - **"the Signoff review did not run, so the plan is not approved".** The command the mod starts for a review ended
   without an answer. One cause is an inbox started before you updated the plugin, which does not show the round:
   restart it (`signoff inbox stop`, then `signoff inbox open`). Until the inbox restarts or the mod loads again,
   plans get Claude Code's own dialog.
 - **Claude Code asked once more after you approved in Signoff.** The mod answers only the one permission request it
-  expects for that plan. The dialog asks when the mod was reloaded while the call waited, when a permission hook of
-  yours or another mod blocked the request (a decision of theirs goes as they gave it), or under an organization's managed guard that runs no `classic`
-  hooks of a mod (not measured). Answer it as you would without Signoff. The full list:
-  [Plan review](running.md#plan-review).
+  expects for that plan. The dialog asks in three cases. The mod was reloaded while the call waited. A permission
+  hook of yours or another mod blocked the request (a decision of theirs goes as they gave it). Or an
+  organization's managed guard runs no `classic` hooks of a mod (not measured). Answer it as you would without
+  Signoff. [Plan review](running.md#plan-review) has the full list.

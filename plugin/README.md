@@ -24,12 +24,12 @@ At the prompt of a Claude Code session in a terminal:
 /plugin install signoff --marketplace lumi-collective/signoff
 ```
 
-Auto-update is off by default for a third-party marketplace; turn it on in `/plugin` → Marketplaces → Enable
+Auto-update is off by default for a third-party marketplace. To turn it on, use `/plugin` → Marketplaces → Enable
 auto-update.
 
 The rest of this page says in detail what the plugin runs, reads and writes.
 
-To try it, type `/signoff:demo` in a session: it writes a small synthetic round in a temporary folder, outside
+To try it, type `/signoff:demo` in a session. It writes a small synthetic round in a temporary folder, outside
 your project, and runs only when you type it.
 
 ## What it runs
@@ -37,13 +37,13 @@ your project, and runs only when you type it.
 The skill tells the agent to run Signoff's Python program in the background. The program starts a small
 web server on 127.0.0.1 only, on a free port, with a secret token, new for each run, in every link. For a
 tunnel over SSH or into a devcontainer, the SIGNOFF_PORT environment variable sets one fixed port instead, which
-you choose. It opens your default browser on a single-use start link; in an SSH session it only prints that link,
+you choose. It opens your default browser on a single-use start link. In an SSH session it only prints that link,
 for you to open on your own computer, unless the BROWSER variable is set there (as VS Code's Remote - SSH
 terminal sets it). It stops when you press Done, when another program
 finishes its answers files with Done, when it sits idle too long, or when you stop it. While the Signoff
-inbox is open, it starts no server and opens no page: it waits, with no time limit, for the answers the inbox
+inbox is open, it starts no server and opens no page. It waits, with no time limit, for the answers the inbox
 writes. The plugin also adds a signoff command that runs the same program. The agent asks a batch of up to four short
-text-only questions, 2 to 4 options each, in the terminal instead of on a page; a bigger batch, or one with a
+text-only questions, with 2 to 4 options each, in the terminal instead of on a page. A bigger batch, or one with a
 picture, goes on the page.
 
 The plugin also has hooks: in every Claude Code session, when the session starts or ends, when you send a
@@ -59,7 +59,7 @@ lock file touched within the last minute); after a tool call, only while some se
 you. It never changes or blocks the session, and without Python it does
 nothing. On Windows it runs in Git Bash; without Git Bash, Claude Code runs it in PowerShell, where it does
 nothing (Claude Code then says once per session that a hook ran in PowerShell; you can ignore it). One
-exception: when a session starts and no other session of that project is open, the hook hands the new session the messages you sent the project from the inbox, and the inbox's notes on rounds you finished after their run had ended, that are not handled yet.
+exception: when a session starts and no other session of that project is open, the hook hands the new session what is not handled yet. That means the messages you sent the project from the inbox, and the inbox's notes on rounds you finished after their run had ended.
 
 The plugin also has a mod, where Claude Code runs plugin mods. It is code that runs inside Claude Code in
 interactive sessions, not on Windows. Every five seconds it checks whether the inbox's lock file is there, and
@@ -85,40 +85,41 @@ Code runs as a turn of its own once the session is idle. It never reads what the
 stream. It keeps which messages it handed over in Claude Code's session state, so a reload of the mod sends none
 twice.
 
-Plan review is off by default: set the Plan review setting in /config to inbox to turn it on. With it on, while
-the inbox runs, the mod also takes a plan over when Claude leaves plan mode in the main conversation: it
-refuses that call with a fixed text and starts the signoff command's plan, with the plan on that command's standard
-input. That command writes the plan and a Plan review round into your decisions folder and waits until you answer
-in the inbox; after a reload of the mod, the mod starts it again on that round, or on a new one when the round was
-not written yet (an answer from before the review began, by its round's number or its time, is not taken; for the
-number, when a review begins the mod looks from the session's folder up for the project's .git or .signoff folder
-and lists the review's topic folder there). Of your
-answers file the mod reads only whether it is done, when it was saved and whether you approved, and for an approval
-it also checks that the round's plan file holds the plan it kept. It sends the session one message from
-the plugin, with fixed text and that file's path, none of your words. The agent reads your comment and line notes
-from the file.
-After an approval the same plan goes on once, and the mod answers Claude Code's permission request for it, so no
-dialog asks and Claude Code picks the mode (in the terminal and the desktop app, the one from before plan mode;
-the mod sets none). That request names no tool call, so the mod takes the one request for
-that exact plan, from the main conversation, while the call it let through waits, and only when no hook beneath it
-(your own settings hooks, other mods) gives a decision or a block, which goes back unchanged; any other gets Claude
-Code's own dialog. That uses the approval up, also when the plan is rejected. A rejection in Claude Code's own
-dialog (not an Esc there), a prompt you send outside plan mode, or turning the Plan review setting off ends a
-kept approval; otherwise it waits as long as plan mode does. Whoever can write your
-answers or plan file, or get a start link of the inbox, can approve, and that approval ends plan mode with no
-dialog; in plan mode Claude Code by default leaves a Bash write to its auto mode classifier, and with that off a
-Bash command you allowed by a rule may still write (measured on Claude Code 2.1.323 and 2.1.330, with rules for
-python3, cp and tee, for a write the prompt said you asked for). Write and Edit did not write there, in a run that answered no prompt, so an ask was not
-told from a deny; Claude Code's own plan file is written in plan mode with no ask. Other installed plugins' mods are
-trusted. After an Esc, the message waits for your
-next turn, and a notice says so. The mod stops that command at /clear, at /resume, when you turn the Plan review
-setting off and when you approve a plan in Claude Code's own dialog, and quitting or restarting Claude Code ends it
-too. It keeps the plan's text in Claude
-Code's session state until the review is over and an
-approved plan went to that dialog. The mod sends one message at a time: a message from the inbox waits while the
-plan review's message does. Only the main conversation's plan is
-reviewed: a subagent's goes to Claude Code's own dialog. The plan review was tried by hand only in the terminal on
-macOS; in the desktop app and VS Code it is not tried yet (the repository's README has the details).
+Plan review is off by default. To turn it on, set the Plan review setting in /config to inbox. With it on, while
+the inbox runs, the mod also takes a plan over when Claude leaves plan mode in the main conversation. It refuses that
+call with a fixed text and starts the signoff command's plan, with the plan on that command's standard input. That
+command writes the plan and a Plan review round into your decisions folder and waits until you answer in the inbox.
+After a reload of the mod, the mod starts it again on that round, or on a new one when the round was not written yet.
+An answer from before the review began, by its round's number or its time, is not taken. For the number, when a
+review begins, the mod looks from the session's folder up for the project's .git or .signoff folder and lists the
+review's topic folder there. Of your answers file the mod reads only whether it is done, when it was saved and
+whether you approved. For an approval it also checks that the round's plan file holds the plan it kept. It sends the
+session one message from the plugin, with fixed text and that file's path, and none of your words. The agent reads
+your comment and line notes from the file.
+
+After an approval the same plan goes on once. The mod answers Claude Code's permission request for it, so no dialog
+asks, and Claude Code picks the mode. In the terminal and the desktop app that is the mode from before plan mode,
+because the mod sets none. That request names no tool call, so the mod takes only the one request for that exact
+plan, from the main conversation, while the call it let through waits. It does so only when no hook beneath it (your
+own settings hooks, other mods) gives a decision or a block. A decision or block of theirs goes back unchanged, and
+any other request gets Claude Code's own dialog. The approval is then used up, also when the plan is rejected. Three
+things end a kept approval: a rejection in Claude Code's own dialog (not an Esc there), a prompt you send outside
+plan mode, and turning the Plan review setting off. Otherwise it waits as long as plan mode does.
+
+Whoever can write your answers or plan file, or get a start link of the inbox, can approve, and that approval ends
+plan mode with no dialog. In plan mode Claude Code by default leaves a Bash write to its auto mode classifier. With
+that off, a Bash command you allowed by a rule can still write. This was measured on Claude Code 2.1.323 and 2.1.330,
+with rules for python3, cp and tee, for a write the prompt said you asked for. Write and Edit did not write there, in
+a run that answered no prompt, so an ask was not told from a deny. Claude Code's own plan file is written in plan mode
+with no ask. Other installed plugins' mods are trusted.
+
+After an Esc, the message waits for your next turn, and a notice says so. The mod stops that command at /clear, at
+/resume, when you turn the Plan review setting off and when you approve a plan in Claude Code's own dialog. Quitting
+or restarting Claude Code ends it too. The mod keeps the plan's text in Claude Code's session state until the review
+is over and an approved plan went to that dialog. It sends one message at a time, so a message from the inbox waits
+while the plan review's message does. Only the main conversation's plan is reviewed, and a subagent's goes to Claude
+Code's own dialog. The plan review was tried by hand only in the terminal on macOS. In the desktop app and VS Code it
+is not tried yet. The repository's README has the details.
 
 Open and the /signoff:open command open a panel beside the chat. They run the signoff command's inbox rows once,
 which asks the running inbox for this project's open rounds and their open questions (numbers and one-line titles;

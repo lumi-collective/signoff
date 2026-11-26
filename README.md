@@ -50,15 +50,20 @@ too; a bigger batch, or one with a picture, goes on the page.
 In the clip above, a small script stands in for the person at the browser (`media/demo/answer.py`): the terminal
 has no browser. It sends the same requests the page does.
 
-**Plan review.** It is off by default: set the plugin's Plan review option in `/config` to inbox (`plan: inbox`)
-to turn it on. Then, while the [inbox](#the-inbox) runs, a plan waits on you in Signoff when Claude leaves plan mode
+**Plan review.** It is off by default. To turn it on, set the plugin's Plan review setting in `/config` to inbox
+(`plan: inbox`). Then, while the [inbox](#the-inbox) runs, a plan waits on you in Signoff when Claude leaves plan mode
 (`ExitPlanMode`) in the main conversation. The plan is open on a Plan review round, where you can note single
-lines. You choose Approve the plan or Ask for changes, with a comment if you like, and press Done; there is no
-recommendation. Then the agent gets a message from the Signoff plugin. After Approve it calls ExitPlanMode again,
-that exact plan goes through once with no second dialog, and Claude Code goes back to the mode from before plan
-mode (the plugin sets none; seen in the terminal and the desktop app). After Ask for changes the agent reads your comment and notes and revises. If you
-pressed Esc meanwhile, the message waits for your next turn, and a notice says so. Off, plans get Claude Code's
-own dialog. Where it falls back to that dialog, and what it does not cover: [Plan review](docs/running.md#plan-review).
+lines. You choose Approve the plan or Ask for changes, add a comment if you like, and press Done. There is no
+recommendation. Then the agent gets a message from the Signoff plugin.
+
+- After Approve, the agent calls ExitPlanMode again. That exact plan goes through once with no second dialog.
+  Claude Code goes back to the mode from before plan mode, because the plugin sets none. This was seen in the
+  terminal and the desktop app.
+- After Ask for changes, the agent reads your comment and notes and revises.
+
+If you pressed Esc meanwhile, the message waits for your next turn, and a notice says so. With the setting off, plans
+get Claude Code's own dialog. [Plan review](docs/running.md#plan-review) says where it falls back to that dialog and
+what it does not cover.
 
 ## Requirements
 
