@@ -24,9 +24,11 @@ To look back at what you said, `--history` opens every round of a project in one
 ## Who it's for
 
 You let an agent do a design pass, a cleanup or a migration plan, and it comes back with a dozen questions.
-In the terminal that is a wall of text, or several rounds of four questions at a time, and some of them only
-make sense next to a screenshot. Signoff puts them on one page, each with its picture, its cost and the agent's
-recommendation, so you can go through them in a few minutes and leave a comment where a choice is not enough.
+In the terminal that is a wall of text, or several rounds of four questions at a time with at most four options
+each, and some of them only make sense next to a screenshot. Signoff puts them on one page, each with its
+picture, its cost and the agent's recommendation, so you can go through them in a few minutes and leave a comment
+where a choice is not enough. Nothing is your answer until you press Done: a page left idle ends with the answers
+so far saved as not done, and a round in the inbox waits for you with no time limit.
 
 A quick go or skip that blocks the agent's next step stays Claude Code's own question prompt in the terminal; the
 skill tells the agent so. A batch of up to four short questions, text only with 2 to 4 options each, goes there
