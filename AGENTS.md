@@ -41,7 +41,10 @@ Instructions for coding agents working on Signoff. The README says what it does 
   the prompt the model gets when no mod runs). Its session values are declared in `plugin/types/index.d.ts`
   (`types` in `plugin.json`); the `hint` option in `plugin.json` lists `band`, `status` and `off`, and `plan`
   lists `inbox` and `off`, under `options`, the values the mod accepts (a test checks); `plan` defaults to `off`.
-  `plugin/hooks/register.test.tsx` is its test, run by `claude plugin test plugin`.
+  `tests/register.test.tsx` is its test. It stays out of `plugin/`, which an install gets whole, and
+  `claude plugin test` runs only the tests under the plugin's own folder: so `tests/mod_test.py` copies `plugin/`
+  into a temporary folder, puts the test in its `hooks/`, and runs `claude plugin test` there (a test checks that
+  no `*.test.ts` or `*.test.tsx` is under `plugin/`).
 - `plugin/commands/demo.md`: `/signoff:demo`, typed only (`disable-model-invocation: true`); its body asks the model
   to write one synthetic round in a `mktemp -d` folder, run Signoff on it, and give the user the `rm -r` command
   without running it.
@@ -79,7 +82,8 @@ Instructions for coding agents working on Signoff. The README says what it does 
 - `tests/theme_tokens.py`: the palettes' upstream colours mapped onto the page's tokens, with the contrast
   fixes; `python3 -I -B tests/theme_tokens.py` prints the page's theme part. Not needed at run time.
   `test_theme.py` fails while the page and its output differ, and measures its list of pairs on the page itself.
-- `tests/`: unittest suites. `support.py` makes a temporary topic folder (one file, or `round-NN.json`
+- `tests/`: unittest suites, and the mod's test with its runner (`register.test.tsx`, `mod_test.py`: see the
+  mod above; neither is a `test_*.py`, so discovery skips them). `support.py` makes a temporary topic folder (one file, or `round-NN.json`
   rounds) and runs a server on a thread. It points `SIGNOFF_INBOX_HOME` at a missing folder for every test and
   child process, so a run is the plain run unless a test passes its own home. `line_rule.json` pins how a
   line note counts an attachment's lines (`attachment_lines`), read by the server's tests; the page's count must match it. `test_contract_http.py` checks
@@ -168,7 +172,7 @@ Run all of them before you finish:
 ```
 claude plugin validate plugin
 claude plugin validate .claude-plugin/marketplace.json
-claude plugin test plugin
+python3 -I -B tests/mod_test.py
 python3 -I -B -m unittest discover -s tests
 python3 -I -B tests/e2e_browser.py
 ```

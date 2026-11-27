@@ -18,7 +18,7 @@ from support import ROOT, capitals, signoff
 
 SCRIPT = str(ROOT / "plugin" / "signoff" / "signoff.py")
 HOOK_SH = ROOT / "plugin" / "hooks" / "hook.sh"
-MOD_TEST = ROOT / "plugin" / "hooks" / "register.test.tsx"
+MOD_TEST = ROOT / "tests" / "register.test.tsx"
 SENTINELS = ("SENTINEL-PROMPT", "SENTINEL-PATH", "SENTINEL-MSG", "SENTINEL-TOKEN", "SENTINEL-INPUT",
              "SENTINEL-RESPONSE")
 BG_VARS = ("CLAUDE_JOB_DIR", "CLAUDE_CODE_SESSION_ATTENDED")
@@ -1284,6 +1284,11 @@ class HooksFile(unittest.TestCase):
                 self.assertNotIn("options", field, name)
         self.assertEqual(json.loads((ROOT / "plugin" / "hooks" / "hooks.json").read_text(encoding="utf-8"))["modules"],
                          ["./register.tsx"])
+
+    def test_no_kit_test_ships_with_the_plugin(self):
+        # An install gets all of plugin/, so the mod's test lives in tests/ and mod_test.py runs it on a copy.
+        shipped = [p for p in (ROOT / "plugin").rglob("*") if p.name.endswith((".test.ts", ".test.tsx"))]
+        self.assertEqual(shipped, [])
 
     def test_in_powershell_every_hook_does_nothing(self):
         hooks = json.loads((ROOT / "plugin" / "hooks" / "hooks.json").read_text(encoding="utf-8"))["hooks"]
