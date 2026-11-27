@@ -47,6 +47,17 @@ ATTACHMENT_TYPES = (".md", ".txt", ".diff", ".patch")
 MAX_ATTACHMENT = 256 * 1024
 # Attachments go inside the page, so these count their size there, escaped (a "<" takes 6 bytes).
 MAX_ATTACHMENTS = 2 * 1024 * 1024  # one round's together
+# A .md attachment also goes as a tree (_md_trees), built at a round page's first request, on its thread, and at
+# each past-decisions build. A build's time follows the trees it makes: a plan-like file's is 6.3 times its size as
+# sent, the worst shape's (lists nested MD_DEPTH deep on every line) 148 times. So both budgets are for the whole
+# build, kept or not, and a tree stops being made once past what is left. Measured on an M4 Pro, 2026-11-28, with
+# 12 shapes in files of 4 to 256 KiB, one a round: the worst build 0.08 s on Python 3.13, 0.12 s on 3.9 (with a
+# budget per round instead, 3.0 and 3.8 s); 60 past rounds of hostile files 0.17 to 0.25 s (0.5.0: 0.14 to 0.16 s).
+# The lower bound counts no empty table cell and no inline node inside another, so those shapes run to MAX_MD_INPUT:
+# 1 MiB of empty table cells took 0.35 s on 3.13 and 0.51 s on 3.9 (the security review's probe).
+# One hostile 256 KiB file took 12 to 37 MiB more while parsed (5 shapes; deep lists 12 to 14), was 33 to 97 MiB.
+MAX_MD_INPUT = 1024 * 1024  # .md bytes one page build parses, charged before each parse
+MAX_MD_TREES = 3 * 1024 * 1024  # bytes of trees one page build makes, as sent: room for 480 KiB of plan-like text
 MAX_ITEM_ATTACHMENTS = 20
 MAX_ROUND_ATTACHMENTS = 200  # each one is a file read at start
 MAX_ITEM_COMMANDS = 10
@@ -1214,12 +1225,27 @@ def _cells(line):
     return [c.strip() for c in re.split(r"(?<!\\)\|", s)]
 
 
-def _blocks(lines, depth):
+class _TooLarge(Exception):
+    """A tree past the room it was given, given up while it was built."""
+
+
+def _blocks(lines, depth, marks, room=None):
     out, para, i, n = [], [], 0, len(lines)
+
+    def spend(nodes, text=""):
+        # room[0]: bytes left in the page's indented data, at 8 deeper. A node there takes 3 lines at least, each
+        # indented 9 and more, 4 more each level down; a text half its length at least (an escape's \ goes).
+        if room is not None:
+            room[0] -= nodes * (40 + 12 * depth) + len(text) // 2
+            if room[0] < 0:
+                raise _TooLarge
 
     def flush():
         if para:
-            out.append({"t": "p", "c": _inline("\n".join(para))})
+            text = "\n".join(para)
+            spend(1, text)  # before its inline nodes are made: a paragraph can be the whole file
+            out.append({"t": "p", "c": _inline(text)})
+            spend(len(out[-1]["c"]))
             del para[:]
     while i < n:
         line = lines[i]
@@ -1243,6 +1269,7 @@ def _blocks(lines, depth):
                 while code and not code[-1].strip():
                     code.pop()
             out.append({"t": "code", "lang": lang, "text": "\n".join(code)})
+            spend(1, out[-1]["text"])
             i += 1
             continue
         m = _HEADING.match(line)
@@ -1252,12 +1279,15 @@ def _blocks(lines, depth):
             bare = text.rstrip("#")
             if bare != text and (not bare or bare[-1] in " \t"):  # a closing run of #s is not part of the heading
                 text = bare.rstrip()
-            out.append({"t": "h", "c": _inline(text)})
+            spend(1, text)
+            out.append({"t": "h", "level": len(m.group(1)), "c": _inline(text)})
+            spend(len(out[-1]["c"]))
             i += 1
             continue
         if _HR.match(line):
             flush()
             out.append({"t": "hr"})
+            spend(1)
             i += 1
             continue
         if _QUOTE.match(line):
@@ -1267,10 +1297,12 @@ def _blocks(lines, depth):
                 inner.append(_QUOTE.match(lines[i]).group(1))
                 i += 1
             alert = _ALERT.match(inner[0].strip())
+            spend(1)
             if alert:
-                out.append({"t": "alert", "kind": alert.group(1).lower(), "c": _blocks(inner[1:], depth + 1)})
+                out.append({"t": "alert", "kind": alert.group(1).lower(),
+                            "c": _blocks(inner[1:], depth + 1, marks, room)})
             else:
-                out.append({"t": "quote", "c": _blocks(inner, depth + 1)})
+                out.append({"t": "quote", "c": _blocks(inner, depth + 1, marks, room)})
             continue
         m = _BULLET.match(line)
         if m:
@@ -1294,8 +1326,10 @@ def _blocks(lines, depth):
                 check, task = None, _TASK.match(first)
                 if task:
                     check, first = task.group(1) != " ", first[task.end():]
-                item = {"check": check, "c": _blocks([first] + [x[col:] for x in lines[i + 1:end]], depth + 1)}
-                if check is False and _marker(first):
+                spend(1 + (not items))  # the item, and the list with its first
+                item ={"check": check, "c": _blocks([first] + [x[col:] for x in lines[i + 1:end]], depth + 1, marks,
+                                                     room)}
+                if marks and check is False and _marker(first):
                     item["wait"] = True  # an open todo step marked waiting on the user: the page marks it
                 items.append(item)
                 i = j
@@ -1309,9 +1343,12 @@ def _blocks(lines, depth):
             rows = []
             while i < n and lines[i].strip() and "|" in lines[i]:
                 cells = _cells(lines[i])[:len(head)]  # not padded: a short row just ends early on the page
+                spend(1, lines[i])
                 rows.append([_inline(c) for c in cells])
+                spend(sum(len(c) for c in rows[-1]))
                 i += 1
             out.append({"t": "table", "head": [_inline(c) for c in head], "rows": rows})
+            spend(1 + len(head), line)
             continue
         para.append(line.strip())
         i += 1
@@ -1319,14 +1356,77 @@ def _blocks(lines, depth):
     return out
 
 
-def markdown_blocks(text):
-    """Markdown as a tree of plain data the page turns into elements with textContent: paragraphs, headings, fenced
-    code (its text exactly the lines between the fences, without a final newline, so a pasted command does not run
-    by itself), lists with checkboxes, quotes, GitHub alerts, tables, rules. HTML is never parsed: it stays text."""
+def markdown_blocks(text, marks=True, room=None):
+    """Markdown as a tree of plain data the page turns into elements with textContent: paragraphs, headings (with
+    their level), fenced code (its text exactly the lines between the fences, without a final newline, so a pasted
+    command does not run by itself), lists with checkboxes, quotes, GitHub alerts, tables, rules. HTML is never
+    parsed: it stays text. marks: a todo file's tree, whose open steps marked waiting on the user get 'wait'.
+    room: an attachment's [bytes left in the page], charged a lower bound of each node as it is made; past them the
+    build stops and the tree is None."""
     lines = [_leading_tabs(x) for x in text.replace("\r\n", "\n").replace("\r", "\n").split("\n")]
     if lines and lines[-1] == "":
         lines.pop()
-    return _blocks(lines, 0)
+    try:
+        return _blocks(lines, 0, marks, room)
+    except _TooLarge:
+        return None
+
+
+def _md_trees(items, left, room=MAX_MD_TREES):
+    """The tree of each .md attachment of one round that the budgets leave room for, as {(item, attachment): (tree,
+    bytes as sent)}. left: [bytes of text, bytes of trees] the page build may still parse and make, shared by its
+    rounds: the text is charged before its parse, the tree as it is made, both whether it is kept or not, so a
+    build's time and memory follow them. room: what else the round's trees may add (the past-decisions page's text
+    budget). Bytes of trees are as the page's indented data holds them, a tree's lines 8 deeper (under view >
+    rounds or entries > decisions > items > attachments)."""
+    trees = {}
+    for i, item in enumerate(items):
+        for k, att in enumerate(item.get("attachments", [])):
+            if "text" not in att or not att["src"].lower().endswith(".md"):
+                continue
+            size, cap = len(att["text"].encode("utf-8")), min(left[1], room)
+            if size > left[0] or cap <= 0:
+                continue
+            left[0] -= size
+            made = [cap]
+            tree = markdown_blocks(att["text"], marks=False, room=made)
+            left[1] -= min(cap - made[0], left[1])  # what it made, kept or not
+            if tree is None:  # past the room while it was built
+                continue
+            # Its size indented, without that encoding, which json does in Python (2.3 s for a round measured on
+            # 3.9): the compact one in C, then what the indentation adds, given up past the room left.
+            sent = len(_script_json(tree, compact=True).encode("utf-8"))
+            extra = _indent_bytes(tree, 8, cap - sent)
+            if extra is not None:
+                left[1] -= sent + extra - (cap - made[0])  # the rest of its size
+                room -= sent + extra
+                trees[i, k] = (tree, sent + extra)
+            tree = None  # a tree let go is freed before the next parse: Python's collector would walk it there
+    return trees
+
+
+def _indent_bytes(obj, level, limit):
+    """The bytes indent=1 adds to obj's compact JSON with obj at that nesting level, or None past limit: a space
+    after each key's colon, a line break and indent before each member, and before each closing bracket."""
+    extra, stack = 0, [(obj, level)]
+    while extra <= limit and stack:
+        o, at = stack.pop()
+        members = o.values() if isinstance(o, dict) else o if isinstance(o, list) else ()
+        if members:
+            extra += (len(o) if isinstance(o, dict) else 0) + len(members) * (at + 2) + at + 1
+            stack.extend((x, at + 1) for x in members)
+    return extra if extra <= limit else None
+
+
+def _with_trees(items, trees):
+    """The items with each tree in its attachment's copy, as 'blocks'."""
+    out = []
+    for i, item in enumerate(items):
+        if any(key[0] == i for key in trees):
+            item = dict(item, attachments=[dict(att, blocks=trees[i, k][0]) if (i, k) in trees else att
+                                           for k, att in enumerate(item["attachments"])])
+        out.append(item)
+    return out
 
 
 def _todo(first, rest, waiting, left):
@@ -1981,6 +2081,7 @@ class _Rounds:
 
     def _read_media(self, rounds):
         self.rounds = rounds
+        self.md_trees = None  # each round's .md trees, built at the page's first request (view)
         self.folder = self.rounds[0].path.parent
         self.project = project_name(self.folder)
         # Pictures and boards are read once, here, and served from memory.
@@ -2031,10 +2132,13 @@ class _Rounds:
             return "img/%d" % (count[0] - 1)
 
         self.check_disk()
+        if self.md_trees is None:  # on this request's thread, not in the inbox's look; two at once just build twice
+            left = [MAX_MD_INPUT, MAX_MD_TREES]  # for all the rounds of the page
+            self.md_trees = [_md_trees(r.decisions["items"], left) for r in self.rounds]
         with self.lock:
             for ri, r in enumerate(self.rounds):
                 boards = iter(range(len(self.board_data[ri])))
-                items = _media_view(r.decisions["items"], r.images, picture,
+                items = _media_view(_with_trees(r.decisions["items"], self.md_trees[ri]), r.images, picture,
                                     lambda path, ri=ri, boards=boards: "/%s/%d/%d" % (self.board_token, ri,
                                                                                       next(boards)))
                 # A round closed by Done in this run is read only too, even when the run goes on.
@@ -2224,6 +2328,14 @@ class _History:
                                 e["warning"] = "%s %s" % (e["warning"], note) if e["warning"] else note
                             else:
                                 text_used += size
+        # Then the .md trees, newest first, in what every text left of that budget: as in 0.5.0, no tree takes an
+        # older round's text. One budget for the whole build, as for a round's page, so its time and memory follow it.
+        left = [MAX_MD_INPUT, MAX_MD_TREES]
+        for e in entries:
+            items = e["decisions"]["items"] if e["decisions"] is not None else []
+            for (i, k), (tree, size) in sorted(_md_trees(items, left, text_budget - text_used).items()):
+                text_used += size
+                items[i]["attachments"][k]["blocks"] = tree
         self.entries = entries
 
     def _entry(self, topic, date, path, read=True):

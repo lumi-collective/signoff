@@ -1,16 +1,18 @@
   // ---- The inbox. Todo items come as a tree from the server; every part becomes an element with textContent,
   // so the agent's HTML is text, and only http(s) links are made. ----
   var ALERTS = ['note', 'tip', 'important', 'warning', 'caution'];  // class names, so the list stays closed
+  // Also a round's .md attachment (doc): its inline code gets no Copy button and no warning (a plan holds dozens);
+  // its headings are headings, under the item's own.
   function inlines(nodes, into, plain) {
     (nodes || []).forEach(function (n) {
       if (n.t === 'code') {
         into.append(el('code', 'ic', n.v));
-        if (!plain) {  // plain: a title (inside a button) or a link's text: no button there
+        if (!plain) {  // plain: a title (inside a button), a link's text or a document: no button there
           into.append(copier(String(n.v), L.copyCode, 'link ic-copy'));
           if (relativeDelete(n.v)) into.append(el('span', 'ic-warn', '⚠ ' + L.relDelete));
         }
       } else if (n.t === 'b') into.append(inlines(n.c, el('strong'), plain));
-      else if (n.t === 'link' && !plain && /^https?:\/\//i.test(String(n.href))) {
+      else if (n.t === 'link' && (!plain || plain === 'doc') && /^https?:\/\//i.test(String(n.href))) {
         var a = inlines(n.c, el('a'), 'link');
         a.href = n.href;
         a.target = '_blank';
@@ -21,17 +23,24 @@
     });
     return into;
   }
-  function blocks(list, into) {
+  // doc: the heading level of the item a document is in; a todo item's headings are not page headings.
+  function blocks(list, into, doc) {
+    var plain = doc ? 'doc' : false;
     (list || []).forEach(function (b) {
-      if (b.t === 'p') into.append(inlines(b.c, el('p')));
-      else if (b.t === 'h') into.append(inlines(b.c, el('p', 'md-h')));  // not a page heading: it is the agent's
+      if (b.t === 'p') into.append(inlines(b.c, el('p'), plain));
+      else if (b.t === 'h' && doc) {
+        var lv = Math.min(Math.max(b.level | 0, 1), 6), h = inlines(b.c, el('p', 'md-h md-h' + Math.min(lv, 3)), plain);
+        h.setAttribute('role', 'heading');
+        h.setAttribute('aria-level', String(Math.min(doc + lv, 6)));
+        into.append(h);
+      } else if (b.t === 'h') into.append(inlines(b.c, el('p', 'md-h')));  // not a page heading: it is the agent's
       else if (b.t === 'code') into.append(codeBlock(b));
       else if (b.t === 'hr') into.append(el('hr'));
-      else if (b.t === 'quote') into.append(blocks(b.c, el('blockquote', 'md-quote')));
+      else if (b.t === 'quote') into.append(blocks(b.c, el('blockquote', 'md-quote'), doc));
       else if (b.t === 'alert') {
         var kind = ALERTS.indexOf(b.kind) >= 0 ? b.kind : 'note', box = el('div', 'md-alert ' + kind);
         box.append(el('p', 'md-alert-title', L['alert_' + kind]));
-        into.append(blocks(b.c, box));
+        into.append(blocks(b.c, box, doc));
       } else if (b.t === 'list') {
         var list = el(b.ordered ? 'ol' : 'ul', 'md-list');
         (b.items || []).forEach(function (it) {
@@ -43,15 +52,15 @@
             box.setAttribute('aria-label', it.check ? L.taskDone : L.taskOpen);
             li.append(box);
           }
-          list.append(blocks(it.c, li));
+          list.append(blocks(it.c, li, doc));
         });
         into.append(list);
       } else if (b.t === 'table') {
         var wrap = el('div', 'md-table'), t = el('table'), head = el('tr'), body = el('tbody'), thead = el('thead');
-        (b.head || []).forEach(function (c) { head.append(inlines(c, el('th'))); });
+        (b.head || []).forEach(function (c) { head.append(inlines(c, el('th'), plain)); });
         (b.rows || []).forEach(function (r) {
           var tr = el('tr');
-          r.forEach(function (c) { tr.append(inlines(c, el('td'))); });
+          r.forEach(function (c) { tr.append(inlines(c, el('td'), plain)); });
           body.append(tr);
         });
         thead.append(head);

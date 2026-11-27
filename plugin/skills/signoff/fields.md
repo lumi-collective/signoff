@@ -33,7 +33,8 @@
   `"attachments": [{"src": "notes/cut-list.md", "caption": "Cut list"}]`. Each is a `.md`, `.txt`, `.diff` or
   `.patch` file inside the folder, UTF-8, up to 256 KiB, at most 20 an item and 200 a round. A round's attachments together take up to
   2 MiB in the page, where `<`, `>` and `&` count 6 bytes each. The page shows it under the
-  options in a box that starts closed, as plain text; `"open": true` starts it open (for the one file the user
+  options in a box that starts closed, as plain text, and a `.md` one rendered (HTML in it stays text), with a
+  Lines view; `"open": true` starts it open (for the one file the user
   must read). The whole file goes on the page, and the past-decisions
   view shows it again later, so attach nothing secret. `sensitive` does not hide it: it is your text.
 - `"lines": true` on an item with attachments when the user should comment on single lines, such as a change for

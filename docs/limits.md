@@ -5,6 +5,10 @@
 - Attachments: up to 256 KiB each, 20 an item and 200 a round. A round's attachments together take up to 2 MiB of the page
   and the past-decisions page holds up to 16 MiB of them, both counted as sent, where `<`, `>` and `&` take
   6 bytes each; past that an attachment is not shown.
+- A `.md` attachment shows rendered while its page has room: a page (a round's page with all its rounds, or the
+  past-decisions page) parses up to 1 MiB of `.md` text and makes up to 3 MiB of rendered trees, counted as sent;
+  past that a file shows as lines only, and its box says so. On the past-decisions page the trees also share its
+  16 MiB with the attachments' text, which comes first.
 - Commands: up to 10 an item, each at most 4000 characters and 60 lines. A command's text must not start or end
   with a space or line break. Its `lang` is up to 20 letters, digits or `+#._-`.
 - A number item: one value, from -10^15 to 10^15, at most 10,000 steps from its lowest to its highest, both within

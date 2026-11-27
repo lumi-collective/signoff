@@ -39,6 +39,7 @@
   var imageCount = 0;
   var markState = rounds.map(function () { return {}; });  // round -> item id -> [{image, box, comment}]
   var lineState = rounds.map(function () { return {}; });
+  var attState = rounds.map(function () { return {}; });  // round -> 'item id attachment' -> true: Lines, not rendered
   var selected = null;  // {ri, item, k}
 
   function boxRect(b, attrs) {

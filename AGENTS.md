@@ -620,7 +620,20 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   folder; read into memory at start for a decisions run, read on request (with the same link check) for the
   past-decisions page. No SVG, no directory listing, no path from the request ever touches the disk.
   Attachments (`.md`, `.txt`, `.diff`, `.patch`) follow the same folder rule, are read at start, on both pages, and go inside
-  the page data as text; no route serves them. Every such path is checked as text before it is resolved: no
+  the page data as text; no route serves them. A `.md` one also goes as `blocks`, its `markdown_blocks(text,
+  marks=False)` tree (no `wait`), built by `_md_trees`: on a round's page at its first request, on that thread,
+  kept for the run or group (never in the inbox's look); on the past-decisions page at each build, after every
+  round's texts, newest first, in what the texts left of `HISTORY_TEXT_BUDGET` (no tree takes a text's place).
+  Each page build, all its rounds together, parses at most `MAX_MD_INPUT` bytes of text, charged before each
+  parse, and makes at most `MAX_MD_TREES` bytes of trees, as the indented page data holds them (a test pins both
+  pages' count), charged as they are made, kept or not: `_blocks` charges a lower bound of each node and stops
+  past the room left (`_TooLarge`), so a build's time and memory follow the two budgets, not the number of rounds.
+  A file past them gets no tree, and its box says so. `load_decisions`, the decisions file and `schema.json`'s keys
+  do not change. Known limits: one paragraph is parsed whole before its nodes are counted, so one hostile 256 KiB
+  file can take about 37 MiB while it is parsed (measured on 3.9); and the lower bound counts no empty table cell
+  and no inline node inside another, so files of those shapes are stopped only by `MAX_MD_INPUT` (a whole 1 MiB
+  build of empty table cells: 0.35 s on 3.13, 0.51 s on 3.9, about 20 MiB more, measured 2026-11-28).
+  Every such path is checked as text before it is resolved: no
   control character, and no drive-relative or network path in Windows syntax (`C:foo`, `\\host`, `//host`), on
   every OS. An absolute local path still works for pictures and boards inside the folder, as in 0.1.0; attachments
   take only relative paths.
@@ -764,7 +777,13 @@ control socket, `inbox.json` or `state.json` shows there too. CI does not run th
   inbox's part of the script), with Copy and the relative-delete hint whatever their `lang`; every code block
   wraps (`pre-wrap`, `overflow-wrap:anywhere`), and `_command()` refuses the known invisible and blank characters,
   white space at a text's ends and a text over `MAX_COMMAND_TEXT` or `MAX_COMMAND_LINES`. This catches the known
-  tricks, not every one: the user reads a command before running it. The key bar holds the save state, why Done waits, and the open round's Accept this round; the header keeps
+  tricks, not every one: the user reads a command before running it. A `.md` attachment with `blocks` opens
+  rendered by the inbox's `blocks()` with its `doc` switch (headings `role="heading"` with `aria-level` under the
+  item's h3, at most 6, in the sizes `md-h1` to `md-h3`; inline code with no Copy or warning; code blocks as
+  `codeBlock`), below a `.seg` pair Rendered / Lines (`aria-pressed`, the group named with the caption); Lines is
+  today's view, and the only one where line notes are made. A file with a note opens in Lines; Rendered says how
+  many notes it has, with a button to Lines. The choice is kept per file in page memory (`attState`), never in
+  `prefs.json`; a `.md` with no tree says so and shows Lines only. The key bar holds the save state, why Done waits, and the open round's Accept this round; the header keeps
   the progress, Focus, Accept all recommendations and Done. The Summary is the sign-off sheet. f is Focus (one
   item at a time; the round's tail after its last item), Esc leaves it or closes the drawer (in a line note's field,
   Esc first goes back to the line's number); a page loaded at

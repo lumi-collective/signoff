@@ -120,9 +120,12 @@ button.icon svg{width:18px;height:18px}
 .attach{margin:12px 0 0;border:1px solid var(--line);border-radius:10px;background:var(--field);min-width:0}
 .attach summary{padding:8px 12px;cursor:pointer;font-weight:650;font-size:14px}
 .attach-meta{margin-left:10px;font-weight:400;font-size:12.5px;color:var(--quiet);overflow-wrap:anywhere}
-.attach pre,.att-lines{margin:0;padding:10px 12px;border-top:1px solid var(--line);max-height:340px;overflow:auto;white-space:pre-wrap;
+.attach>pre,.att-lines{margin:0;padding:10px 12px;border-top:1px solid var(--line);max-height:340px;overflow:auto;white-space:pre-wrap;
   overflow-wrap:anywhere;font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--text)}
 .attach-missing{margin:0;padding:10px 12px;border-top:1px solid var(--line);color:var(--quiet)}
+.att-md{padding:2px 14px 6px;border-top:1px solid var(--line);max-height:340px;overflow:auto;overflow-wrap:anywhere;color:var(--text)}
+.att-bar{margin:0;padding:6px 12px;border-top:1px solid var(--line)}
+.att-ln{margin:0;font-size:12.5px;color:var(--quiet)}.attach>.att-ln{padding:8px 12px;border-top:1px solid var(--line)}
 .att-lines{position:relative}.att-lines [role=rowgroup]+*{content-visibility:auto}
 .att-lines [role=row]{display:grid;grid-template-columns:8ch 1fr}.att-lines [role=cell]{min-height:1.5em}.diff [role=row]{grid-template-columns:8ch 8ch 2ch 1fr}
 .att-lines .n{padding-right:8px;text-align:right;color:var(--quiet);background:var(--field);user-select:none;white-space:nowrap;overflow-wrap:normal}
@@ -524,7 +527,7 @@ body.focusing .ib-fbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;ma
 .md p{margin:8px 0}
 .md .ic{font:12.5px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:var(--hover);border-radius:4px;padding:1px 5px}
 .md a{color:var(--accent)}
-.md-h{font-weight:700;margin:14px 0 4px}
+.md-h{font-weight:700;margin:14px 0 4px}.md-h1{font-size:1.3em}.md-h2{font-size:1.15em}.md-h3{font-size:1.05em}
 .md-code{margin:10px 0;border:1px solid var(--line2);border-radius:8px;background:var(--field);overflow:hidden;min-width:0}
 .md-bar{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 6px 4px 12px;border-bottom:1px solid var(--line);
   font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--quiet)}

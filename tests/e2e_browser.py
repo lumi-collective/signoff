@@ -11,10 +11,10 @@ summary and the Markdown copy, unticking the agent's mark survives a reload, one
 earlier shows Private without the untick hint. On a phone in Focus, the question, the recommendation and the first
 option of each demo item show before any scrolling. An item with criteria shows its facts as chips; the Cards / Table
 toggle shows the table, a pick there (by click and by number key) is saved and shows on the cards, and at 390 px
-the table scrolls in its own box. An attachment starts closed, opens on a click and shows the file's text
-exactly, with nothing rendered. The header names the project folder and the tab title starts with it; on the
---history page the search finds an answer's comment and free text but not a private comment, and the Appearance
-picker previews in that tab only; in the inbox Ctrl+, opens it, the arrows preview, Esc goes back, and Enter keeps
+the table scrolls in its own box. An attachment starts closed and opens on a click; a .md one shows rendered, the
+source's HTML as text, and its Lines view the file's text exactly, where its line notes are. The header names the
+project folder and the tab title starts with it; on the --history page the search finds an answer's comment and
+free text but not a private comment, and the Appearance picker previews in that tab only; in the inbox Ctrl+, opens it, the arrows preview, Esc goes back, and Enter keeps
 the palette in prefs.json for the list and a round's page. The inbox list: the empty state with nothing waiting, the
 sidebar's view and project filters, j/k and Enter, Focus (f, Esc), Compact kept across a reload, the list reloading
 itself when it loses nothing (else a bar offers it), the sort of Waiting on you, Copy for inline code and for a whole
@@ -908,10 +908,12 @@ def run_history(work):
     data = json.loads((DEMO / "round-04.json").read_text(encoding="utf-8"))
     first, second = data["items"][0], data["items"][1]
     picture = [{"src": "mockups/list-filters.png"}]
-    first.update(select="many", recommended=[first["recommended"]], marks=True, images=picture)  # a pick with Other
+    first.update(select="many", recommended=[first["recommended"]], marks=True, images=picture,  # a pick with Other
+                 attachments=[{"src": "notes/doc.md", "open": True}])
     second.update(other=True, marks=True, images=picture, attachments=[{"src": "notes/later.patch", "open": True}])
     (old / "notes").mkdir()
     (old / "notes" / "later.patch").write_text(PLAIN_PATCH, encoding="utf-8")
+    (old / "notes" / "doc.md").write_text(DOC_MD, encoding="utf-8")
     for target in (old / "round-01.json", root / ".signoff" / "2026-01-09-quiet" / "round-01.json"):
         target.write_text(json.dumps(dict(data, title="Wording for %s" % target.parent.name)), encoding="utf-8")
     shutil.copytree(str(DEMO / "mockups"), str(old / "mockups"))
@@ -1015,13 +1017,23 @@ def run_history(work):
                    "li.textContent.indexOf('search') >= 0; })[0].querySelector('button, a').click()")  # its pictures
         wait_for("a picture of the round", lambda: browser.js("!!document.querySelector('.frame img')"))
         # Its rows come with the toggle event its open attribute fires, a task after the round is shown.
+        patch_boxes = '[data-item="%s"] details.attach' % second["id"]
         shown = wait_for("the open box's rows", lambda: (lambda b: any(x["rows"] for x in b) and b)(
-            browser.js(ATTACH_BOXES % json.dumps("details.attach"))))
+            browser.js(ATTACH_BOXES % json.dumps(patch_boxes))))
         # Each round holds it; the quiet round's file is not there, so it says so, open all the same.
         drawn = [b for b in shown if b["rows"]]
         check(len(shown) == 2 and all(b["open"] for b in shown) and len(drawn) == 1
               and len(drawn[0]["rows"]) == len(PLAIN_PATCH.splitlines()),
               "an open attachment should start open on the past-decisions page too: %r" % shown)
+        # A .md one renders there too; its Lines view, with no line notes on the item, is the text.
+        md_box = '[id^=panel-]:not([hidden]) [data-item="%s"] details.attach' % first["id"]
+        doc = wait_for("the rendered .md", lambda: (lambda s: s and s["doc"] and s)(browser.js(MD_BOX % json.dumps(md_box))))
+        check(doc["open"] and doc["doc"]["heads"][0] == ["4", "md-h md-h1", "Plan"]
+              and "<script>alert(1)</script>" in doc["doc"]["text"] and doc["elements"] == 0,
+              "the past-decisions page should render a .md attachment, its HTML as text: %r" % doc)
+        browser.click(md_box + " .seg button[data-view=lines]")
+        lined = browser.js(MD_BOX % json.dumps(md_box))
+        check(not lined["doc"] and lined["pre"] and lined["pre"]["text"] == DOC_MD, "its Lines view: %r" % lined)
         # While Signoff runs, a picture it cannot serve (404) is not taken for a stop.
         check(browser.js("(function () { var p = document.querySelector('.frame img'), was = p.src; "
                          "p.src = was.replace(/img\\/[0-9]+$/, 'img/999'); return p.src !== was; })()"),
@@ -1213,8 +1225,32 @@ ATTACH_BOXES = """(function () {
 })()"""
 
 
+# A .md attachment box: its view switch, the rendered view (when shown) and the Lines view's pre (when shown).
+MD_BOX = """(function () {
+  var d = document.querySelectorAll(%s), b = d[0];
+  if (!b) return null;
+  var doc = b.querySelector('.att-md'), pre = b.querySelector(':scope > pre'), seg = b.querySelector('.seg');
+  var ln = b.querySelector('.att-ln');
+  function all(s, f) { return Array.prototype.map.call(doc.querySelectorAll(s), f); }
+  return {count: d.length, open: b.open, label: b.querySelector('summary').textContent,
+    group: seg && seg.getAttribute('aria-label'), to: ln && ln.checkVisibility() && ln.textContent,
+    seg: seg && Array.prototype.map.call(seg.children, function (x) { return [x.textContent, x.getAttribute('aria-pressed')]; }),
+    doc: !!doc && doc.checkVisibility() && {text: doc.textContent,
+      heads: all('[role=heading]', function (h) { return [h.getAttribute('aria-level'), h.className, h.textContent]; }),
+      code: all('code.ic', function (c) { return c.textContent; }), buttons: doc.querySelectorAll('button').length,
+      links: all('a', function (a) { return a.href; }), waits: doc.querySelectorAll('.wait').length,
+      blocks: all('.md-code', function (c) {
+        return [c.querySelector('pre').textContent, !!c.querySelector('.md-bar button'), !!c.querySelector('.md-warn')];
+      })},
+    pre: !!pre && pre.checkVisibility() && {text: pre.textContent, children: pre.children.length},
+    rows: b.querySelectorAll('.att-lines [role=rowgroup] > [role=row]:not(.lnote)').length,
+    elements: b.querySelectorAll('b, h1, h2, h3, h4, script, img').length};
+})()"""
+
+
 def run_attachment(work):
-    """An attachment shows closed, opens on a click, and holds the file's text exactly, nothing rendered. A diff
+    """An attachment shows closed, opens on a click, and holds the file's text exactly; a .md one opens rendered
+    (the source's HTML stays text) and its Lines view, reached by Tab, is the text exactly. A diff
     draws as numbered, marked rows at its first opening, one that does not parse as numbered text, an open box starts
     open, an item with lines numbers a text file by the server's line rule, and the largest one draws its first
     screen at once and the rest while the page still answers."""
@@ -1247,23 +1283,44 @@ def run_attachment(work):
     box = '[data-item="%s"] details.attach' % item["id"]
 
     def state():
-        return browser.js("(function () { var d = document.querySelectorAll(%s), p = d[0] && d[0].querySelector('pre'); "
-                          "return p && {count: d.length, open: d[0].open, shown: p.checkVisibility(), "
-                          "text: p.textContent, children: p.children.length, label: d[0].querySelector('summary').textContent}; })()"
-                          % json.dumps(box))
+        return browser.js(MD_BOX % json.dumps(box))
 
     server, out, err, browser = serve(target, str(work / "profile-attach"))
     try:
         closed = wait_for("the attachment", state)
-        check(closed["count"] == 1 and not closed["open"] and not closed["shown"], "the attachment should start closed: %r"
-              % {k: closed[k] for k in ("count", "open", "shown")})
+        check(closed["count"] == 1 and not closed["open"] and not closed["doc"] and not closed["pre"],
+              "the attachment should start closed: %r" % closed)
         check(item["attachments"][0]["caption"] in closed["label"], "the summary should name it: %r" % closed["label"])
         browser.click(box + " > summary")
         opened = state()
-        check(opened["open"] and opened["shown"], "a click should open the attachment")
-        check(opened["text"] == text, "the attachment should be the file's text exactly")
-        check(opened["children"] == 0 and browser.js("document.querySelectorAll('.attach b, .attach h1').length") == 0,
-              "nothing in the attachment may render")
+        check(opened["open"] and opened["doc"] and not opened["pre"], "a click should open it, rendered: %r" % opened)
+        check(opened["seg"] == [["Rendered", "true"], ["Lines", "false"]]
+              and opened["group"] == "View of " + item["attachments"][0]["caption"],
+              "the view switch, named with the caption: %r" % opened)
+        doc = opened["doc"]
+        # Under the item's own h3: # is level 4, ## level 5, in their own sizes.
+        check(doc["heads"] == [["4", "md-h md-h1", "Export formats: what each one keeps"], ["5", "md-h md-h2", "Markdown"],
+                               ["5", "md-h md-h2", "PDF"], ["5", "md-h md-h2", "HTML"]], "the headings: %r" % doc["heads"])
+        # The source's HTML stays text: its <b> and a javascript: link show as written, and nothing of them is made.
+        check("<b>raw tags</b>" in doc["text"] and "[a link](javascript:alert(1))" in doc["text"]
+              and opened["elements"] == 0 and doc["links"] == [], "the source's HTML should stay text: %r" % doc)
+        check(browser.js("document.querySelectorAll('.attach b, .attach h1').length") == 0,
+              "nothing in any attachment on the page may render as the source's HTML")
+        check(doc["code"] == ["code"] and doc["buttons"] == 0, "inline code with no Copy button: %r" % doc)
+        # By key: Tab from the summary reaches Rendered, then Lines; Enter there shows the file's text exactly.
+        browser.js("document.querySelector(%s).focus()" % json.dumps(box + " > summary"))
+        press(browser, "Tab", "Tab", 9)
+        press(browser, "Tab", "Tab", 9)
+        check(browser.js("[document.activeElement.textContent, document.activeElement.getAttribute('aria-pressed')]")
+              == ["Lines", "false"], "Tab should reach the Lines button")
+        press(browser, "Enter", "Enter", 13, text="\r")
+        lined = state()
+        check(lined["seg"] == [["Rendered", "false"], ["Lines", "true"]] and not lined["doc"] and lined["pre"]
+              and lined["pre"]["text"] == text and lined["pre"]["children"] == 0,
+              "Lines should show the file's text exactly: %r" % lined)
+        browser.click(box + " .seg button[data-view=doc]")
+        back = state()
+        check(back["doc"] and not back["pre"] and back["seg"][0] == ["Rendered", "true"], "back to Rendered: %r" % back)
         boxes = '[data-item="change"] details.attach'
         shown = wait_for("the open boxes' rows", lambda: (lambda b: b[-1]["high"] is not None and b)(
             browser.js(ATTACH_BOXES % json.dumps(boxes))))
@@ -1379,6 +1436,86 @@ def run_attachment(work):
                                                                                   s["all"], s["gap"], key_ms, click_ms), flush=True)
         browser.click("#done")
         finished(server, out, err, [topic / "decisions.answers.json"])
+    except E2EError:
+        sys.stderr.write("--- Signoff stderr ---\n" + "".join(err))
+        raise
+    finally:
+        kill(server)
+        kill(browser.proc)
+
+
+DOC_MD = ("# Plan\n\nRun `rm tmp` first, see [the docs](https://example.com/docs).\n\n#### Deep heading\n\n"
+          "```sh\nrm -rf build\n```\n\n- [ ] (waiting on you: run it) a step, not a todo item here\n\n"
+          "<script>alert(1)</script> **bold**\n")
+
+
+def run_markdown(work):
+    """A .md attachment on an item with lines: rendered, its headings under the item's, inline code with no button,
+    a code block with Copy and the relative-delete warning; the line notes are in Lines, which Show lines opens. A
+    note made there keeps its count in Rendered and its text in Lines, and after a reload its file opens in Lines,
+    as one with a note saved before does."""
+    topic = work / "2026-01-10-plan"
+    (topic / "notes").mkdir(parents=True)
+    (topic / "notes" / "doc.md").write_text(DOC_MD, encoding="utf-8")
+    data = {"version": 1, "title": "Review the plan", "items": [
+        {"id": "doc", "title": "Approve the plan?", "select": "one", "recommended": "ok", "comment": False,
+         "lines": True, "options": [{"id": "ok", "label": "Approve"}, {"id": "no", "label": "Not yet"}],
+         "attachments": [{"src": "notes/doc.md", "caption": "The plan"}, {"src": "notes/doc.md", "caption": "Again"}]}]}
+    target = topic / "round-01.json"
+    target.write_text(json.dumps(data), encoding="utf-8")
+    answers_path = topic / "round-01.answers.json"
+    kept = {"att": 1, "line": 1, "quote": "# Plan", "comment": "kept before"}
+    answers_path.write_text(json.dumps({
+        "version": 1, "done": False, "saved": "2026-01-10T10:00:00Z", "free_text": "",
+        "decisions": {"file": "round-01.json", "sha256": hashlib.sha256(target.read_bytes()).hexdigest()},
+        "answers": {"doc": {"choice": "ok", "comment": "", "lines": [kept]}}}), encoding="utf-8")
+    first, again = '[data-item="doc"] details.attach:nth-of-type(1)', '[data-item="doc"] details.attach:nth-of-type(2)'
+    note_on = '%s button[aria-label="Note on line %d of notes/doc.md"]'
+    n_lines = DOC_MD.count("\n")
+
+    def saved():
+        return json.loads(answers_path.read_text(encoding="utf-8"))["answers"]["doc"].get("lines")
+
+    server, out, err, browser = serve(target, str(work / "profile-markdown"))
+    try:
+        shown = wait_for("the saved note's box", lambda: (lambda s: s and s["rows"] and s)(
+            browser.js(MD_BOX % json.dumps(again))))
+        check(shown["open"] and shown["seg"] == [["Rendered", "false"], ["Lines", "true"]] and shown["rows"] == n_lines
+              and browser.js("document.querySelector(%s).value" % json.dumps(again + " .lnote textarea")) == "kept before",
+              "a file with a note saved before should open in Lines, its note under its line: %r" % shown)
+        browser.click(first + " > summary")
+        doc = browser.js(MD_BOX % json.dumps(first))
+        check(doc["seg"][0] == ["Rendered", "true"] and doc["rows"] == 0 and doc["to"] == "Line notes: in the Lines view (0) Show lines",
+              "a file with no note opens rendered, saying where its notes go: %r" % doc)
+        d = doc["doc"]
+        check(d["heads"] == [["4", "md-h md-h1", "Plan"], ["6", "md-h md-h3", "Deep heading"]], "the headings: %r" % d["heads"])
+        check(d["code"] == ["rm tmp"] and d["blocks"] == [["rm -rf build", True, True]] and d["buttons"] == 1,
+              "inline code with no button or warning, a code block with Copy and the warning: %r" % d)
+        check(d["links"] == ["https://example.com/docs"] and "<script>alert(1)</script>" in d["text"] and d["waits"] == 0
+              and doc["elements"] == 0, "an http link, HTML as text, no waiting mark: %r" % d)
+        browser.click(first + " .att-ln button")
+        lined = browser.js(MD_BOX % json.dumps(first))
+        check(lined["seg"][1] == ["Lines", "true"] and lined["rows"] == n_lines and not lined["doc"] and not lined["to"]
+              and browser.js("document.activeElement.getAttribute('data-view')") == "lines",
+              "Show lines should show the numbered lines, the focus on Lines: %r" % lined)
+        browser.click(note_on % (first, 3))
+        browser.call("Input.insertText", text="why first?")
+        browser.click(first + " .seg button[data-view=doc]")
+        check(browser.js(MD_BOX % json.dumps(first))["to"] == "Line notes: in the Lines view (1) Show lines",
+              "Rendered should count the note")
+        browser.click(first + " .seg button[data-view=lines]")
+        check(browser.js("document.querySelector(%s).value" % json.dumps(first + " .lnote textarea")) == "why first?",
+              "back in Lines the note should be there")
+        want = [{"att": 0, "line": 3, "quote": "Run `rm tmp` first, see [the docs](https://example.com/docs).",
+                 "comment": "why first?"}, kept]
+        wait_for("the note saved", lambda: saved() == want)
+        browser.call("Page.reload")
+        again_shown = wait_for("the boxes after a reload", lambda: (lambda s: s and s["rows"] and s)(
+            browser.js(MD_BOX % json.dumps(first))))
+        check(again_shown["open"] and again_shown["seg"][1] == ["Lines", "true"] and not again_shown["doc"],
+              "after a reload a file with a note opens in Lines: %r" % again_shown)
+        browser.click("#done")
+        finished(server, out, err, [answers_path])
     except E2EError:
         sys.stderr.write("--- Signoff stderr ---\n" + "".join(err))
         raise
@@ -3974,6 +4111,7 @@ def run():
     run_readonly(work)
     run_table(work)
     run_attachment(work)
+    run_markdown(work)
     run_open_rounds(work)
     run_line_notes(work)
     run_commands(work)
@@ -4127,7 +4265,10 @@ def main():
           "project name in the header and the tab title; --history search finds answers and comments, never a private one, "
           "and its picker previews in the tab only, and once it stops a picture that fails says so; "
           "table view: chips, toggle, a pick in the table saved and shown on the cards, exit 0; "
-          "an attachment starts closed, opens, shows the file's text unrendered, a diff as numbered marked rows at its "
+          "an attachment starts closed, opens, a .md one rendered (headings under the item's, its HTML as text, inline "
+          "code with no button, a code block with Copy) with Lines reached by Tab, the file's text exactly, its line "
+          "notes in Lines only and a noted file opening there, after a reload too, on the past-decisions page "
+          "rendered too; a diff as numbered marked rows at its "
           "first opening, a non-diff and noted lines numbered by the server's line rule, an open one open (on the "
           "past-decisions page too), 131k rows drawn while the page answers, a hunk that does not add up as plain "
           "text, git format-patch output as a diff, blank rows a line high, no box a stand-in's height, exit 0; "

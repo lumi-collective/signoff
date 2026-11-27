@@ -235,8 +235,10 @@ The rules in full: [docs/security.md](docs/security.md#security-model). The scop
 
 ## Limits
 
-- The page's own labels are in English and Hungarian; your text is plain, with no Markdown, links or HTML.
-- Attachments: up to 256 KiB each, 20 an item and 200 a round.
+- The page's own labels are in English and Hungarian; your text is plain, with no Markdown, links or HTML. A `.md`
+  attachment is the exception: it shows rendered (its HTML still as text), with a Lines view.
+- Attachments: up to 256 KiB each, 20 an item and 200 a round; a page renders about 480 KiB of plan-like `.md` text (3 MiB of
+  trees), then shows the rest as lines.
 - Pictures, boards and attachments are read at start; changing a round's files while the page is open needs a
   restart.
 - Marks are rectangles on pictures, not on boards.

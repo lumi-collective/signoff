@@ -53,8 +53,15 @@
   criterion. Pick in either view: it is the same choice. The view itself is not saved. On a phone the table
   scrolls sideways in its own box, the criteria column staying in place.
 - **Attachments.** Where an item lists text files (`.md`, `.txt`, `.diff` or `.patch`) the detail behind a choice shows under the
-  options in a box that starts closed (open when the agent marks it `open`), as plain text. Nothing in it is rendered as
-  Markdown or HTML.
+  options in a box that starts closed (open when the agent marks it `open`), as plain text. HTML in it is never
+  rendered.
+  - A `.md` file shows rendered from the server's tree, as todo items do in the inbox: headings (under the item's
+    own, in three sizes), lists, quotes, tables, links (`http` and `https` only) and code blocks with Copy. Its inline
+    code has no Copy button. A **Rendered / Lines** switch above it shows the file as text instead, or as numbered
+    lines on an item whose lines take notes: notes are made there only, and a file that has one opens in Lines.
+    Rendered says how many notes there are, with a button to Lines. The choice is kept per file while the page is
+    open. A page renders up to 1 MiB of `.md` text and 3 MiB of trees, all its rounds together; past that a file
+    shows as lines only, and the box says so.
   - A `.diff` or `.patch` shows as a unified diff, a row per line: the old line's number, the new line's, the sign
     and the text. Added and removed lines have backgrounds of their own (the palette's green and red, Rose Pine's
     foam and love). The `+` and `-` are always shown, and read out as "added" and "removed". File and hunk headers

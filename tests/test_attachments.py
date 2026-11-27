@@ -1,7 +1,10 @@
-"""Attachments: text files an item lists, read at start and sent with the page as plain text. No route serves them."""
+"""Attachments: text files an item lists, read at start and sent with the page as plain text (a .md one with its
+tree too). No route serves them."""
 import json
 import os
+import re
 import tempfile
+import time
 import threading
 import unittest
 from pathlib import Path
@@ -17,8 +20,10 @@ NETWORK_AND_DRIVE = ("\\\\host\\share\\x.md", "//host/share/x.md", "\\\\host@SSL
                      "\\\\?\\C:\\x.md", "\\\\.\\pipe\\x.md", "\\\\host", "//host")
 
 
-def page_size(text):
-    return len(signoff._script_json(text).encode("utf-8"))
+def page_size(text, depth=0):
+    """Bytes in the page's indented data, with every line but the first indented depth more."""
+    data = signoff._script_json(text)
+    return len(data.encode("utf-8")) + depth * data.count("\n")
 
 
 def with_attachment(src="notes/cut.md", data=None, **extra):
@@ -265,9 +270,173 @@ class AttachmentOnPage(unittest.TestCase):
         run = self.serve()
         view, body = view_of(run)
         items = view["rounds"][0]["decisions"]["items"]
-        self.assertEqual(items[1]["attachments"], [{"src": "notes/cut.md", "caption": "Cut list", "text": TEXT}])
+        self.assertEqual(items[1]["attachments"], [{"src": "notes/cut.md", "caption": "Cut list", "text": TEXT,
+                                                    "blocks": signoff.markdown_blocks(TEXT, marks=False)}])
         self.assertNotIn("attachments", items[0])
         self.assertNotIn("<b>", body)  # escaped inside the data block
+
+    def test_only_markdown_gets_a_tree(self):
+        for name in ("cut.txt", "cut.diff", "cut.patch", "cut.MD"):
+            (self.folder.path / "notes" / name).write_bytes(TEXT.encode("utf-8"))
+        data = with_attachment()
+        data["items"][1]["attachments"] = [{"src": "notes/" + n} for n in ("cut.txt", "cut.diff", "cut.patch",
+                                                                             "cut.MD", "cut.md")]
+        self.folder.write(data)
+        shown = view_of(self.serve())[0]["rounds"][0]["decisions"]["items"][1]["attachments"]
+        self.assertEqual([("blocks" in a, a["text"]) for a in shown],
+                         [(False, TEXT), (False, TEXT), (False, TEXT), (True, TEXT), (True, TEXT)])
+
+    def test_the_tree_marks_no_wait_and_has_heading_levels(self):
+        (self.folder.path / "notes" / "cut.md").write_bytes(b"## Plan\n\n- [ ] (waiting on you: run it) Run it\n")
+        blocks = view_of(self.serve())[0]["rounds"][0]["decisions"]["items"][1]["attachments"][0]["blocks"]
+        self.assertEqual(blocks[0], {"t": "h", "level": 2, "c": [{"t": "text", "v": "Plan"}]})
+        self.assertNotIn("wait", blocks[1]["items"][0])
+
+    def test_the_tree_is_built_once_at_the_first_page(self):
+        with mock.patch.object(signoff, "markdown_blocks", wraps=signoff.markdown_blocks) as built:
+            run = self.serve()
+            self.assertEqual(built.call_count, 0)  # not at start: a run whose page is never opened pays nothing
+            first = view_of(run)[0]
+            second = view_of(run)[0]
+        self.assertEqual(built.call_count, 1)
+        self.assertEqual(first["rounds"][0]["decisions"]["items"][1]["attachments"],
+                         second["rounds"][0]["decisions"]["items"][1]["attachments"])
+
+    def two_trees(self, **limits):
+        (self.folder.path / "notes" / "two.md").write_bytes(TEXT.encode("utf-8"))
+        data = with_attachment()
+        data["items"][1]["attachments"].append({"src": "notes/two.md"})
+        self.folder.write(data)
+        with mock.patch.multiple(signoff, **limits):
+            view, body = view_of(self.serve())
+        return view["rounds"][0]["decisions"]["items"][1]["attachments"], body
+
+    def test_the_parse_budget_is_per_page(self):
+        size = len(TEXT.encode("utf-8"))
+        for limit, has in ((2 * size, [True, True]), (2 * size - 1, [True, False]), (size - 1, [False, False])):
+            shown = self.two_trees(MAX_MD_INPUT=limit)[0]
+            self.assertEqual([("blocks" in a, a["text"]) for a in shown], [(h, TEXT) for h in has], limit)
+
+    def test_the_parse_budget_spans_the_rounds(self):
+        rounds = Rounds(2)
+        self.addCleanup(rounds.cleanup)
+        (rounds.path / "notes").mkdir()
+        (rounds.path / "notes" / "cut.md").write_bytes(TEXT.encode("utf-8"))
+        for n in (1, 2):
+            rounds.write(n, with_attachment())
+        with mock.patch.object(signoff, "MAX_MD_INPUT", 2 * len(TEXT.encode("utf-8")) - 1):
+            server = signoff.make_server(rounds.path)
+            self.addCleanup(server.server_close)
+            view = server.view()
+        self.assertEqual(["blocks" in r["decisions"]["items"][1]["attachments"][0] for r in view["rounds"]],
+                         [True, False])
+
+    def test_the_tree_budget_spans_the_rounds(self):
+        rounds = Rounds(2)
+        self.addCleanup(rounds.cleanup)
+        (rounds.path / "notes").mkdir()
+        (rounds.path / "notes" / "cut.md").write_bytes(TEXT.encode("utf-8"))
+        for n in (1, 2):
+            rounds.write(n, with_attachment())
+        one = page_size(signoff.markdown_blocks(TEXT, marks=False), 8)
+        for limit, has in ((2 * one, [True, True]), (2 * one - 1, [True, False])):
+            with mock.patch.object(signoff, "MAX_MD_TREES", limit):
+                server = signoff.make_server(rounds.path)
+                view = server.view()
+                server.server_close()
+            self.assertEqual(["blocks" in r["decisions"]["items"][1]["attachments"][0] for r in view["rounds"]], has)
+
+    def test_what_a_tree_let_go_made_is_charged(self):
+        # A hostile file's tree, given up past the room, spends the build's room: the next file gets none.
+        deep = ("+ " * signoff.MD_DEPTH + "x\n") * 15000  # 210 KB, under MAX_ATTACHMENT
+        (self.folder.path / "notes" / "deep.md").write_bytes(deep.encode("utf-8"))
+        one = page_size(signoff.markdown_blocks(TEXT, marks=False), 8)
+        for first, has in (("notes/cut.md", [True, False]), ("notes/deep.md", [False, False])):
+            data = with_attachment(first)
+            data["items"][1]["attachments"].append({"src": "notes/cut.md" if first.endswith("deep.md")
+                                                    else "notes/deep.md"})
+            self.folder.write(data)
+            with mock.patch.object(signoff, "MAX_MD_TREES", 100 * one):
+                shown = view_of(self.serve())[0]["rounds"][0]["decisions"]["items"][1]["attachments"]
+            self.assertEqual(["blocks" in a for a in shown], has, first)
+
+    def test_a_tree_let_go_is_charged_too(self):
+        # A parse that gives its tree up (None) still spends its text: the second file is not parsed.
+        size = len(TEXT.encode("utf-8"))
+        with mock.patch.object(signoff, "markdown_blocks", return_value=None) as built:
+            shown = self.two_trees(MAX_MD_INPUT=2 * size - 1)[0]
+        self.assertEqual((built.call_count, ["blocks" in a for a in shown]), (1, [False, False]))
+
+    def test_the_tree_budget_counts_the_trees_as_sent(self):
+        data = re.compile(r'id="signoff-data">(.*?)</script>', re.S)
+        bare = len(data.search(self.two_trees(MAX_MD_TREES=0)[1]).group(1).encode("utf-8"))
+        full = len(data.search(self.two_trees(MAX_MD_TREES=signoff.MAX_MD_TREES)[1]).group(1).encode("utf-8"))
+        # Each tree goes in after its "text" as ',\n' + the attachment's indentation + '"blocks": '.
+        key = len(',\n' + " " * 8 + '"blocks": ')
+        one = (full - bare) // 2 - key
+        self.assertEqual(full - bare, 2 * (one + key))
+        for limit, has in ((2 * one, [True, True]), (2 * one - 1, [True, False]), (one - 1, [False, False])):
+            shown = self.two_trees(MAX_MD_TREES=limit)[0]
+            self.assertEqual(["blocks" in a for a in shown], has, limit)
+
+    def test_the_indentation_is_counted_exactly(self):
+        demo = (Path(__file__).resolve().parent.parent / "examples" / "demo" / "notes" / "export-formats.md")
+        values = [signoff.markdown_blocks(t, marks=False) for t in (TEXT, demo.read_text(encoding="utf-8"),
+                  "> [!NOTE]\n> a\n\n| a | b |\n|---|---|\n| `x` |\n\n- [ ] t\n  1. n\n\n```sh\nls\n```\n---\n")]
+        values += [[], {}, [[], {}, {"a": []}], "x", [None, True, 1]]
+        for value in values:
+            for depth in (0, 1, 7, 8):
+                compact = len(signoff._script_json(value, compact=True).encode("utf-8"))
+                exact = page_size(value, depth) - compact
+                self.assertEqual(signoff._indent_bytes(value, depth, exact), exact)
+                self.assertIsNone(signoff._indent_bytes(value, depth, exact - 1) if exact else None)
+
+    def test_a_full_hostile_round_builds_in_time(self):
+        """The trees are built on the page's request thread; no round of agent text may hold it up."""
+        line_kinds = ["```" + "a" * 30000 + "`", "[" * 30000, "".join("`" * k + "x" for k in range(1, 240)),
+                      "|" + " " * 30000 + "x", "- [ ] " + "[" * 30000, "- [ ] " + "`" * 3 + "a" * 30000 + "`"]
+        size = signoff.MAX_ATTACHMENT
+        shapes = ["\n".join(line_kinds * 3)[:size],  # the todo reader's hostile lines
+                  (("+ " * signoff.MD_DEPTH + "x\n") * size)[:size],  # the slowest shape measured: deep lists
+                  ("x\n\n" * size)[:size], ("- [ ] a\n" * size)[:size], (("`a` " * 60 + "\n") * size)[:size]]
+        data = sample_decisions()
+        data["items"][1]["attachments"] = []
+        for k in range(8):  # all the round's attachments take: 2 MiB in the page
+            name, text = "notes/h%d.md" % k, shapes[k % len(shapes)]
+            while page_size(text) > signoff.MAX_ATTACHMENTS // 8:
+                text = text[:len(text) * (signoff.MAX_ATTACHMENTS // 8) // page_size(text) - 8]
+            (self.folder.path / name).write_bytes(text.encode("utf-8"))
+            data["items"][1]["attachments"].append({"src": name})
+        self.folder.write(data)
+        decisions = signoff.load_decisions(self.folder.decisions)[0]
+        start = time.monotonic()
+        trees = signoff._md_trees(decisions["items"], [signoff.MAX_MD_INPUT, signoff.MAX_MD_TREES])
+        # Measured on an M4 Pro: under 1 s on Python 3.9 (see MAX_MD_INPUT); CI machines are slower.
+        self.assertLess(time.monotonic() - start, 5.0)
+        self.assertLessEqual(sum(sent for _, sent in trees.values()), signoff.MAX_MD_TREES)
+
+    def test_a_tree_past_its_room_is_given_up_early(self):
+        """One hostile file must not build its whole tree only to drop it: memory follows the room, not the file."""
+        import tracemalloc
+        deep = (("+ " * signoff.MD_DEPTH + "x\n") * signoff.MAX_ATTACHMENT)[:signoff.MAX_ATTACHMENT]
+        tracemalloc.start()
+        try:
+            tree = signoff.markdown_blocks(deep, marks=False, room=[signoff.MAX_MD_TREES])
+            peak = tracemalloc.get_traced_memory()[1]
+        finally:
+            tracemalloc.stop()
+        self.assertIsNone(tree)
+        self.assertLess(peak, 40 * KIB * KIB)  # 100 MiB and more when built whole
+
+    def test_the_room_never_drops_a_tree_that_fits(self):
+        demo = (Path(__file__).resolve().parent.parent / "examples" / "demo" / "notes" / "export-formats.md")
+        for text in (TEXT, demo.read_text(encoding="utf-8"), "\\*" * 3000, "**a** " * 500, "`a` " * 800,
+                     "|" + "a|" * 64 + "\n|" + "-|" * 64 + "\n" + ("|" + "a|" * 64 + "\n") * 50,
+                     "> [!NOTE]\n> a\n\n- [ ] t\n  1. n\n\n```sh\nls\n```\n---\n# h\n", "x\n\n" * 500,
+                     ("+ " * signoff.MD_DEPTH + "x\n") * 200, "[a](https://example.com) " * 300, "<" * 2000):
+            tree = signoff.markdown_blocks(text, marks=False)
+            sent = page_size(tree, 8)  # as it sits in the page
+            self.assertEqual(signoff.markdown_blocks(text, marks=False, room=[sent]), tree, text[:40])
 
     def test_read_at_start(self):
         run = self.serve()
@@ -387,6 +556,61 @@ class AttachmentInHistory(unittest.TestCase):
         self.assertNotIn("text", second)
         self.assertIn("--since", second["missing"])
         self.assertIn("Attachment 'notes/cut.md' not shown: " + second["missing"], e["warning"])
+
+    def test_a_markdown_file_gets_its_tree(self):
+        self.assertEqual(self.shown(self.entry("notes/cut.md"))["blocks"], signoff.markdown_blocks(TEXT, marks=False))
+        write(self.topic / "notes" / "cut.txt", TEXT)
+        self.assertNotIn("blocks", self.shown(self.entry("notes/cut.txt")))
+
+    def test_the_tree_counts_in_the_text_budget(self):
+        tree = page_size(signoff.markdown_blocks(TEXT, marks=False), 8)  # entries > ... > attachment
+        for budget, shown in ((page_size(TEXT) + tree, True), (page_size(TEXT) + tree - 1, False)):
+            with mock.patch.object(signoff, "HISTORY_TEXT_BUDGET", budget):
+                att = self.shown(self.entry("notes/cut.md"))
+            self.assertEqual((att["text"], "blocks" in att), (TEXT, shown), budget)  # no tree: the text still shows
+        # That is the tree's size as the page gets it.
+        write(self.topic / "round-01.json", with_attachment("notes/cut.md"))
+        sizes = []
+        for limit in (signoff.MAX_MD_TREES, 0):
+            with mock.patch.object(signoff, "MAX_MD_TREES", limit):
+                server = signoff.make_history_server(self.root.path)
+                sizes.append(len(signoff._script_json(server.view()).encode("utf-8")))
+                server.server_close()
+        self.assertEqual(sizes[0] - sizes[1], tree + len(',\n' + " " * 8 + '"blocks": '))
+
+    def history(self, rounds):
+        """Rounds of one .md each, newest first as the page lists them; returns their shown attachments."""
+        for n in range(rounds):
+            topic = self.root.path / ".signoff" / ("2026-03-%02d-plan" % (10 + n))
+            write(topic / "notes" / "cut.md", TEXT)
+            write(topic / "round-01.json", with_attachment("notes/cut.md"))
+        server = signoff.make_history_server(self.root.path)
+        self.addCleanup(server.server_close)
+        return [self.shown(e) for e in server.view()["entries"] if e["topic"].endswith("-plan")]
+
+    def test_every_text_comes_before_any_tree(self):
+        # As in 0.5.0, the texts take the budget first: a newer round's tree never pushes an older round's text out.
+        tree = page_size(signoff.markdown_blocks(TEXT, marks=False), 8)
+        with mock.patch.object(signoff, "HISTORY_TEXT_BUDGET", 2 * page_size(TEXT) + tree - 1):
+            newer, older = self.history(2)  # newest first: 03-11, then 03-10
+        self.assertEqual((older["text"], newer["text"]), (TEXT, TEXT))
+        self.assertNotIn("blocks", newer)
+        with mock.patch.object(signoff, "HISTORY_TEXT_BUDGET", 2 * page_size(TEXT) + tree):
+            shown = self.history(2)
+        self.assertEqual(["blocks" in a for a in shown], [True, False])  # the room left goes to the newest
+
+    def test_the_parse_budget_is_per_build(self):
+        with mock.patch.object(signoff, "MAX_MD_INPUT", 2 * len(TEXT.encode("utf-8"))), \
+                mock.patch.object(signoff, "markdown_blocks", wraps=signoff.markdown_blocks) as built:
+            shown = self.history(3)
+        self.assertEqual(["blocks" in a for a in shown], [True, True, False])  # the newest two
+        self.assertEqual(built.call_count, 2)
+
+    def test_the_round_budgets_hold_there_too(self):
+        for limit in ({"MAX_MD_INPUT": len(TEXT) - 1}, {"MAX_MD_TREES": 10}):
+            with mock.patch.multiple(signoff, **limit):
+                att = self.shown(self.entry("notes/cut.md"))
+            self.assertEqual((att["text"], "blocks" in att), (TEXT, False), limit)
 
     def test_budget_counts_the_page_size(self):
         write(self.topic / "notes" / "lt.md", "<" * 1000)  # 1000 bytes on disk, 6000 in the page

@@ -171,7 +171,8 @@ send requests to `127.0.0.1`. The rules, in short:
   says so on stderr, keeps running and does not write over it.
 - **Only the files it names:** pictures by number, never by path; each resolved inside the round's folder; no
   SVG, no directory listing. Attachments follow the same folder rule, `.md`, `.txt`, `.diff` or `.patch` only, and go inside the
-  page as text; no route serves them.
+  page as text; a `.md` one also as a tree of plain data the server makes from it, which the page builds with
+  `textContent` (its HTML stays text, and only `http(s)` links become links). No route serves them.
 - **Agent text is text:** everything reaches the page through `textContent`; a strict Content-Security-Policy
   with a per-request nonce; no inline styles or handlers.
 - **Boards are sandboxed:** their own token, which opens nothing else; `Content-Security-Policy: sandbox

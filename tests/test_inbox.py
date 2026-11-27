@@ -129,6 +129,21 @@ class MarkdownTree(unittest.TestCase):
             json.dumps(tree)
             self.assertIn(shown, texts(tree))
 
+    def test_headings_carry_their_level(self):
+        tree = signoff.markdown_blocks("# One\n## Two ##\n   ###### Six\n####### seven\n#\n")
+        self.assertEqual([(n["t"], n.get("level"), texts(n.get("c", []))) for n in tree],
+                         [("h", 1, "One"), ("h", 2, "Two"), ("h", 6, "Six"), ("p", None, "####### seven"),
+                          ("h", 1, "")])
+
+    def test_marks_off_marks_no_waiting_step(self):
+        # An attachment is not the todo file: a step marked waiting there is only text.
+        src = "- [ ] (waiting on you: run it) Run it\n  - [ ] (waiting on you: sub) deeper\n"
+        on, off = signoff.markdown_blocks(src), signoff.markdown_blocks(src, marks=False)
+        self.assertTrue(on[0]["items"][0]["wait"])
+        self.assertTrue(on[0]["items"][0]["c"][1]["items"][0]["wait"])
+        self.assertNotIn('"wait"', json.dumps(off))
+        self.assertEqual(texts(on), texts(off))
+
 
 class Adversarial(unittest.TestCase):
     def test_a_full_size_hostile_file_parses_in_time(self):

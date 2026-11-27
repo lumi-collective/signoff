@@ -180,16 +180,18 @@
       return row;
     }
     if (item.lines && !ro) fs.append(full), limit();
-    // The agent's text files, never rendered: a diff or noted lines as rows while open and shown.
+    // The agent's text files: a diff or noted lines as rows while open and shown; a .md one rendered from the
+    // server's tree (HTML in it stays text), or as Lines, where its line notes are.
     (item.attachments || []).forEach(function (att, ai) {
       var box = el('details', 'attach'), sum = el('summary', '', att.caption || att.src);
       var lines = atts[ai], n = lines.length;
       var meta = [att.caption ? att.src : '', n ? (n === 1 ? L.line : fmt(L.lines, {n: n})) : ''];
-      var diff = /\.(diff|patch)$/i.test(att.src);
+      var diff = /\.(diff|patch)$/i.test(att.src), md = Array.isArray(att.blocks), ak = item.id + ' ' + ai;
       function view(e) {
         e.tabIndex = 0;  // it scrolls, so the keyboard must reach it
         e.setAttribute('aria-label', fmt(L.attachText, {r: att.caption || att.src}));
         box.append(e);
+        return e;
       }
       sum.append(el('span', 'attach-meta', meta.filter(Boolean).join(' · ')));
       box.append(sum);
@@ -210,12 +212,58 @@
           last = r;
         });
       }
+      var doc, toLines;  // the rendered view, and the line that says where the notes are
+      function draw() {  // the view picked, each drawn when first shown; rows again after a hidden panel dropped them
+        // Lines' view is looked up, never held: a dropped box of rows must be free to go.
+        var asLines = !md || attState[ri][ak], rows = box.querySelector(':scope > .att-lines, :scope > pre');
+        if (!asLines && !doc) doc = view(blocks(att.blocks, el('div', 'md att-md'), 3));  // an item's title is an h3
+        if (doc) doc.hidden = asLines;
+        if (asLines && !rows) {
+          view(diff || item.lines ? lineBox(lines, diff && diffRows(lines), item.lines && pin) : el('pre', '', att.text));
+        } else if (!asLines && rows) rows.remove();
+        if (toLines) {
+          var k = notes.filter(function (x) { return x.att === ai && !x.stale; }).length;
+          toLines.hidden = asLines;
+          toLines.firstChild.textContent = fmt(L.lnInLines, {n: k}) + ' ';
+        }
+      }
+      function viewBar() {  // Rendered or Lines: a view, never saved
+        // Rendered, unless a note is on this file's lines: those show in Lines only. Kept while the page is open.
+        if (!(ak in attState[ri])) attState[ri][ak] = notes.some(function (x) { return x.att === ai && !x.stale; });
+        var bar = el('div', 'view-bar att-bar'), seg = el('div', 'seg');
+        seg.setAttribute('role', 'group');
+        seg.setAttribute('aria-label', fmt(L.attView, {r: att.caption || att.src}));
+        [[false, L.attDoc], [true, L.attLines]].forEach(function (v) {
+          var b = el('button', '', v[1]);
+          b.type = 'button';
+          b.dataset.view = v[0] ? 'lines' : 'doc';
+          b.setAttribute('aria-pressed', String(v[0] === attState[ri][ak]));
+          b.addEventListener('click', function () {
+            attState[ri][ak] = v[0];
+            Array.prototype.forEach.call(seg.children, function (x) { x.setAttribute('aria-pressed', String(x === b)); });
+            draw();
+          });
+          seg.append(b);
+        });
+        bar.append(seg);
+        if (item.lines) {
+          var go = el('button', 'link', L.lnToLines);
+          go.type = 'button';
+          go.addEventListener('click', function () { seg.lastChild.click(); seg.lastChild.focus(); });
+          toLines = el('p', 'att-ln', '');
+          toLines.append(el('span'), go);
+          bar.append(toLines);
+        }
+        return bar;
+      }
+      if (md) box.append(viewBar());  // the server sends a tree with a text only
+      else if (att.text !== undefined && /\.md$/i.test(att.src)) box.append(el('p', 'att-ln', L.mdTooBig));  // budget
       if (att.text === undefined) {
         box.append(el('p', 'attach-missing', fmt(L.attachMissing, {r: att.missing})));
-      } else if (diff || item.lines) {
+      } else if (md || diff || item.lines) {
         // Setting open fires one toggle after render; a box in a hidden round waits for showRound's.
         box.addEventListener('toggle', function () {
-          if (box.open && !box.children[1] && !box.closest('[hidden]')) view(lineBox(lines, diff && diffRows(lines), item.lines && pin));
+          if (box.open && !box.closest('[hidden]')) draw();
         });
         box.addEventListener('click', function (e) {  // one listener: a box may hold 131k numbers
           var b = e.target.closest('[data-line]'), at = b && +b.dataset.line, x = b && find(ai, at), tr = b && b.closest('[role=row]');
