@@ -70,3 +70,28 @@ jobs:
       - run: claude plugin validate plugin
       - run: claude plugin validate .claude-plugin/marketplace.json
       - run: python3 -I -B tests/mod_test.py
+
+  app:
+    name: app (go vet + test, build.sh, macOS)
+    runs-on: macos-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # TestRealInbox runs plugin/bin/signoff, which runs python3.
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      # The cask builds with Homebrew's current go. No cache: a clean build each time, as on the user's Mac.
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version: stable
+          cache: false
+      - run: go vet ./...
+      - run: go test -count=1 ./...
+      # As the cask runs it: vet and test build without -tags production.
+      - run: SIGNOFF_LAUNCHER=link sh build.sh

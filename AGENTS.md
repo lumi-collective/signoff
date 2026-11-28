@@ -191,11 +191,13 @@ it pass.
 After a change to `app/` (macOS, Go 1.26 or newer), also:
 
 ```
-cd app && go vet ./... && go test ./...
+cd app && go vet ./... && go test -count=1 ./...
 ```
 
 `TestRealInbox` runs the plugin's own inbox in a temporary home through the app's steps, so a change to the
-control socket, `inbox.json` or `state.json` shows there too. CI does not run the Go tests.
+control socket, `inbox.json` or `state.json` shows there too. `-count=1` because the plugin is outside the Go
+module: the test cache does not see a change to `signoff.py`. CI runs these on macOS, then builds the app as the
+cask does (`SIGNOFF_LAUNCHER=link sh build.sh`), in the `test` workflow that `scripts/release.py` waits for.
 
 ## Invariants
 

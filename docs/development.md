@@ -25,7 +25,7 @@ python3 -I -B -m unittest discover -s tests
 The app has Go tests of its own (macOS):
 
 ```
-cd app && go vet ./... && go test ./...
+cd app && go vet ./... && go test -count=1 ./...
 ```
 
 The tests use the standard library only. They start real servers on `127.0.0.1` and run the command line as
