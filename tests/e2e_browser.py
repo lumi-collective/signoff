@@ -913,7 +913,7 @@ def run_history(work):
     second.update(other=True, marks=True, images=picture, attachments=[{"src": "notes/later.patch", "open": True}])
     (old / "notes").mkdir()
     (old / "notes" / "later.patch").write_text(PLAIN_PATCH, encoding="utf-8")
-    (old / "notes" / "doc.md").write_text(DOC_MD, encoding="utf-8")
+    (old / "notes" / "doc.md").write_bytes(DOC_MD.encode("utf-8"))  # bytes: text mode writes CRLF on Windows
     for target in (old / "round-01.json", root / ".signoff" / "2026-01-09-quiet" / "round-01.json"):
         target.write_text(json.dumps(dict(data, title="Wording for %s" % target.parent.name)), encoding="utf-8")
     shutil.copytree(str(DEMO / "mockups"), str(old / "mockups"))
@@ -1456,7 +1456,7 @@ def run_markdown(work):
     as one with a note saved before does."""
     topic = work / "2026-01-10-plan"
     (topic / "notes").mkdir(parents=True)
-    (topic / "notes" / "doc.md").write_text(DOC_MD, encoding="utf-8")
+    (topic / "notes" / "doc.md").write_bytes(DOC_MD.encode("utf-8"))  # bytes: text mode writes CRLF on Windows
     data = {"version": 1, "title": "Review the plan", "items": [
         {"id": "doc", "title": "Approve the plan?", "select": "one", "recommended": "ok", "comment": False,
          "lines": True, "options": [{"id": "ok", "label": "Approve"}, {"id": "no", "label": "Not yet"}],
